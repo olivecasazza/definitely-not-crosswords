@@ -22,6 +22,9 @@ export default defineNuxtConfig({
     transpile: ['trpc-nuxt']
   },
   nitro: {
-    plugins: ['~/nitro/ws']
+    plugins: ['~/nitro/ws'],
+    externals: {
+      external: ['@prisma/client']
+    }
   }
 })

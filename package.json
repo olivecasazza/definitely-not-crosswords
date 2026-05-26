@@ -45,5 +45,20 @@
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "@prisma/client",
+      "@prisma/engines",
+      "bufferutil",
+      "es5-ext",
+      "esbuild",
+      "prisma",
+      "protobufjs",
+      "sharp",
+      "utf-8-validate",
+      "vue-demi"
+    ]
   }
 }

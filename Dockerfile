@@ -44,6 +44,10 @@ WORKDIR /app
 COPY --from=builder /app/.output /app/.output
 # Copy prisma migrations and schema in case they're needed for migrations in production
 COPY --from=builder /app/prisma /app/prisma
+# Copy OpenTelemetry startup script to app directory
+COPY --from=builder /app/otel.cjs /app/otel.cjs
+# Symlink standalone node_modules so that root-level scripts can resolve dependencies
+RUN ln -s /app/.output/server/node_modules /app/node_modules
 
 # Expose Nuxt default port and WebSocket port
 EXPOSE 3000

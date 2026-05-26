@@ -13,7 +13,7 @@ RUN npm install -g pnpm@11
 WORKDIR /app
 
 # Copy dependency definition files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml* ./
+COPY package.json pnpm-lock.yaml .npmrc pnpm-workspace.yaml* ./
 
 # Install dependencies (frozen-lockfile ensures reproducible builds)
 RUN pnpm install --frozen-lockfile

@@ -20,7 +20,7 @@ env:
   PROJECT_ID: casazza-identity
   REPOSITORY: nixlab
   IMAGE: definitely-not-crosswords
-  WIF_PROVIDER: projects/casazza-identity/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+  WIF_PROVIDER: projects/943444128204/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
   WIF_SERVICE_ACCOUNT: crosswords-ci@casazza-identity.iam.gserviceaccount.com
 
 jobs:
@@ -72,6 +72,9 @@ jobs:
     outputs:
       is_major: ${{ steps.check_commits.outputs.is_major }}
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Check commits for breaking changes
         id: check_commits
         env:
@@ -88,7 +91,7 @@ jobs:
           # Breaking change:
           #   - commit starts with type followed by !: e.g. "feat!: add new feature"
           #   - OR commit body contains "BREAKING CHANGE" or "BREAKING CHANGES"
-          has_breaking=$(gh pr view $PR_NUMBER --json commits --jq '[.commits[].message | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
+          has_breaking=$(gh pr view $PR_NUMBER --json commits --jq '[.commits[] | (.messageHeadline + "\n" + .messageBody) | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
           
           if [ "$has_breaking" = "true" ]; then
             echo "is_major=true" >> $GITHUB_OUTPUT
@@ -106,6 +109,9 @@ jobs:
     needs: conventional-commits-check
     if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Verify Review Status
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -135,6 +141,9 @@ jobs:
     needs: [ build-and-push, conventional-commits-check, approval-check ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Enable Auto-Merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from '@nuxt/test-utils/playwright'
 
 test('visual regression test for signin page', async ({ page }) => {
   // Navigate to the auth redirect sign-in page

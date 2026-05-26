@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from '@nuxt/test-utils/playwright'
 
 test.describe('tRPC Interception and Mocking', () => {
   test('should mock stats.getGlobalLeaderboard and display custom leaderboard', async ({ page }) => {

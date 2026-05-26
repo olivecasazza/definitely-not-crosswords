@@ -17,11 +17,11 @@ permissions:
 env:
   GAR_LOCATION: us-central1
   GAR_REGISTRY: us-central1-docker.pkg.dev
-  PROJECT_ID: casazza-compute
+  PROJECT_ID: casazza-identity
   REPOSITORY: nixlab
   IMAGE: definitely-not-crosswords
-  WIF_PROVIDER: projects/casazza-compute/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
-  WIF_SERVICE_ACCOUNT: crosswords-ci@casazza-compute.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/casazza-identity/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+  WIF_SERVICE_ACCOUNT: crosswords-ci@casazza-identity.iam.gserviceaccount.com
 
 jobs:
   build-and-push:

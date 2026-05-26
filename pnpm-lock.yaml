@@ -26,6 +26,9 @@ importers:
       '@xenova/transformers':
         specifier: ^2.17.2
         version: 2.17.2
+      pinia:
+        specifier: ^2.1.0
+        version: 2.3.1(vue@3.5.34)
       prom-client:
         specifier: ^15.1.3
         version: 15.1.3
@@ -3834,6 +3837,15 @@ packages:
   pify@2.3.0:
     resolution: {integrity: sha512-udgsAY+fTnvv7kI7aaxbqwWNb0AHiB0qBO89PZKPkoTmGOgdbrHDKD+0B2X4uTfJ/FT1R09r9gTsjUjNJotuog==}
     engines: {node: '>=0.10.0'}
+
+  pinia@2.3.1:
+    resolution: {integrity: sha512-khUlZSwt9xXCaTbbxFYBKDc/bWAGWJjOgvxETwkTN7KRm66EeT1ZdZj6i2ceh9sP2Pzqsbc704r2yngBrxBVug==}
+    peerDependencies:
+      typescript: '>=4.4.4'
+      vue: ^2.7.0 || ^3.5.11
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
   pinia@3.0.4:
     resolution: {integrity: sha512-l7pqLUFTI/+ESXn6k3nu30ZIzW5E2WZF/LaHJEpoq6ElcLD+wduZoB2kBN19du6K/4FDpPMazY2wJr+IndBtQw==}
@@ -8935,6 +8947,14 @@ snapshots:
   picomatch@4.0.4: {}
 
   pify@2.3.0: {}
+
+  pinia@2.3.1(vue@3.5.34):
+    dependencies:
+      '@vue/devtools-api': 6.6.4
+      vue: 3.5.34
+      vue-demi: 0.14.10(vue@3.5.34)
+    transitivePeerDependencies:
+      - '@vue/composition-api'
 
   pinia@3.0.4(vue@3.5.34):
     dependencies:

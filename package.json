@@ -30,6 +30,7 @@
   "dependencies": {
     "@fails-components/webtransport-ponyfill-websocket": "^0.0.8",
     "@pinia/nuxt": "^0.4.11",
+    "pinia": "^2.1.0",
     "@trpc/client": "^10.27.1",
     "@trpc/server": "^10.27.1",
     "@vueuse/components": "^10.2.0",

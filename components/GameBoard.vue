@@ -4,9 +4,8 @@ import { Cell } from '~/lib/game';
 import { useActiveGameStore } from '~/stores/activeGame';
 
 const activeGameStore = useActiveGameStore()
-const { boardState, selectedQuestion } = storeToRefs(activeGameStore)
+const { boardState, selectedQuestion, gameActionData } = storeToRefs(activeGameStore)
 const { selectCoordinates } = activeGameStore
-
 
 function isLetter(cell: Cell): boolean {
   return cell.correctState !== ''
@@ -18,46 +17,49 @@ function isSelected(cell: Cell): boolean {
   return selectedQuestion.value.answerMap.some(c => c.cordX === cell.cordX && c.cordY === cell.cordY)
 }
 
-
+function getTypedState(cell: Cell): string {
+  if (!selectedQuestion.value || !gameActionData.value) return ''
+  const typedCell = gameActionData.value.find(c => c.cordX === cell.cordX && c.cordY === cell.cordY)
+  return typedCell ? typedCell.state : ''
+}
 </script>
 
 <template>
-  <div class="flex flex-col">
-    <div v-for="(cellRow, rowIndex) of boardState" :key="rowIndex" class="flex flex-row justify-center">
-      <div v-for="cell of cellRow" :key="cell.cordX" @click="selectCoordinates(cell.cordX, cell.cordY)">
-        <div v-if="!isLetter(cell)" class="box empty"></div>
-        <div v-else>  
-          <div v-if="!cell.modifications?.length" class="box letter bg-white">{{ "" }}</div>
-          <div v-else-if="cell.modifications[0].actionType === 'placeholder'" class="box letter bg-highlight-400">{{ cell?.modifications[0].state }}</div>
-          <div v-else-if="cell.modifications[0].actionType === 'incorrectGuess'" class="box letter bg-secondary-400">{{ cell?.modifications[0].state }}</div>
-          <div v-else-if="cell.modifications[0].actionType === 'correctGuess'" class="box letter bg-green-400">{{ cell?.modifications[0].state }}</div>
+  <div class="flex flex-col gap-1 items-center justify-center p-6 app-card max-w-fit mx-auto">
+    <div v-for="(cellRow, rowIndex) of boardState" :key="rowIndex" class="flex flex-row gap-1">
+      <div v-for="cell of cellRow" :key="cell.cordX" @click="selectCoordinates(cell.cordX, cell.cordY)" class="cursor-pointer">
+        <div v-if="!isLetter(cell)" class="cell empty rounded"></div>
+        <div v-else>
+          <div :class="[
+            'cell letter rounded font-mono font-bold text-lg flex items-center justify-center transition-all duration-150 select-none border',
+            isSelected(cell) ? 'bg-[var(--pastel-yellow)] text-slate-900 border-[var(--pastel-yellow)] scale-105 shadow-sm' : '',
+            !cell.modifications?.length && !isSelected(cell) ? 'bg-[var(--bg-cell-letter)] text-[var(--text-primary)] border-[var(--border-app)] hover:border-[var(--border-hover)]' : '',
+            cell.modifications?.length && cell.modifications[0].actionType === 'placeholder' && !isSelected(cell) ? 'bg-[var(--bg-cell-letter)] text-[var(--text-primary)] border-[var(--pastel-yellow)] border-2' : '',
+            cell.modifications?.length && cell.modifications[0].actionType === 'incorrectGuess' && !isSelected(cell) ? 'bg-[var(--pastel-red)] text-slate-900 border-[var(--pastel-red)]' : '',
+            cell.modifications?.length && cell.modifications[0].actionType === 'correctGuess' && !isSelected(cell) ? 'bg-[var(--pastel-green)] text-slate-900 border-[var(--pastel-green)]' : '',
+          ]">
+            {{ isSelected(cell) ? getTypedState(cell) : (cell.modifications?.length ? cell.modifications[0].state : '') }}
+          </div>
         </div>
       </div>
     </div>
   </div>
 </template>
 
-
-
-
 <style scoped>
-.box {
-  @apply w-6 h-6 border text-center text-black;
+.cell {
+  width: 2.25rem;
+  height: 2.25rem;
+  text-align: center;
 }
 
 .empty {
-  @apply bg-black;
+  background-color: var(--bg-cell-empty);
+  border: 1px solid var(--border-app);
+  opacity: 0.4;
 }
 
 .letter {
-  @apply border-black;
-}
-
-.letter:hover {
-  @apply border border-secondary-500;
-}
-
-.selected {
-  @apply bg-highlight-300;
+  text-transform: uppercase;
 }
 </style>

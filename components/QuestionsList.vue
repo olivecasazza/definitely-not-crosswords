@@ -2,63 +2,79 @@
 import { Question } from "@prisma/client";
 import { storeToRefs } from "pinia";
 import { useActiveGameStore } from "~/stores/activeGame";
-import { onClickOutside } from '@vueuse/core'
 import { OnClickOutside } from '@vueuse/components'
 
 const activeGameStore = useActiveGameStore();
 const { submitActions, selectQuestion, unSelect } = activeGameStore;
 const { selectedQuestion, filteredQuestions, gameActionData } = storeToRefs(activeGameStore);
 
-
 function isSelected(question: Question): boolean {
   if (!selectedQuestion?.value) return false;
-  const isSelected = selectedQuestion.value.id === question.id;
-  if (isSelected) console.log(gameActionData?.value);
-  return isSelected;
+  return selectedQuestion.value.id === question.id;
 }
 
 function keyup(e: KeyboardEvent) {
-  e.preventDefault();
-  if (e.keyCode >= 48 && e.keyCode <= 57) {
-    e.target?.parentElement?.nextSibling?.firstChild?.focus();
-  }
-  if (e.keyCode >= 65 && e.keyCode <= 90) {
-    e.target?.parentElement?.nextSibling?.firstChild?.focus();
+  if ((e.keyCode >= 48 && e.keyCode <= 57) || (e.keyCode >= 65 && e.keyCode <= 90)) {
+    const nextInput = (e.target as HTMLElement)?.nextElementSibling as HTMLInputElement | null;
+    if (nextInput && nextInput.tagName === 'INPUT') {
+      nextInput.focus();
+      nextInput.select();
+    }
+  } else if (e.key === 'Backspace') {
+    const prevInput = (e.target as HTMLElement)?.previousElementSibling as HTMLInputElement | null;
+    if (prevInput && prevInput.tagName === 'INPUT') {
+      prevInput.focus();
+      prevInput.select();
+    }
   }
 }
-
-// onClickOutside(target, (event) => console.log(event))
-
 </script>
 
 <template>
-  <div class="flex flex-col">
-    <div class="flex-grow">
+  <div class="flex flex-col gap-3 p-4 app-card max-h-[400px] overflow-y-auto w-full max-w-xl mx-auto">
+    <h2 class="text-[var(--text-secondary)] font-semibold text-xs tracking-wider uppercase px-1">Clues</h2>
+    <div class="flex flex-col gap-2">
       <div v-for="question in filteredQuestions" :key="question.id" :ref="question.id" @click="selectQuestion(question)">
-        <div class="flex flex-row  border border-white">
-          <div class="max-w-min p-1 border border-primary-500 text-white">
+        <div :class="[
+          'flex flex-row gap-3 p-3 rounded border transition-all duration-150 cursor-pointer',
+          isSelected(question) ? 'bg-[var(--bg-cell-empty)] border-[var(--pastel-yellow)]' : 'bg-transparent border-[var(--border-app)] hover:border-[var(--border-hover)]'
+        ]">
+          <div :class="[
+            'w-8 h-8 rounded flex items-center justify-center font-mono font-bold text-sm border shrink-0',
+            isSelected(question) ? 'bg-[var(--pastel-yellow)] text-slate-900 border-[var(--pastel-yellow)]' : 'bg-[var(--bg-cell-empty)] text-[var(--text-secondary)] border-[var(--border-app)]'
+          ]">
             {{ question.number }}
           </div>
-          <div class="flex flex-col w-full">
-            <div class="flex-grow text-white">
+          
+          <div class="flex flex-col w-full gap-2">
+            <div :class="[
+              'text-sm font-medium leading-relaxed',
+              isSelected(question) ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
+            ]">
               {{ question.questionText }}
             </div>
-            <div v-if="isSelected(question)" class="flex flex-row">
-              <OnClickOutside @trigger="unSelect">
-                <input v-for="modification of gameActionData" :class="'box letter selected'" v-model="modification.state"
+            
+            <div v-if="isSelected(question)" class="flex flex-col gap-2 mt-1" @click.stop>
+              <OnClickOutside @trigger="unSelect" class="flex flex-wrap items-center gap-1.5">
+                <input v-for="modification of gameActionData" 
+                  :key="modification.cordX + '-' + modification.cordY"
+                  class="w-9 h-9 app-input text-center text-lg font-bold uppercase font-mono" 
+                  v-model="modification.state"
+                  @input="modification.state = modification.state.toUpperCase()"
                   type="text" maxlength="1" @keyup="keyup" />
-                <div class="w-full"></div>
-                <button class="app-button text-sm link" @click="submitActions('guess', question)">
-                  guess
+                
+                <button class="app-btn app-btn-active ml-2" @click="submitActions('guess', question)">
+                  Guess
                 </button>
               </OnClickOutside>
             </div>
-            <div v-else class="flex flex-row">
-              <div v-for="cell in question.answerMap"  @click="selectQuestion(question)">
-                <div v-if="!cell.modifications?.length" class="box letter bg-white">{{ "" }}</div>
-                <div v-else-if="cell.modifications[0].actionType === 'placeholder'" class="box letter bg-highlight-400">{{ cell?.modifications[0].state }}</div>
-                <div v-else-if="cell.modifications[0].actionType === 'incorrectGuess'" class="box letter bg-secondary-400">{{ cell?.modifications[0].state }}</div>
-                <div v-else-if="cell.modifications[0].actionType === 'correctGuess'" class="box letter bg-green-400">{{ cell?.modifications[0].state }}</div>
+            
+            <div v-else class="flex flex-row gap-1">
+              <div v-for="cell in question.answerMap" :key="cell.cordX + '-' + cell.cordY">
+                <div v-if="!cell.modifications?.length" class="w-5 h-5 rounded bg-[var(--bg-cell-empty)] border border-[var(--border-app)] opacity-30"></div>
+                <div v-else-if="cell.modifications[0].actionType === 'placeholder'" class="w-5 h-5 rounded flex items-center justify-center font-mono font-bold text-xxs bg-[var(--bg-cell-letter)] text-[var(--text-primary)] border border-[var(--pastel-yellow)] uppercase">{{ cell?.modifications[0].state }}</div>
+                <div v-else-if="cell.modifications[0].actionType === 'incorrectGuess'" class="w-5 h-5 rounded flex items-center justify-center font-mono font-bold text-xxs bg-[var(--pastel-red)] text-slate-900 uppercase">{{ cell?.modifications[0].state }}</div>
+                <div v-else-if="cell.modifications[0].actionType === 'correctGuess'" class="w-5 h-5 rounded flex items-center justify-center font-mono font-bold text-xxs bg-[var(--pastel-green)] text-slate-900 uppercase">{{ cell?.modifications[0].state }}</div>
               </div>
             </div>
           </div>
@@ -68,27 +84,8 @@ function keyup(e: KeyboardEvent) {
   </div>
 </template>
 
-<style>
-.correct { 
-  @apply bg-green-200;
-}
-.box {
-  @apply w-6 h-6 border text-center text-black;
-}
-
-.empty {
-  @apply bg-black;
-}
-
-.letter {
-  @apply border-black;
-}
-
-.letter:hover {
-  @apply border border-secondary-500;
-}
-
-.selected {
-  @apply bg-highlight-300;
+<style scoped>
+.text-xxs {
+  font-size: 0.65rem;
 }
 </style>

@@ -7,7 +7,7 @@ import {
   Question,
   QuestionDirectionEnum,
 } from "@prisma/client";
-import { Ref } from "nuxt/dist/app/compat/capi";
+import { Ref } from "vue";
 import { defineStore, storeToRefs } from "pinia";
 import { BoardState, Cell } from "~/lib/game";
 import { GetBoardSize } from "~/lib/game/boardSizeFromQuestions";
@@ -151,15 +151,25 @@ export const useActiveGameStore = defineStore("activeGame", () => {
   }
 
   function selectCoordinates(x: number, y: number) {
-    const questionMatch = questions.value.find(
+    // 1. Try to find a question in the current selected direction first
+    let questionMatch = questions.value.find(
       (q: WithComputedProperties<Question>) =>
         q.direction === selectedDirection.value &&
         q.answerMap.some((cell: Cell) => x === cell.cordX && y === cell.cordY)
     );
+
+    // 2. If not found, fall back to any question covering this coordinate
     if (!questionMatch) {
-      throw new Error("could not find matching questions");
+      questionMatch = questions.value.find(
+        (q: WithComputedProperties<Question>) =>
+          q.answerMap.some((cell: Cell) => x === cell.cordX && y === cell.cordY)
+      );
     }
-    selectQuestion(questionMatch);
+
+    if (questionMatch) {
+      selectedDirection.value = questionMatch.direction;
+      selectQuestion(questionMatch);
+    }
   }
 
   function selectQuestion(question: WithComputedProperties<Question>) {
@@ -187,21 +197,33 @@ export const useActiveGameStore = defineStore("activeGame", () => {
     if (!gameActionData) {
       throw new Error("action was not defined during submit event.");
     }
-    if (actionType === "guess")
+    
+    let isCorrect = false;
+    if (actionType === "guess") {
+      isCorrect = checkIfCorrect(question, gameActionData.value);
       gameActionData.value = gameActionData.value.map((a) => {
-        a.actionType = checkIfCorrect(question, gameActionData.value)
+        a.actionType = isCorrect
           ? ("correctGuess" as GameActionTypeEnum)
           : ("incorrectGuess" as GameActionTypeEnum);
         return a;
       });
+    }
+
     const { email } = storeToRefs(useUserStore());
     const route = useRoute();
     const { $client } = useNuxtApp();
+    
     await $client.activeGame.addActions.mutate({
       id: route.params.id as string,
       userEmail: email.value as string,
       actions: gameActionData.value,
     });
+
+    if (actionType === "guess" && isCorrect) {
+      // Auto-clear selection on correct guess for great UX flow
+      selectedQuestion.value = null;
+      gameActionData.value = [];
+    }
   }
 
   function checkIfCorrect(
@@ -209,7 +231,7 @@ export const useActiveGameStore = defineStore("activeGame", () => {
     actionData: GameAction[]
   ) {
     return question.answerMap.every(
-      (q, index) => q.correctState === actionData[index].state
+      (q, index) => q.correctState.toUpperCase() === (actionData[index]?.state || "").toUpperCase()
     );
   }
 

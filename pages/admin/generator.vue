@@ -1,0 +1,221 @@
+<template>
+  <main class="flex-grow p-6 w-full max-w-4xl mx-auto flex flex-col gap-6">
+    <div class="app-card p-6 flex flex-col gap-6">
+      <div class="border-b border-[var(--border-app)] pb-4">
+        <h1 class="text-lg font-bold font-mono tracking-wider">CROSSWORD GENERATOR</h1>
+      </div>
+
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-wrap items-end gap-3">
+          <div class="flex min-w-[280px] flex-1 flex-col gap-1.5">
+            <label class="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider" for="topic">Topic</label>
+            <input
+              id="topic"
+              v-model="form.topic"
+              class="app-input px-3 py-2 text-sm w-full"
+              type="text"
+            />
+          </div>
+
+          <button
+            class="app-btn app-btn-active h-[38px] min-w-[120px] font-bold"
+            :disabled="isGenerating || !user?.user?.email"
+            @click="generate"
+          >
+            {{ isGenerating ? "Generating..." : "Generate" }}
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 md:grid-cols-6">
+          <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] uppercase tracking-wider">
+            Width
+            <input v-model.number="form.width" class="app-input px-2 py-1.5 text-sm" type="number" min="3" max="50" />
+          </label>
+          <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] uppercase tracking-wider">
+            Height
+            <input v-model.number="form.height" class="app-input px-2 py-1.5 text-sm" type="number" min="3" max="50" />
+          </label>
+          <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] uppercase tracking-wider">
+            Min Len
+            <input v-model.number="form.minWordLength" class="app-input px-2 py-1.5 text-sm" type="number" min="2" max="50" />
+          </label>
+          <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] uppercase tracking-wider">
+            Max Len
+            <input v-model.number="form.maxWordLength" class="app-input px-2 py-1.5 text-sm" type="number" min="2" max="50" />
+          </label>
+          <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] uppercase tracking-wider">
+            Answers
+            <input v-model.number="form.targetWords" class="app-input px-2 py-1.5 text-sm" type="number" min="1" max="250" />
+          </label>
+          <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] uppercase tracking-wider">
+            Runs
+            <input v-model.number="form.runs" class="app-input px-2 py-1.5 text-sm" type="number" min="1" max="100" />
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="errorMessage" class="app-card border-[var(--pastel-red)] bg-[var(--pastel-red)]/10 p-4 text-sm text-[var(--pastel-red)]">
+      {{ errorMessage }}
+    </div>
+
+    <div v-if="generatedGame" class="app-card border-[var(--pastel-green)] bg-[var(--pastel-green)]/10 p-4 flex flex-row items-center justify-between">
+      <div>
+        <div class="text-sm font-semibold">{{ generatedGame.title }}</div>
+        <div class="text-xs text-[var(--text-secondary)] mt-0.5">
+          {{ generatedGame.questions.length }} answers saved
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button
+          v-if="!generatedGame.published"
+          class="app-btn app-btn-active font-bold"
+          :disabled="publishingGameId === generatedGame.id"
+          @click="publishGame(generatedGame.id)"
+        >
+          {{ publishingGameId === generatedGame.id ? "Publishing..." : "Publish" }}
+        </button>
+        <button class="app-btn" @click="navigateTo('/games')">
+          View Games
+        </button>
+      </div>
+    </div>
+
+    <div class="app-card overflow-hidden">
+      <div class="p-4 border-b border-[var(--border-app)] flex items-center justify-between">
+        <h2 class="text-sm font-bold font-mono tracking-wider">GENERATION JOBS</h2>
+        <button class="app-btn text-xs font-mono uppercase" @click="refreshJobs">Refresh</button>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm divide-y divide-[var(--border-app)]">
+          <thead class="bg-[var(--bg-cell-empty)] text-xs uppercase text-[var(--text-secondary)] font-mono">
+            <tr>
+              <th class="px-4 py-3">Status</th>
+              <th class="px-4 py-3">Topic</th>
+              <th class="px-4 py-3">Grid</th>
+              <th class="px-4 py-3">Game</th>
+              <th class="px-4 py-3">Action</th>
+              <th class="px-4 py-3">Created</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--border-app)] font-mono text-xs">
+            <tr v-for="job in jobs" :key="job.id">
+              <td class="px-4 py-3">
+                <span :class="[
+                  'px-2 py-0.5 rounded text-[10px] uppercase font-bold',
+                  job.status === 'COMPLETED' ? 'bg-[var(--pastel-green)] text-slate-900' : 
+                  job.status === 'FAILED' ? 'bg-[var(--pastel-red)] text-slate-900' : 
+                  'bg-[var(--pastel-yellow)] text-slate-900'
+                ]">{{ job.status }}</span>
+              </td>
+              <td class="px-4 py-3 text-[var(--text-primary)] font-sans text-sm font-medium">{{ job.topic }}</td>
+              <td class="px-4 py-3 text-[var(--text-secondary)]">{{ job.width }}x{{ job.height }}</td>
+              <td class="px-4 py-3">
+                <div v-if="job.resultGame" class="flex flex-col gap-0.5">
+                  <span class="text-[var(--text-primary)] font-sans text-sm font-medium">{{ job.resultGame.title }}</span>
+                  <span class="text-[10px] uppercase font-bold text-[var(--text-secondary)]">
+                    {{ job.resultGame.published ? "published" : "draft" }}
+                  </span>
+                </div>
+                <span v-else class="text-[var(--text-secondary)]">-</span>
+              </td>
+              <td class="px-4 py-3">
+                <button
+                  v-if="job.resultGame && !job.resultGame.published"
+                  class="app-btn text-xs"
+                  :disabled="publishingGameId === job.resultGame.id"
+                  @click="publishGame(job.resultGame.id)"
+                >
+                  Publish
+                </button>
+                <span v-else class="text-[var(--text-secondary)]">-</span>
+              </td>
+              <td class="px-4 py-3 text-[var(--text-secondary)]">{{ new Date(job.createdAt).toLocaleDateString() }}</td>
+            </tr>
+            <tr v-if="!jobs.length">
+              <td class="px-4 py-6 text-center text-[var(--text-secondary)]" colspan="6">No generation jobs found.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</template>
+
+<script setup lang="ts">
+definePageMeta({
+  middleware: "auth",
+});
+
+const { data: user } = useAuth();
+const { $client } = useNuxtApp();
+
+const form = reactive({
+  topic: "space exploration and planetary science",
+  width: 21,
+  height: 21,
+  minWordLength: 3,
+  maxWordLength: 12,
+  targetWords: 42,
+  runs: 20,
+  maxAttempts: 180,
+});
+
+const jobs = ref<any[]>([]);
+const generatedGame = ref<any | null>(null);
+const errorMessage = ref("");
+const isGenerating = ref(false);
+const publishingGameId = ref<string | null>(null);
+
+async function refreshJobs() {
+  if (!user.value?.user?.email) return;
+  jobs.value = await $client.generator.listJobs.query({
+    userEmail: user.value.user.email,
+    take: 25,
+  });
+}
+
+async function generate() {
+  if (!user.value?.user?.email) return;
+  isGenerating.value = true;
+  errorMessage.value = "";
+  generatedGame.value = null;
+
+  try {
+    const result = await $client.generator.generateDraftGame.mutate({
+      userEmail: user.value.user.email,
+      params: { ...form },
+    });
+    generatedGame.value = result.game;
+    await refreshJobs();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    isGenerating.value = false;
+  }
+}
+
+async function publishGame(gameId: string) {
+  if (!user.value?.user?.email) return;
+  publishingGameId.value = gameId;
+  errorMessage.value = "";
+
+  try {
+    const game = await $client.generator.publishGeneratedGame.mutate({
+      userEmail: user.value.user.email,
+      gameId,
+    });
+    if (generatedGame.value?.id === game.id) {
+      generatedGame.value = { ...generatedGame.value, published: true };
+    }
+    await refreshJobs();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    publishingGameId.value = null;
+  }
+}
+
+await refreshJobs();
+</script>

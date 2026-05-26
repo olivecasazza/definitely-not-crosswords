@@ -8,7 +8,6 @@ export default defineNuxtConfig({
     '@sidebase/nuxt-auth',
     '@nuxtjs/tailwindcss',
     'nuxt-svgo',
-    '@huntersofbook/naive-ui-nuxt',
     '@pinia/nuxt',
     '@vueuse/nuxt'
   ],

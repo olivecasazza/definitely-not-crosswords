@@ -11,7 +11,7 @@ fontFamily['sans'] = [
 ];
 
 module.exports = {
-  darkMode: 'media', // or 'media' or 'class'
+  darkMode: 'class', // or 'media' or 'class'
   theme: {
     fontFamily,
     extend: {

@@ -1,9 +1,14 @@
 <template>
-  <div>
-    <div class="app-border mt-1 p-1 w-min">
-      <img :src="image" alt="" srcset="">
-      <h1>name: {{ name }}</h1>
-      <h1>email: {{ email }}</h1>
+  <div class="p-6 flex flex-col items-center justify-center flex-grow">
+    <div class="app-card p-6 flex flex-col items-center gap-4 w-full max-w-sm">
+      <img v-if="image" :src="image" alt="Profile" class="w-20 h-20 rounded-full border border-[var(--border-app)] shadow-sm">
+      <div v-else class="w-20 h-20 rounded-full border border-[var(--border-app)] bg-[var(--bg-cell-empty)] flex items-center justify-center font-bold text-xl text-[var(--text-secondary)]">
+        {{ name?.charAt(0) || 'U' }}
+      </div>
+      <div class="text-center">
+        <h2 class="text-lg font-bold font-mono text-[var(--text-primary)]">{{ name }}</h2>
+        <p class="text-sm font-mono text-[var(--text-secondary)]">{{ email }}</p>
+      </div>
     </div>
   </div>
 </template>
@@ -18,5 +23,4 @@ definePageMeta({
 
 const userStore = useUserStore()
 const { image, name, email } = storeToRefs(userStore)
-
 </script>

@@ -91,7 +91,7 @@ body {
 
 .app-btn-active {
   color: var(--text-primary);
-  border-color: var(--pastel-yellow);
+  border-color: var(--color-primary);
 }
 
 .app-input {
@@ -104,5 +104,5 @@ body {
 }
 
 .app-input:focus {
-  border-color: var(--pastel-yellow);
+  border-color: var(--color-primary);
 }

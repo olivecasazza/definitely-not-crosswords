@@ -1,13 +1,18 @@
 <template>
-  <div class="flex-1 flex flex-col overflow-y-hidden p-6 gap-4 w-full max-w-4xl mx-auto">
-    <main class="flex-1 overflow-y-auto flex flex-col gap-4">
-      <LoadingBar v-if="activeGameLoading" />
-      <div v-else class="flex flex-col gap-6">
+  <div class="flex-grow w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 overflow-y-auto">
+    <LoadingBar v-if="activeGameLoading" />
+    <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <!-- Left Column: Game Board and the Active Clue Panel -->
+      <div class="lg:col-span-7 flex flex-col gap-6 items-center w-full">
         <GameBoard />
+        <ActiveClueCard />
+      </div>
+
+      <!-- Right Column: Clues List -->
+      <div class="lg:col-span-5 w-full flex flex-col lg:max-h-[calc(100vh-120px)] overflow-hidden">
         <QuestionsList />
       </div>
-    </main>
-    <QuestionDirectionFilterBar />
+    </div>
   </div>
 </template>
 

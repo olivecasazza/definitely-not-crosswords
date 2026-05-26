@@ -37,6 +37,7 @@ export const useActiveGameStore = defineStore("activeGame", () => {
 
   // game action reactive state
   const gameActionData = ref([] as GameAction[]);
+  const focusedIndex = ref(null as number | null);
 
   // getters
   const acrossQuestions = computed(() =>
@@ -132,6 +133,7 @@ export const useActiveGameStore = defineStore("activeGame", () => {
     if(selectedQuestion.value && isActionsModified) submitActions("placeholder", selectedQuestion.value);
     selectedQuestion.value = null;
     gameActionData.value = [];
+    focusedIndex.value = null;
   }
 
   function filterDown() {
@@ -188,6 +190,7 @@ export const useActiveGameStore = defineStore("activeGame", () => {
       } as GameAction;
     });
     selectedQuestion.value = question;
+    focusedIndex.value = 0;
   }
 
   async function submitActions(
@@ -223,6 +226,7 @@ export const useActiveGameStore = defineStore("activeGame", () => {
       // Auto-clear selection on correct guess for great UX flow
       selectedQuestion.value = null;
       gameActionData.value = [];
+      focusedIndex.value = null;
     }
   }
 
@@ -245,6 +249,7 @@ export const useActiveGameStore = defineStore("activeGame", () => {
     actions,
     gameActionData,
     selectedQuestion,
+    focusedIndex,
     load,
     selectQuestion,
     selectCoordinates,

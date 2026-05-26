@@ -55,11 +55,20 @@
       </div>
     </div>
 
-    <div v-if="errorMessage" class="app-card border-[var(--pastel-red)] bg-[var(--pastel-red)]/10 p-4 text-sm text-[var(--pastel-red)]">
+    <GenerationProgress
+      v-if="genStatus !== 'idle'"
+      :log="genLog"
+      :progress="genProgress"
+      :running="isGenerating"
+      :started-at="genStartedAt"
+      :status="genStatus"
+    />
+
+    <div v-if="errorMessage" class="app-card border-[var(--color-error)] bg-[var(--color-error)]/10 p-4 text-sm text-[var(--color-error)]">
       {{ errorMessage }}
     </div>
 
-    <div v-if="generatedGame" class="app-card border-[var(--pastel-green)] bg-[var(--pastel-green)]/10 p-4 flex flex-row items-center justify-between">
+    <div v-if="generatedGame" class="app-card border-[var(--color-success)] bg-[var(--color-success)]/10 p-4 flex flex-row items-center justify-between">
       <div>
         <div class="text-sm font-semibold">{{ generatedGame.title }}</div>
         <div class="text-xs text-[var(--text-secondary)] mt-0.5">
@@ -104,9 +113,9 @@
               <td class="px-4 py-3">
                 <span :class="[
                   'px-2 py-0.5 rounded text-[10px] uppercase font-bold',
-                  job.status === 'COMPLETED' ? 'bg-[var(--pastel-green)] text-slate-900' : 
-                  job.status === 'FAILED' ? 'bg-[var(--pastel-red)] text-slate-900' : 
-                  'bg-[var(--pastel-yellow)] text-slate-900'
+                  job.status === 'SUCCEEDED' ? 'bg-[var(--color-success)] text-slate-900' : 
+                  job.status === 'FAILED' ? 'bg-[var(--color-error)] text-slate-900' :
+                  'bg-[var(--color-warning)] text-slate-900'
                 ]">{{ job.status }}</span>
               </td>
               <td class="px-4 py-3 text-[var(--text-primary)] font-sans text-sm font-medium">{{ job.topic }}</td>
@@ -183,25 +192,75 @@ async function refreshJobs() {
   });
 }
 
-async function generate() {
-  if (!user.value?.user?.email) return;
-  isGenerating.value = true;
-  errorMessage.value = "";
-  generatedGame.value = null;
+async function handleGenEvent(event: any) {
+  if (event.type === "progress") {
+    genProgress.value = {
+      stage: event.stage,
+      current: event.current,
+      total: event.total,
+      message: event.message,
+    };
+    return;
+  }
 
-  try {
-    const result = await $client.generator.generateDraftGame.mutate({
-      userEmail: user.value.user.email,
-      params: { ...form },
-    });
-    generatedGame.value = result.game;
+  genLog.value = [...genLog.value, event];
+
+  if (event.type === "completed") {
+    genStatus.value = "succeeded";
+    genProgress.value = null;
+    try {
+      const job = await $client.generator.getJob.query({
+        userEmail: user.value!.user!.email!,
+        id: event.jobId,
+      });
+      generatedGame.value = job?.resultGame ?? null;
+    } catch {
+      // The jobs table refresh below still surfaces the result.
+    }
     await refreshJobs();
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error);
-  } finally {
-    isGenerating.value = false;
+  } else if (event.type === "failed") {
+    genStatus.value = "failed";
+    errorMessage.value = event.error;
   }
 }
+
+function generate() {
+  if (!user.value?.user?.email) return;
+
+  // Reset for a fresh run and drop any previous subscription.
+  genSub?.unsubscribe();
+  errorMessage.value = "";
+  generatedGame.value = null;
+  genLog.value = [];
+  genProgress.value = null;
+  genStatus.value = "running";
+  genStartedAt.value = Date.now();
+  isGenerating.value = true;
+
+  genSub = $client.generator.runGeneration.subscribe(
+    {
+      userEmail: user.value.user.email,
+      params: { ...form },
+    },
+    {
+      onData(event: any) {
+        void handleGenEvent(event);
+      },
+      onError(error: any) {
+        errorMessage.value = error?.message ?? String(error);
+        genStatus.value = "failed";
+        genLog.value = [...genLog.value, { type: "failed", error: errorMessage.value, at: Date.now() }];
+        isGenerating.value = false;
+      },
+      onComplete() {
+        isGenerating.value = false;
+        void refreshJobs();
+      },
+    }
+  );
+}
+
+onBeforeUnmount(() => genSub?.unsubscribe());
 
 async function publishGame(gameId: string) {
   if (!user.value?.user?.email) return;

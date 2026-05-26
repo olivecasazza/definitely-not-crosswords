@@ -24,7 +24,7 @@ export default defineNuxtConfig({
   nitro: {
     plugins: ['~/nitro/ws'],
     externals: {
-      external: ['@prisma/client', '.prisma/client']
+      trace: false
     }
   }
 })

@@ -7,12 +7,14 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "seed:dictionary": "node scripts/seed_wordnet_dictionary.mjs",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@auth/prisma-adapter": "^1.0.0",
     "@huntersofbook/naive-ui-nuxt": "^1.0.0",
     "@nuxtjs/tailwindcss": "^6.8.0",
+    "@playwright/test": "^1.60.0",
     "@prisma/client": "^6.18.0",
     "@sidebase/core": "^0.1.4",
     "@sidebase/nuxt-auth": "^0.6.0-beta.2",

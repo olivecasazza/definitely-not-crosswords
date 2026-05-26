@@ -7,3 +7,8 @@ node_modules
 .env
 dist
 .DS_Store
+
+# Playwright
+playwright-report/
+test-results/
+playwright/.auth/

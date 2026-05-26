@@ -4,9 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    sops-nix.url = "github:Mic92/sops-nix";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, sops-nix }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -22,6 +23,8 @@
             typescript-language-server
             openssl
             postgresql
+            sops
+            age
           ];
 
           shellHook = ''
@@ -36,6 +39,17 @@
             echo "Node: $(node --version)"
             echo "pnpm: $(pnpm --version)"
             echo "Prisma Engines mapped to nixpkgs path."
+
+            # Automatically decrypt secrets.yaml if it exists
+            if [ -f secrets.yaml ]; then
+              echo "🔒 secrets.yaml detected. Decrypting environment variables..."
+              export KEYCLOAK_CLIENT_SECRET=$(sops decrypt --extract '["KEYCLOAK_CLIENT_SECRET"]' secrets.yaml 2>/dev/null || echo "failed-to-decrypt")
+              export NEXTAUTH_SECRET=$(sops decrypt --extract '["NEXTAUTH_SECRET"]' secrets.yaml 2>/dev/null || echo "failed-to-decrypt")
+              export DATABASE_URL=$(sops decrypt --extract '["DATABASE_URL"]' secrets.yaml 2>/dev/null || echo "failed-to-decrypt")
+              echo "✅ Environment variables populated from decrypted secrets.yaml."
+            else
+              echo "💡 Tip: Copy secrets.yaml.example to secrets.yaml and run 'sops secrets.yaml' to encrypt/decrypt local secrets."
+            fi
           '';
         };
       });

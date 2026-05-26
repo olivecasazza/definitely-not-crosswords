@@ -1,0 +1,10 @@
+keys:
+  - &root age13qgzftyza90rxfff80z07v8yyt7m26aydmgzqwmpccrs08a3s5pqvd6xxl
+  - &olive age10m0l4gdmmsjzg8v48ah4af8c5fxthcs2f3g2qee92p8jtrm87g8qp7a9um
+
+creation_rules:
+  - path_regex: secrets\.yaml$
+    key_groups:
+      - age:
+          - *root
+          - *olive

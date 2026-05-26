@@ -1,0 +1,62 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  id-token: write # Required for Google OIDC Workload Identity Federation
+
+env:
+  GAR_LOCATION: us-central1
+  GAR_REGISTRY: us-central1-docker.pkg.dev
+  PROJECT_ID: casazza-compute
+  REPOSITORY: nixlab
+  IMAGE: definitely-not-crosswords
+  WIF_PROVIDER: projects/casazza-compute/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+  WIF_SERVICE_ACCOUNT: crosswords-ci@casazza-compute.iam.gserviceaccount.com
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Authenticate to Google Cloud via OIDC Workload Identity Federation
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+
+      # Login to Google Artifact Registry
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GAR_REGISTRY }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      # Set up Docker Buildx for premium layering and caching
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push the image tagged with git commit SHA and latest
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.GAR_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.GAR_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

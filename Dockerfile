@@ -47,7 +47,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml .npmrc pnpm-workspace.yaml* ./
 
 # Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # Copy standalone .output directory from builder stage
 COPY --from=builder /app/.output /app/.output

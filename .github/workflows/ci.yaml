@@ -20,7 +20,7 @@ env:
   PROJECT_ID: casazza-identity
   REPOSITORY: nixlab
   IMAGE: definitely-not-crosswords
-  WIF_PROVIDER: projects/casazza-identity/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+  WIF_PROVIDER: projects/943444128204/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
   WIF_SERVICE_ACCOUNT: crosswords-ci@casazza-identity.iam.gserviceaccount.com
 
 jobs:

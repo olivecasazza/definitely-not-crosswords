@@ -1,0 +1,122 @@
+# Default values for definitely-not-crosswords.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/olivecasazza/definitely-not-crosswords
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 3000
+  wsPort: 3002
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+    # nginx.ingress.kubernetes.io/websocket-services: "definitely-not-crosswords"
+  hosts:
+    - host: definitely-not-crosswords.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: definitely-not-crosswords-tls
+  #    hosts:
+  #      - definitely-not-crosswords.local
+
+# Authentication (Keycloak via @sidebase/nuxt-auth)
+auth:
+  createSecret: true
+  existingSecret: ""  # If specified, references an existing Secret instead of creating one
+  clientId: "crosswords"
+  clientSecret: "supersecretcrosswords"
+  issuer: "https://auth.casazza.io/realms/master"
+  origin: "https://definitely-not-crosswords.local"
+  nextAuthSecret: "supersecretsecret"
+
+# Database Configuration (PostgreSQL)
+database:
+  # CloudNative-PG Integration
+  cnpg:
+    enabled: false
+    instances: 3
+    storageSize: 10Gi
+    databaseName: definitely_not_crosswords
+    ownerName: postgres
+  # External PostgreSQL Settings (used if cnpg.enabled is false)
+  external:
+    url: "" # e.g. postgresql://postgres:postgres@localhost:5432/postgres
+    existingSecret: ""
+    existingSecretKey: "DATABASE_URL"
+
+# Observability Configuration
+observability:
+  serviceMonitor:
+    enabled: false
+    interval: 15s
+    path: /api/metrics
+    labels: {}
+      # release: prometheus
+  grafanaDashboard:
+    enabled: false
+    labels:
+      grafana_dashboard: "1"
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines or set them to values appropriate for your application.
+  # limits:
+  #   cpu: 500m
+  #   memory: 512Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

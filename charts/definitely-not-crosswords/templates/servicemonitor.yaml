@@ -1,0 +1,19 @@
+{{- if .Values.observability.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "definitely-not-crosswords.fullname" . }}
+  labels:
+    {{- include "definitely-not-crosswords.labels" . | nindent 4 }}
+    {{- with .Values.observability.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "definitely-not-crosswords.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.observability.serviceMonitor.path | quote }}
+      interval: {{ .Values.observability.serviceMonitor.interval | quote }}
+{{- end -}}

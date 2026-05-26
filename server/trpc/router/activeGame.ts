@@ -3,6 +3,7 @@ import { publicProcedure, router } from "../trpc";
 import { z } from "zod";
 import { ee, prisma } from ".";
 import { GameAction, Prisma } from "@prisma/client";
+import crypto from "node:crypto";
 
 export const activeGameRouter = router({
   onAddActions: publicProcedure.subscription(() => {
@@ -34,18 +35,20 @@ export const activeGameRouter = router({
         where: { email: opts.input.userEmail },
         select: { id: true },
       });
-      await prisma.gameAction.createMany({
-        data: opts.input.actions.map((a) => {
-          return {
-            ...a,
-            userId: user?.id,
-            type: "GameAction",
-            submittedAt: new Date(),
-          } as Prisma.GameActionCreateManyInput;
-        }),
+      const createdActions = opts.input.actions.map((a) => {
+        return {
+          id: crypto.randomUUID(),
+          ...a,
+          userId: user?.id || "",
+          type: "GameAction",
+          submittedAt: new Date(),
+        } as GameAction;
       });
-      ee.emit("add-game", opts.input.actions);
-      return opts.input.actions;
+      await prisma.gameAction.createMany({
+        data: createdActions,
+      });
+      ee.emit("add-game", createdActions);
+      return createdActions;
     }),
 
   get: publicProcedure

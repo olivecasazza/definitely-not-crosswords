@@ -34,7 +34,10 @@ export const gameListRouter = router({
         ...activeGames.map((a) => a.game.id),
       ];
       const games = await prisma.game.findMany({
-        where: { id: { notIn: filterIds } },
+        where: {
+          id: { notIn: filterIds },
+          published: true,
+        },
       });
       const combinedGames = [...games, ...completedGames, ...activeGames];
       return combinedGames;

@@ -15,20 +15,32 @@ async function main() {
   await prisma.memberScore.deleteMany();
   await prisma.question.deleteMany();
 
-  // there should be an existing user (from auth0)
-  // todo: figure out a way to automate create/delete of test auth0 user
-  const testUser = await prisma.user.findUnique({
-    where: { email: "colanzio5@gmail.com" },
-    select: { id: true, email: true },
+  // upsert target users to guarantee seed success
+  const testUser = await prisma.user.upsert({
+    where: { email: "olive.casazza@gmail.com" },
+    update: { role: "ADMIN" },
+    create: {
+      email: "olive.casazza@gmail.com",
+      name: "Olive Casazza",
+      role: "ADMIN",
+    },
   });
-  if (!testUser?.id) throw Error("test user not found");
+
+  await prisma.user.upsert({
+    where: { email: "colanzio5@gmail.com" },
+    update: {},
+    create: {
+      email: "colanzio5@gmail.com",
+      name: "Colanzio",
+    },
+  });
 
   // create completed game
   const game01 = await prisma.game.create(testGame01CreateArgs)
   const gameMember = await prisma.gameMember.create({
     data: {
       isOwner: true,
-      user: { connect: { email: "colanzio5@gmail.com" } },
+      user: { connect: { email: "olive.casazza@gmail.com" } },
     }
   })
   await prisma.completedGame.create({
@@ -59,14 +71,14 @@ async function main() {
     },
   });
 
-  // create actove game
+  // create active game
   await prisma.activeGame.create({
     data: {
       gameMembers: {
         create: {
           isOwner: true,
           user: {
-            connect: { email: "colanzio5@gmail.com" },
+            connect: { email: "olive.casazza@gmail.com" },
           },
         },
       },

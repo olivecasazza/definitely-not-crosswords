@@ -2,7 +2,8 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -45,10 +46,12 @@ model User {
   name          String?
   email         String?      @unique
   emailVerified DateTime?
+  role          UserRole     @default(USER)
   accounts      Account[]
   sessions      Session[]
   gameMember    GameMember[]
   GameAction    GameAction[]
+  generatedJobs CrosswordGenerationJob[]
 
   UserSprite UserSprite?
 }
@@ -74,6 +77,35 @@ enum QuestionDirectionEnum {
   ACROSS
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum GameSource {
+  MANUAL
+  SCRAPED
+  GENERATED
+}
+
+enum GenerationStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum DictionarySource {
+  WORDNET
+}
+
+enum DictionaryPartOfSpeech {
+  NOUN
+  VERB
+  ADJECTIVE
+  ADVERB
+}
+
 model Question {
   id           String                @id @default(uuid())
   type         String                @default("Question")
@@ -94,9 +126,62 @@ model Game {
   updatedAt DateTime        @updatedAt
   title     String
   published Boolean         @default(false)
+  source    GameSource      @default(MANUAL)
   active    ActiveGame[]
   completed CompletedGame[]
   questions Question[]
+  generatorJob CrosswordGenerationJob?
+}
+
+model CrosswordGenerationJob {
+  id            String           @id @default(uuid())
+  status        GenerationStatus @default(QUEUED)
+  topic         String
+  width         Int
+  height        Int
+  minWordLength Int
+  maxWordLength Int
+  params        Json
+  metrics       Json?
+  error         String?          @db.Text
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  createdById   String
+  createdBy     User             @relation(fields: [createdById], references: [id])
+  resultGameId  String?          @unique
+  resultGame    Game?            @relation(fields: [resultGameId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([createdById, createdAt])
+}
+
+model DictionaryWord {
+  id          String                 @id @default(uuid())
+  word        String                 @unique
+  length      Int
+  source      DictionarySource       @default(WORDNET)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  definitions DictionaryDefinition[]
+
+  @@index([length])
+  @@index([source, length])
+}
+
+model DictionaryDefinition {
+  id           String                 @id @default(uuid())
+  wordId       String
+  word         DictionaryWord         @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  partOfSpeech DictionaryPartOfSpeech
+  synsetOffset String
+  lemma        String
+  gloss        String                 @db.Text
+  examples     Json?
+  source       DictionarySource       @default(WORDNET)
+  createdAt    DateTime               @default(now())
+
+  @@unique([wordId, partOfSpeech, synsetOffset])
+  @@index([partOfSpeech])
 }
 
 model ActiveGame {

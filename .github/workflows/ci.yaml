@@ -4,10 +4,14 @@ on:
   push:
     branches: [ main ]
   pull_request:
+    types: [ opened, synchronize, reopened, edited ]
     branches: [ main ]
+  pull_request_review:
+    types: [ submitted ]
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
   id-token: write # Required for Google OIDC Workload Identity Federation
 
 env:
@@ -60,3 +64,87 @@ jobs:
             ${{ env.GAR_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  conventional-commits-check:
+    name: Conventional Commits Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    outputs:
+      is_major: ${{ steps.check_commits.outputs.is_major }}
+    steps:
+      - name: Check commits for breaking changes
+        id: check_commits
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --json number --jq '.[0].number')
+          fi
+          
+          echo "PR Number: $PR_NUMBER"
+          
+          # Get PR commits and check for breaking changes in conventional format
+          # Breaking change:
+          #   - commit starts with type followed by !: e.g. "feat!: add new feature"
+          #   - OR commit body contains "BREAKING CHANGE" or "BREAKING CHANGES"
+          has_breaking=$(gh pr view $PR_NUMBER --json commits --jq '[.commits[].message | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
+          
+          if [ "$has_breaking" = "true" ]; then
+            echo "is_major=true" >> $GITHUB_OUTPUT
+            echo "is_major=true"
+            echo "🚨 BREAKING CHANGE (Major Version Change) detected in PR commits!"
+          else
+            echo "is_major=false" >> $GITHUB_OUTPUT
+            echo "is_major=false"
+            echo "✅ Only Minor/Patch commits detected."
+          fi
+
+  approval-check:
+    name: Dynamic Approval Check
+    runs-on: ubuntu-latest
+    needs: conventional-commits-check
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    steps:
+      - name: Verify Review Status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IS_MAJOR: ${{ needs.conventional-commits-check.outputs.is_major }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --json number --jq '.[0].number')
+          fi
+          
+          if [ "$IS_MAJOR" = "true" ]; then
+            # Major version: Require at least one APPROVED review
+            approvals=$(gh pr view $PR_NUMBER --json reviews --jq '[.reviews[] | select(.state == "APPROVED")] | length')
+            if [ "$approvals" -eq 0 ]; then
+              echo "❌ Major version change (breaking changes) requires at least one APPROVED pull request review to merge!"
+              exit 1
+            else
+              echo "✅ Major version change has $approvals approved reviews. Approval check passed."
+            fi
+          else
+            echo "✅ Minor/Patch version change. Approved review is not required."
+          fi
+
+  auto-merge:
+    name: Auto-Merge Minor/Patch PR
+    runs-on: ubuntu-latest
+    needs: [ build-and-push, conventional-commits-check, approval-check ]
+    if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
+    steps:
+      - name: Enable Auto-Merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --json number --jq '.[0].number')
+          fi
+          
+          # Enable GitHub auto-merge (squash and merge) for this minor/patch PR.
+          # This tells GitHub to merge it as soon as all status checks pass.
+          gh pr merge $PR_NUMBER --auto --squash
+          echo "✅ Dynamic auto-merge enabled for this PR (squash method)."

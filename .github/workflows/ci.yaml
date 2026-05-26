@@ -72,6 +72,9 @@ jobs:
     outputs:
       is_major: ${{ steps.check_commits.outputs.is_major }}
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Check commits for breaking changes
         id: check_commits
         env:
@@ -106,6 +109,9 @@ jobs:
     needs: conventional-commits-check
     if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Verify Review Status
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -135,6 +141,9 @@ jobs:
     needs: [ build-and-push, conventional-commits-check, approval-check ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Enable Auto-Merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -26,5 +26,8 @@ export default defineNuxtConfig({
     externals: {
       trace: false
     }
+  },
+  routeRules: {
+    '/stats': { ssr: false }
   }
 })

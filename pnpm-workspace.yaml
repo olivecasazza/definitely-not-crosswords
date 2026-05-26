@@ -1,15 +1,12 @@
-# pnpm workspace configuration for definitely-not-crosswords
-# Configures build/lifecycle script permissions for pnpm v11+
-
 allowBuilds:
-  "@parcel/watcher": true
-  "@prisma/client": true
-  "@prisma/engines": true
-  "bufferutil": true
-  "es5-ext": true
-  "esbuild": true
-  "prisma": true
-  "protobufjs": true
-  "sharp": true
-  "utf-8-validate": true
-  "vue-demi": true
+  '@parcel/watcher': true
+  '@prisma/client': true
+  '@prisma/engines': true
+  bufferutil: true
+  es5-ext: true
+  esbuild: true
+  prisma: true
+  protobufjs: true
+  sharp: true
+  utf-8-validate: true
+  vue-demi: true

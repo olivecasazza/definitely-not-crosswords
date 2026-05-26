@@ -121,15 +121,15 @@ watch(selectedQuestion, (newQuestion) => {
         </div>
         
         <!-- Guess Action Buttons Row -->
-        <div class="flex flex-row justify-end gap-3 mt-1 px-1">
+        <div class="flex flex-row justify-end gap-3 mt-1 px-1 select-none">
           <button 
-            class="app-btn text-xs font-mono uppercase tracking-wider" 
+            class="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg border border-[var(--border-app)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-hover)] hover:scale-[1.02] active:scale-[0.98] transition-all duration-150 cursor-pointer font-sans" 
             @click="unSelect"
           >
             Cancel
           </button>
           <button 
-            class="app-btn app-btn-active bg-gradient-to-r from-[rgba(254,234,153,0.05)] to-transparent text-xs font-mono uppercase tracking-wider font-semibold border-[var(--pastel-yellow)] hover:shadow-sm hover:scale-[1.02] active:scale-[0.98]" 
+            class="px-5 py-2 text-xs font-bold uppercase tracking-wider rounded-lg border border-[var(--pastel-yellow)] bg-gradient-to-r from-[var(--pastel-yellow)] to-[rgba(254,234,153,0.85)] text-slate-900 shadow-md hover:shadow-lg hover:scale-[1.03] active:scale-[0.97] transition-all duration-150 cursor-pointer font-sans" 
             @click="submitActions('guess', selectedQuestion)"
           >
             Guess

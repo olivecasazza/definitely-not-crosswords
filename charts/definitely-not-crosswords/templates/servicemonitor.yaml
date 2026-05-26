@@ -13,7 +13,7 @@ spec:
     matchLabels:
       {{- include "definitely-not-crosswords.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: http
+    - port: {{ .Values.observability.serviceMonitor.port | quote }}
       path: {{ .Values.observability.serviceMonitor.path | quote }}
       interval: {{ .Values.observability.serviceMonitor.interval | quote }}
 {{- end -}}

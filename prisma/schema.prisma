@@ -253,13 +253,16 @@ model GameMember {
 }
 
 model MemberScore {
-  id          String     @id @default(uuid())
-  type        String     @default("MemberScore")
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  memberId    String
-  member      GameMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  gameStatsId String?
-  gameStats   GameStats? @relation(fields: [gameStatsId], references: [id], onDelete: Cascade)
-  score       Int        @default(0)
+  id               String     @id @default(uuid())
+  type             String     @default("MemberScore")
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  memberId         String
+  member           GameMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  gameStatsId      String?
+  gameStats        GameStats? @relation(fields: [gameStatsId], references: [id], onDelete: Cascade)
+  score            Int        @default(0)
+  correctGuesses   Int        @default(0)
+  incorrectGuesses Int        @default(0)
 }
+

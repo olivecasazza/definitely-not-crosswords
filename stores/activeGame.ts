@@ -69,6 +69,18 @@ export const useActiveGameStore = defineStore("activeGame", () => {
     )
   );
 
+  const isSolved = computed(() => {
+    if (questions.value.length === 0) return false;
+    return boardState.value.every(row =>
+      row.every(cell => {
+        if (cell.correctState === '') return true;
+        return cell.modifications.length > 0 &&
+               cell.modifications[0].state.toUpperCase() === cell.correctState.toUpperCase() &&
+               cell.modifications[0].actionType === 'correctGuess';
+      })
+    );
+  });
+
   // actions
   async function load() {
     const route = useRoute();
@@ -122,6 +134,15 @@ export const useActiveGameStore = defineStore("activeGame", () => {
         questions.value = data.game.questions.map((q: Question) =>
           computeQuestionAnswerMap(q, actions.value)
         );
+      },
+    });
+
+    // init subscription to game completion
+    $client.activeGame.onGameCompleted.subscribe(undefined, {
+      onData(cData) {
+        if (cData.activeGameId === activeGame.value.id) {
+          navigateTo(`/game/${cData.completedGameId}/completed`);
+        }
       },
     });
 
@@ -227,6 +248,14 @@ export const useActiveGameStore = defineStore("activeGame", () => {
       selectedQuestion.value = null;
       gameActionData.value = [];
       focusedIndex.value = null;
+
+      // Check if board is fully solved, and if so complete the game
+      if (isSolved.value) {
+        const result = await $client.activeGame.complete.mutate({
+          id: route.params.id as string,
+        });
+        navigateTo(`/game/${result.id}/completed`);
+      }
     }
   }
 
@@ -257,5 +286,6 @@ export const useActiveGameStore = defineStore("activeGame", () => {
     filterDown,
     filterAcross,
     submitActions,
+    isSolved,
   };
 });

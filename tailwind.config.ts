@@ -17,8 +17,6 @@ export default {
     `app.config.{js,ts}`
   ],
   plugins: [
-    require('postcss-import'),
-    require('autoprefixer'),
     require('@tailwindcss/aspect-ratio'),
   ],
 };

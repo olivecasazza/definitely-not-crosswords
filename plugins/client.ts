@@ -1,4 +1,4 @@
-import { createWSClient, wsLink } from '@trpc/client';
+import { createWSClient, wsLink, httpBatchLink, splitLink } from '@trpc/client';
 import { createTRPCNuxtClient } from 'trpc-nuxt/client'
 import type { AppRouter } from '~/server/trpc/router';
 
@@ -10,8 +10,14 @@ export default defineNuxtPlugin(async () => {
 
   const client = createTRPCNuxtClient<AppRouter>({
     links: [
-      wsLink({
-        client: wsClient,
+      splitLink({
+        condition: (op) => op.type === 'subscription',
+        true: wsLink({
+          client: wsClient,
+        }),
+        false: httpBatchLink({
+          url: '/api/trpc',
+        }),
       }),
     ],
   })

@@ -12,6 +12,9 @@ export default defineNuxtConfig({
     '@pinia/nuxt',
     '@vueuse/nuxt'
   ],
+  routeRules: {
+    '/stats': { ssr: false },
+  },
   runtimeConfig: {
     version: '0.0.1',
   },

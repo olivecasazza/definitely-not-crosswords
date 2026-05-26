@@ -15,10 +15,17 @@
   --border-app: #27272a;
   --border-hover: #3f3f46;
 
-  /* Accent Colors (Pastel) */
+  /* Accent Colors (Pastel) — raw palette */
   --pastel-red: #ff8c8c;
   --pastel-green: #a8e6cf;
   --pastel-yellow: #feea99;
+
+  /* Semantic color tokens — reference these (not the raw pastels) so status
+     colors stay consistent across the app and are themeable in one place. */
+  --color-primary: var(--pastel-yellow);
+  --color-success: var(--pastel-green);
+  --color-warning: var(--pastel-yellow);
+  --color-error: var(--pastel-red);
 }
 
 .light {

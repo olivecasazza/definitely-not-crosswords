@@ -168,6 +168,13 @@ const errorMessage = ref("");
 const isGenerating = ref(false);
 const publishingGameId = ref<string | null>(null);
 
+// Live generation streaming state (fed by the runGeneration subscription).
+const genLog = ref<any[]>([]);
+const genProgress = ref<{ stage: string; current: number; total: number; message?: string } | null>(null);
+const genStatus = ref<"idle" | "running" | "succeeded" | "failed">("idle");
+const genStartedAt = ref<number | null>(null);
+let genSub: { unsubscribe: () => void } | null = null;
+
 async function refreshJobs() {
   if (!user.value?.user?.email) return;
   jobs.value = await $client.generator.listJobs.query({

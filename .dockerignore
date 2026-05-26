@@ -1,0 +1,16 @@
+node_modules
+.nuxt
+.output
+.git
+.github
+secrets.yaml
+.env
+.env*
+pnpm-debug.log
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+.vscode
+playwright-report
+test-results
+dist

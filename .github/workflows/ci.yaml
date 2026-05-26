@@ -91,7 +91,7 @@ jobs:
           # Breaking change:
           #   - commit starts with type followed by !: e.g. "feat!: add new feature"
           #   - OR commit body contains "BREAKING CHANGE" or "BREAKING CHANGES"
-          has_breaking=$(gh pr view $PR_NUMBER --json commits --jq '[.commits[].message | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
+          has_breaking=$(gh pr view $PR_NUMBER --json commits --jq '[.commits[] | (.messageHeadline + "\n" + .messageBody) | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
           
           if [ "$has_breaking" = "true" ]; then
             echo "is_major=true" >> $GITHUB_OUTPUT

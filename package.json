@@ -7,7 +7,8 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "seed:dictionary": "node scripts/seed_wordnet_dictionary.mjs",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@auth/prisma-adapter": "^1.6.0",

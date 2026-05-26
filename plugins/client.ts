@@ -1,6 +1,6 @@
 import { createWSClient, wsLink } from '@trpc/client';
 import { createTRPCNuxtClient } from 'trpc-nuxt/client'
-import { AppRouter } from '~/server/trpc/router';
+import type { AppRouter } from '~/server/trpc/router';
 
 export default defineNuxtPlugin(async () => {
   const wsClient = createWSClient({

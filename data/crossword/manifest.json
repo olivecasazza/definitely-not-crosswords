@@ -1,0 +1,38 @@
+{
+  "assets": {
+    "wordnet": {
+      "name": "Princeton WordNet 3.1 dictionary files",
+      "sourceUrl": "https://wordnetcode.princeton.edu/wn3.1.dict.tar.gz",
+      "archivePath": "data/crossword/downloads/wn3.1.dict.tar.gz",
+      "runtimePath": "data/crossword/wordnet/dict",
+      "archiveSha256": "3f7d8be8ef6ecc7167d39b10d66954ec734280b5bdcd57f7d9eafe429d11c22a",
+      "archiveBytes": 16358468,
+      "notes": [
+        "Contains data.noun, data.verb, data.adj, data.adv, index files, exception files, and dbfiles.",
+        "Use the data.* files for synset definitions/glosses and index.* files for lemma lookup."
+      ]
+    },
+    "embeddingModel": {
+      "name": "Xenova/all-MiniLM-L6-v2",
+      "sourceUrl": "https://huggingface.co/Xenova/all-MiniLM-L6-v2",
+      "runtimePath": "data/crossword/models/all-MiniLM-L6-v2",
+      "files": {
+        "config": "data/crossword/models/all-MiniLM-L6-v2/config.json",
+        "tokenizer": "data/crossword/models/all-MiniLM-L6-v2/tokenizer.json",
+        "tokenizerConfig": "data/crossword/models/all-MiniLM-L6-v2/tokenizer_config.json",
+        "specialTokensMap": "data/crossword/models/all-MiniLM-L6-v2/special_tokens_map.json",
+        "vocab": "data/crossword/models/all-MiniLM-L6-v2/vocab.txt",
+        "quantizedOnnx": "data/crossword/models/all-MiniLM-L6-v2/onnx/model_quantized.onnx"
+      },
+      "checksums": {
+        "tokenizerJsonSha256": "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0",
+        "vocabTxtSha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3",
+        "quantizedOnnxSha256": "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1"
+      },
+      "notes": [
+        "Small local sentence embedding model suitable for precomputing WordNet gloss embeddings.",
+        "Do not call embeddings inside crossword branch search; precompute topic scores before solving."
+      ]
+    }
+  }
+}

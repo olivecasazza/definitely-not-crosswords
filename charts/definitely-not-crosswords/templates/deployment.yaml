@@ -40,6 +40,11 @@ spec:
             - name: ws
               containerPort: {{ .Values.service.wsPort }}
               protocol: TCP
+            {{- if .Values.observability.otel.enabled }}
+            - name: otel-metrics
+              containerPort: {{ .Values.observability.otel.port | default 9464 }}
+              protocol: TCP
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /api/healthz
@@ -94,6 +99,12 @@ spec:
                   name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
                   key: DATABASE_URL
                   {{- end }}
+            {{- if .Values.observability.otel.enabled }}
+            - name: NODE_OPTIONS
+              value: "--require ./otel.cjs"
+            - name: OTEL_METRICS_PORT
+              value: "{{ .Values.observability.otel.port | default 9464 }}"
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}

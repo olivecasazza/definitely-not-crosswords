@@ -3,6 +3,7 @@ import { theme } from "./tailwind/tailwind-workspace-preset";
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
+  devtools: { enabled: false },
   extends: ['@sidebase/core'],
   modules: [
     '@sidebase/nuxt-auth',

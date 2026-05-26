@@ -2,9 +2,11 @@
   <div class="flex flex-row items-center justify-between px-4 sm:px-6 py-3 border-b border-[var(--border-app)] bg-[rgba(24,24,27,0.78)] backdrop-blur-md transition-all duration-300 w-full select-none sticky top-0 z-50">
     
     <!-- Left Section: Logo & Branding -->
-    <div class="flex items-center gap-3 cursor-pointer" @click="navigateTo('/')">
+    <div class="flex items-center gap-3 cursor-pointer select-none" @click="navigateTo('/')">
       <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-[var(--pastel-yellow)] to-[rgba(254,234,153,0.3)] flex items-center justify-center shadow-md transform hover:rotate-12 transition-transform">
-        <span class="text-slate-900 font-bold text-xs select-none">🧩</span>
+        <svg class="w-4 h-4 text-slate-900" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 6h16M4 12h16M4 18h16M6 4v16M12 4v16M18 4v16" />
+        </svg>
       </div>
       <span class="font-bold text-base sm:text-lg tracking-wider font-mono uppercase text-[var(--text-primary)]">
         NOT CROSSWORDS
@@ -39,14 +41,20 @@
         <span class="text-[var(--text-secondary)] font-medium max-w-[80px] truncate">{{ user.name }}</span>
       </div>
 
-      <!-- Theme Switch Button -->
+      <!-- Theme Switch Button (Custom SVGs) -->
       <button 
         @click="isLight = !isLight" 
-        class="w-8 h-8 rounded-lg border border-[var(--border-app)] bg-[var(--bg-card)] hover:bg-[var(--border-app)] hover:scale-105 active:scale-95 transition-all flex items-center justify-center text-sm cursor-pointer"
+        class="w-8 h-8 rounded-lg border border-[var(--border-app)] bg-[var(--bg-card)] hover:bg-[var(--border-app)] hover:scale-105 active:scale-95 transition-all flex items-center justify-center cursor-pointer"
         :title="isLight ? 'Switch to Dark Theme' : 'Switch to Light Theme'"
       >
-        <span v-if="isLight">🌙</span>
-        <span v-else>☀️</span>
+        <!-- Moon Icon -->
+        <svg v-if="isLight" class="w-4 h-4 text-[var(--text-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+        </svg>
+        <!-- Sun Icon -->
+        <svg v-else class="w-4 h-4 text-[var(--pastel-yellow)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
+        </svg>
       </button>
 
       <!-- Sign Out Button -->

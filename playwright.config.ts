@@ -1,4 +1,4 @@
-import { defineConfig, devices } from '@playwright/test'
+import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -8,7 +8,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: 'http://127.0.0.1:3017',
     trace: 'on-first-retry',
     browserName: 'chromium',
     launchOptions: {
@@ -16,9 +16,9 @@ export default defineConfig({
     },
   },
   webServer: {
-    command: 'node node_modules/nuxt/bin/nuxt.mjs dev',
-    url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    command: 'nix develop --command node node_modules/nuxt/bin/nuxt.mjs dev --port 3017 --host 127.0.0.1',
+    url: 'http://127.0.0.1:3017',
+    reuseExistingServer: false,
     stdout: 'ignore',
     stderr: 'pipe',
     timeout: 120000,

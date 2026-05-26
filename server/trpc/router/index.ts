@@ -1,7 +1,9 @@
 import EventEmitter from 'events';
 import { router } from '../trpc';
 import { messageRouter } from './message';
-import { PrismaClient } from '@prisma/client';
+import pkg from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
+const { PrismaClient } = pkg;
 import { gameListRouter } from './gameList';
 import { activeGameRouter } from './activeGame';
 import { generatorRouter } from './generator';

@@ -1,4 +1,6 @@
-import { PrismaClient } from '@prisma/client'
+import pkg from '@prisma/client'
+import type { PrismaClient } from '@prisma/client'
+const { PrismaClient } = pkg
 
 let prisma: PrismaClient
 declare module 'h3' {

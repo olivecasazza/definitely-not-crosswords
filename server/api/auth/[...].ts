@@ -3,7 +3,9 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import KeycloakProvider from "next-auth/providers/keycloak";
 
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { PrismaClient } from "@prisma/client";
+import pkg from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
+const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
 const isProduction = process.env.NODE_ENV === "production";

@@ -29,6 +29,9 @@ COPY . .
 ENV NODE_ENV=production
 RUN pnpm run build
 
+# Prune devDependencies to keep node_modules extremely light for production
+RUN pnpm prune --prod --ignore-scripts
+
 # Stage 2: Production runner
 FROM node:22-slim AS runner
 

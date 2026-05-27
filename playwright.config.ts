@@ -1,6 +1,9 @@
-import { defineConfig } from '@playwright/test'
+process.env.AUTH_ORIGIN = 'http://localhost:3000';
+process.env.NUXT_AUTH_ORIGIN = 'http://localhost:3000';
 
-export default defineConfig({
+const { defineConfig } = require('@playwright/test');
+
+module.exports = defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -8,7 +11,6 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:3011',
     trace: 'on-first-retry',
     browserName: 'chromium',
     launchOptions: {
@@ -18,4 +20,4 @@ export default defineConfig({
       rootDir: __dirname,
     },
   },
-})
+});

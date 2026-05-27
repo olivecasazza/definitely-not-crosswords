@@ -38,22 +38,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pnpm
-RUN npm install -g pnpm@11
-
 WORKDIR /app
 
-# Copy dependency definition files to install production dependencies
+# Copy dependency definition files
 COPY package.json pnpm-lock.yaml .npmrc pnpm-workspace.yaml* ./
 
-# Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile --ignore-scripts
-
-# Copy standalone .output directory from builder stage
+# Copy standalone .output, node_modules, and prisma from builder stage
 COPY --from=builder /app/.output /app/.output
-# Copy prisma migrations and schema in case they're needed for migrations in production
+COPY --from=builder /app/node_modules /app/node_modules
 COPY --from=builder /app/prisma /app/prisma
-# Copy OpenTelemetry startup script to app directory
 COPY --from=builder /app/otel.cjs /app/otel.cjs
 
 # Expose Nuxt default port and WebSocket port

@@ -189,32 +189,32 @@ jobs:
 
           METRICS_FILE="/tmp/testing-regression.prom"
           cat > "$METRICS_FILE" <<EOF_METRICS
-# HELP definitely_not_crosswords_ci_test_state CI test suite outcome (1 when state is true).
-# TYPE definitely_not_crosswords_ci_test_state gauge
-definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="passed"} ${PASS_STATE}
-definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="failed"} ${FAIL_STATE}
-definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="skipped"} ${SKIP_STATE}
+          # HELP definitely_not_crosswords_ci_test_state CI test suite outcome (1 when state is true).
+          # TYPE definitely_not_crosswords_ci_test_state gauge
+          definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="passed"} ${PASS_STATE}
+          definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="failed"} ${FAIL_STATE}
+          definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="skipped"} ${SKIP_STATE}
 
-# HELP definitely_not_crosswords_ci_test_case_count CI test case counts from the latest run.
-# TYPE definitely_not_crosswords_ci_test_case_count gauge
-definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="passed"} ${PASSED_INT}
-definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="failed"} ${FAILED_INT}
-definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="skipped"} ${SKIPPED_INT}
+          # HELP definitely_not_crosswords_ci_test_case_count CI test case counts from the latest run.
+          # TYPE definitely_not_crosswords_ci_test_case_count gauge
+          definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="passed"} ${PASSED_INT}
+          definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="failed"} ${FAILED_INT}
+          definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="skipped"} ${SKIPPED_INT}
 
-# HELP definitely_not_crosswords_ci_test_duration_seconds Duration in seconds for the latest run.
-# TYPE definitely_not_crosswords_ci_test_duration_seconds gauge
-definitely_not_crosswords_ci_test_duration_seconds{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}"} ${DURATION}
+          # HELP definitely_not_crosswords_ci_test_duration_seconds Duration in seconds for the latest run.
+          # TYPE definitely_not_crosswords_ci_test_duration_seconds gauge
+          definitely_not_crosswords_ci_test_duration_seconds{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}"} ${DURATION}
 
-# HELP definitely_not_crosswords_ci_test_run_timestamp Unix timestamp of last completed run.
-# TYPE definitely_not_crosswords_ci_test_run_timestamp gauge
-definitely_not_crosswords_ci_test_run_timestamp{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}"} ${RUN_START_TS}
+          # HELP definitely_not_crosswords_ci_test_run_timestamp Unix timestamp of last completed run.
+          # TYPE definitely_not_crosswords_ci_test_run_timestamp gauge
+          definitely_not_crosswords_ci_test_run_timestamp{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}"} ${RUN_START_TS}
 
-# HELP definitely_not_crosswords_ci_test_suite_cases_total Total test cases by suite outcome for the latest run.
-# TYPE definitely_not_crosswords_ci_test_suite_cases_total gauge
-definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="passed"} ${PASSED_INT}
-definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="failed"} ${FAILED_INT}
-definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="skipped"} ${SKIPPED_INT}
-EOF_METRICS
+          # HELP definitely_not_crosswords_ci_test_suite_cases_total Total test cases by suite outcome for the latest run.
+          # TYPE definitely_not_crosswords_ci_test_suite_cases_total gauge
+          definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="passed"} ${PASSED_INT}
+          definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="failed"} ${FAILED_INT}
+          definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="skipped"} ${SKIPPED_INT}
+          EOF_METRICS
 
           PUSH_URL="${PUSHGATEWAY_URL}/metrics/job/definitely-not-crosswords-ci-tests/branch/${BRANCH_SLUG}/suite/${SUITE}"
           echo "Pushing test metrics to ${PUSH_URL}"

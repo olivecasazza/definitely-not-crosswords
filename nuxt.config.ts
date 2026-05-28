@@ -19,12 +19,16 @@ export default defineNuxtConfig({
     shim: false
   },
   build: {
-    transpile: ['trpc-nuxt']
+    transpile: ['trpc-nuxt', '@trpc/server']
   },
   nitro: {
     plugins: ['~/nitro/ws'],
+    experimental: {
+      websocket: true
+    },
     externals: {
-      trace: false
+      trace: false,
+      inline: ['@trpc/server']
     }
   },
   routeRules: {

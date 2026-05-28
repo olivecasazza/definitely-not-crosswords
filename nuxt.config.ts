@@ -28,6 +28,14 @@ export default defineNuxtConfig({
     }
   },
   routeRules: {
-    '/stats': { ssr: false }
+    '/': { ssr: false },
+    '/stats': { ssr: false },
+    '/admin/**': { ssr: false },
+    '/game/**': { ssr: false }
+  },
+  vite: {
+    optimizeDeps: {
+      include: ['@prisma/client']
+    }
   }
 })

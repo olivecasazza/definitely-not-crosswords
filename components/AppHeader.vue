@@ -3,13 +3,57 @@
     
     <!-- Left Section: Logo & Branding -->
     <div class="flex items-center gap-3 cursor-pointer select-none" @click="navigateTo('/')">
-      <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-[var(--pastel-yellow)] to-[rgba(254,234,153,0.3)] flex items-center justify-center shadow-md transform hover:rotate-12 transition-transform">
-        <svg class="w-4 h-4 text-slate-900" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 6h16M4 12h16M4 18h16M6 4v16M12 4v16M18 4v16" />
-        </svg>
-      </div>
-      <span class="font-bold text-base sm:text-lg tracking-wider font-mono uppercase text-[var(--text-primary)]">
-        NOT CROSSWORDS
+      <svg class="w-5 h-5 text-[var(--pastel-yellow)] shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- Row 0 -->
+        <circle cx="2" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="6" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="10" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="14" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="18" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="22" cy="2" r="1.2" fill="currentColor" />
+
+        <!-- Row 1 -->
+        <circle cx="2" cy="6" r="1.2" fill="currentColor" />
+        <circle cx="6" cy="6" r="1.2" fill="currentColor" />
+        <circle cx="10" cy="6" r="1.2" fill="currentColor" />
+        <circle cx="14" cy="6" r="1.2" fill="currentColor" class="opacity-30" />
+        <circle cx="18" cy="6" r="1.2" fill="currentColor" />
+        <circle cx="22" cy="6" r="1.2" fill="currentColor" />
+
+        <!-- Row 2 -->
+        <circle cx="2" cy="10" r="1.2" fill="currentColor" />
+        <circle cx="6" cy="10" r="1.2" fill="currentColor" />
+        <circle cx="10" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
+        <circle cx="14" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
+        <circle cx="18" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
+        <circle cx="22" cy="10" r="1.2" fill="currentColor" />
+
+        <!-- Row 3 -->
+        <circle cx="2" cy="14" r="1.2" fill="currentColor" />
+        <circle cx="6" cy="14" r="1.2" fill="currentColor" />
+        <circle cx="10" cy="14" r="1.2" fill="currentColor" />
+        <circle cx="14" cy="14" r="1.2" fill="currentColor" class="opacity-30" />
+        <circle cx="18" cy="14" r="1.2" fill="currentColor" />
+        <circle cx="22" cy="14" r="1.2" fill="currentColor" />
+
+        <!-- Row 4 -->
+        <circle cx="2" cy="18" r="1.2" fill="currentColor" />
+        <circle cx="6" cy="18" r="1.2" fill="currentColor" />
+        <circle cx="10" cy="18" r="1.2" fill="currentColor" />
+        <circle cx="14" cy="18" r="1.2" fill="currentColor" />
+        <circle cx="18" cy="18" r="1.2" fill="currentColor" />
+        <circle cx="22" cy="18" r="1.2" fill="currentColor" />
+
+        <!-- Row 5 -->
+        <circle cx="2" cy="22" r="1.2" fill="currentColor" />
+        <circle cx="6" cy="22" r="1.2" fill="currentColor" />
+        <circle cx="10" cy="22" r="1.2" fill="currentColor" />
+        <circle cx="14" cy="22" r="1.2" fill="currentColor" />
+        <circle cx="18" cy="22" r="1.2" fill="currentColor" />
+        <circle cx="22" cy="22" r="1.2" fill="currentColor" />
+      </svg>
+      <span class="font-bold text-lg sm:text-xl text-[var(--text-primary)]">
+        Definitely Not Crosswords
       </span>
     </div>
 

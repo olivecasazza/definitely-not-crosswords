@@ -14,8 +14,82 @@
           inherit system;
           config.allowUnfree = true;
         };
+
+        defaultPackage = pkgs.stdenv.mkDerivation rec {
+          pname = "definitely-not-crosswords";
+          version = "0.1.0";
+          src = ./.;
+
+          nativeBuildInputs = [
+            pkgs.nodejs_22
+            pkgs.pnpm
+            pkgs.pnpmConfigHook
+          ];
+
+          pnpmDeps = pkgs.fetchPnpmDeps {
+            inherit pname version src;
+            fetcherVersion = 3;
+            hash = "sha256-KxpYL93VkizF4ODxxr9hlQZizoIzoXBOLEeWzOkvc7M=";
+          };
+
+          PRISMA_SCHEMA_ENGINE_BINARY="${pkgs.prisma-engines_6}/bin/schema-engine";
+          PRISMA_QUERY_ENGINE_BINARY="${pkgs.prisma-engines_6}/bin/query-engine";
+          PRISMA_QUERY_ENGINE_LIBRARY="${pkgs.prisma-engines_6}/lib/libquery_engine.node";
+          PRISMA_MIGRATION_ENGINE_BINARY="${pkgs.prisma-engines_6}/bin/migration-engine";
+          PRISMA_INTROSPECTION_ENGINE_BINARY="${pkgs.prisma-engines_6}/bin/introspection-engine";
+          PRISMA_FMT_BINARY="${pkgs.prisma-engines_6}/bin/prisma-fmt";
+
+          NUXT_TELEMETRY_DISABLED = "1";
+
+          buildPhase = ''
+            pnpm build
+            pnpm prune --prod --ignore-scripts
+          '';
+
+          installPhase = ''
+            mkdir -p $out
+            cp -r .output $out/
+            cp -r node_modules $out/
+            cp -r prisma $out/
+            cp -r otel.cjs $out/
+
+            # Delete dangling/broken symlinks to satisfy Nix's noBrokenSymlinks check
+            echo "🧹 Cleaning up dangling symlinks in $out..."
+            find $out -type l ! -exec test -e {} \; -delete
+          '';
+        };
+
+        dockerImagePackage = pkgs.dockerTools.buildLayeredImage {
+          name = "us-central1-docker.pkg.dev/casazza-identity/nixlab/definitely-not-crosswords";
+          tag = "latest";
+
+          contents = [
+            pkgs.nodejs_22
+            pkgs.openssl
+            pkgs.bash
+            pkgs.coreutils
+          ];
+
+          config = {
+            Cmd = [ "${pkgs.nodejs_22}/bin/node" "--require" "${defaultPackage}/otel.cjs" "${defaultPackage}/.output/server/index.mjs" ];
+            Env = [
+              "NODE_ENV=production"
+              "PORT=3000"
+              "OTEL_METRICS_PORT=9464"
+            ];
+            WorkingDir = "${defaultPackage}";
+          };
+        };
       in
       {
+        packages.default = defaultPackage;
+        packages.dockerImage = dockerImagePackage;
+
+        hydraJobs = {
+          default = defaultPackage;
+          dockerImage = dockerImagePackage;
+        };
+
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             nodejs_22

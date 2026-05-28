@@ -7,7 +7,6 @@ const handler = eventHandler(async (event: H3Event) => {
   try {
     await prisma.$queryRaw`SELECT 1;`
   } catch (error) {
-    console.error('Health check database error:', error)
     throw createError({ statusCode: 500, statusMessage: 'DB failed initialization check' })
   }
 

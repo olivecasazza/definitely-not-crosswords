@@ -1,18 +1,33 @@
 import { defineConfig, devices } from "@playwright/test"
 
+const isCiReporter = process.env.PW_REPORT_FORMAT === "ci"
+
+const launchOptions = {
+  ...(process.env.CI
+    ? {}
+    : {
+        executablePath: "/home/olive/.nix-profile/bin/google-chrome-stable",
+      }),
+}
+
+const reporters = isCiReporter
+  ? [
+      ["html", { open: "never" }],
+      ["junit", { outputFile: "test-results/junit-results.xml" }],
+    ]
+  : "html"
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: 1,
-  reporter: "html",
+  reporter: reporters,
   use: {
     trace: "on-first-retry",
     browserName: "chromium",
-    launchOptions: {
-      executablePath: "/home/olive/.nix-profile/bin/google-chrome-stable",
-    },
+    launchOptions,
     nuxt: {
       rootDir: __dirname,
     },

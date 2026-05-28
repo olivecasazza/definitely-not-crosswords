@@ -68,8 +68,6 @@ spec:
               value: {{ .Values.auth.issuer | quote }}
             - name: NUXT_AUTH_ORIGIN
               value: {{ .Values.auth.origin | quote }}
-            - name: AUTH_ORIGIN
-              value: {{ .Values.auth.origin | quote }}
             - name: KEYCLOAK_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

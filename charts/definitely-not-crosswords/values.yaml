@@ -97,6 +97,13 @@ observability:
       # release: prometheus
   grafanaDashboard:
     enabled: false
+    # Namespace used for GrafanaDashboard/ConfigMap resources.
+    # If empty, defaults to the release namespace.
+    namespace: ""
+    # Dashboard folder in Grafana.
+    folder: "Applications"
+    # Leave true when dashboards are created outside the Grafana instance namespace.
+    allowCrossNamespaceImport: true
     labels:
       grafana_dashboard: "1"
 

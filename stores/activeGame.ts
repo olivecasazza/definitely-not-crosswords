@@ -1,12 +1,13 @@
 // Pinia Store
-import {
+import type {
   ActiveGame,
   GameAction,
-  GameActionTypeEnum,
   GameMember,
   Question,
-  QuestionDirectionEnum,
 } from "@prisma/client";
+
+export type QuestionDirectionEnum = "ACROSS" | "DOWN";
+export type GameActionTypeEnum = "placeholder" | "correctGuess" | "incorrectGuess";
 import { Ref } from "vue";
 import { defineStore, storeToRefs } from "pinia";
 import { BoardState, Cell } from "~/lib/game";
@@ -32,7 +33,7 @@ export const useActiveGameStore = defineStore("activeGame", () => {
   const activeGameLoading = ref(true);
   const members = ref([] as GameMember[]);
   const actions = ref([] as GameAction[]);
-  const selectedQuestion = ref({} as WithComputedProperties<Question> | null);
+  const selectedQuestion = ref(null as WithComputedProperties<Question> | null);
   const selectedDirection = ref("ACROSS" as QuestionDirectionEnum | null);
 
   // game action reactive state
@@ -43,13 +44,13 @@ export const useActiveGameStore = defineStore("activeGame", () => {
   const acrossQuestions = computed(() =>
     questions.value.filter(
       (q: WithComputedProperties<Question>) =>
-        q.direction === QuestionDirectionEnum.ACROSS
+        q.direction === "ACROSS"
     )
   );
   const downQuestions = computed(() =>
     questions.value.filter(
       (q: WithComputedProperties<Question>) =>
-        q.direction === QuestionDirectionEnum.DOWN
+        q.direction === "DOWN"
     )
   );
   const filteredQuestions = computed((): WithComputedProperties<Question>[] => {
@@ -272,6 +273,7 @@ export const useActiveGameStore = defineStore("activeGame", () => {
     activeGame,
     activeGameLoading,
     boardState,
+    boardSize,
     questions,
     selectedDirection,
     filteredQuestions,

@@ -20,10 +20,205 @@ env:
   PROJECT_ID: casazza-identity
   REPOSITORY: nixlab
   IMAGE: definitely-not-crosswords
-  WIF_PROVIDER: projects/943444128204/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+  WIF_PROVIDER: projects/casazza-identity/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
   WIF_SERVICE_ACCOUNT: crosswords-ci@casazza-identity.iam.gserviceaccount.com
 
 jobs:
+  e2e-tests:
+    name: E2E Regression Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run E2E test suite
+        id: e2e
+        continue-on-error: true
+        env:
+          PW_REPORT_FORMAT: "ci"
+        run: |
+          set -o pipefail
+          START_TS=$EPOCHSECONDS
+          pnpm run test:e2e
+          TEST_EXIT=$?
+          END_TS=$EPOCHSECONDS
+          echo "exit_code=${TEST_EXIT}" >> "$GITHUB_OUTPUT"
+          echo "run_seconds=$((END_TS - START_TS))" >> "$GITHUB_OUTPUT"
+          exit ${TEST_EXIT}
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e-artifacts-${{ github.run_id }}
+          path: |
+            playwright-report
+            test-results/junit-results.xml
+
+      - name: Resolve test metrics secrets
+        id: test-metrics-secrets
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          if ! command -v sops >/dev/null 2>&1; then
+            echo "sops not installed; installing..."
+            sudo apt-get update
+            sudo apt-get install -y sops
+          fi
+
+          if [ -z "${SOPS_AGE_KEY:-}" ]; then
+            echo "SOPS_AGE_KEY is not set. Skipping secure pushgateway config."
+            echo "pushgateway_url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SECRET_FILE="secrets/ci-test-metrics.sops.yaml"
+          if [ ! -f "$SECRET_FILE" ]; then
+            echo "Missing $SECRET_FILE. Skipping secure pushgateway config."
+            echo "pushgateway_url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PUSHGATEWAY_URL=$(sops -d "$SECRET_FILE" | awk '/^[[:space:]]*TEST_REPORT_PUSHGATEWAY_URL[[:space:]]*:/ { sub(/^[[:space:]]*TEST_REPORT_PUSHGATEWAY_URL[[:space:]]*:[[:space:]]*/, ""); gsub(/"/, "", $0); print; exit }')
+          if [ -z "${PUSHGATEWAY_URL:-}" ]; then
+            echo "TEST_REPORT_PUSHGATEWAY_URL missing. Skipping secure pushgateway config."
+            echo "pushgateway_url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "pushgateway_url=$PUSHGATEWAY_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Export test metrics for regression tracking
+        if: always()
+        env:
+          PUSHGATEWAY_URL: ${{ steps.test-metrics-secrets.outputs.pushgateway_url }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PUSHGATEWAY_URL:-}" ]; then
+            echo "PUSHGATEWAY_URL is not configured. Skipping metrics publish."
+            exit 0
+          fi
+
+          BRANCH_NAME=${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}
+          BRANCH_SLUG=$(printf '%s' "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '_' | sed 's/^_\+\|_\+$//g' | tr -s '_')
+          BRANCH_SLUG=${BRANCH_SLUG:-main}
+          REPORT_FILE="test-results/junit-results.xml"
+          RUN_START_TS="${START_TS}"
+
+          PASSED=0
+          FAILED=0
+          SKIPPED=0
+
+          if [ -f "$REPORT_FILE" ]; then
+            read -r PASSED FAILED SKIPPED < <(
+              REPORT_FILE="$REPORT_FILE" node - <<'NODE'
+const fs = require('fs')
+
+const reportFile = process.env.REPORT_FILE || 'test-results/junit-results.xml'
+const xml = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : ''
+
+function pick(pattern, fallback = 0) {
+  const match = xml.match(pattern)
+  if (!match) return fallback
+  return Number(match[1] ?? fallback)
+}
+
+let tests = 0
+let failures = 0
+let skipped = 0
+let errors = 0
+
+for (const m of xml.matchAll(/<testsuite[^>]*>/g)) {
+  const suite = m[0]
+  tests += Number((suite.match(/tests="(\d+)"/) || [0, 0])[1])
+  failures += Number((suite.match(/failures="(\d+)"/) || [0, 0])[1])
+  skipped += Number((suite.match(/skipped="(\d+)"/) || [0, 0])[1])
+  errors += Number((suite.match(/errors="(\d+)"/) || [0, 0])[1])
+}
+
+if (tests === 0) {
+  tests = pick(/tests="(\d+)"/)
+  failures = pick(/failures="(\d+)"/)
+  skipped = pick(/skipped="(\d+)"/)
+  errors = pick(/errors="(\d+)"/)
+}
+
+const totalFailed = failures + errors
+const totalPassed = Math.max(0, tests - totalFailed - skipped)
+process.stdout.write([totalPassed, totalFailed, skipped].join(' '))
+NODE
+            )
+          fi
+
+          if [[ "${{ steps.e2e.outputs.exit_code }}" == "0" ]]; then
+            PASS_STATE=1
+            FAIL_STATE=0
+            SKIP_STATE=0
+          else
+            PASS_STATE=0
+            FAIL_STATE=1
+            SKIP_STATE=0
+          fi
+
+          PASSED_INT=${PASSED:-0}
+          FAILED_INT=${FAILED:-0}
+          SKIPPED_INT=${SKIPPED:-0}
+
+          SUITE="e2e"
+          PROJECT="definitely-not-crosswords"
+          DURATION=${{ steps.e2e.outputs.run_seconds || 0 }}
+
+          METRICS_FILE="/tmp/testing-regression.prom"
+          cat > "$METRICS_FILE" <<EOF_METRICS
+# HELP definitely_not_crosswords_ci_test_state CI test suite outcome (1 when state is true).
+# TYPE definitely_not_crosswords_ci_test_state gauge
+definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="passed"} ${PASS_STATE}
+definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="failed"} ${FAIL_STATE}
+definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="skipped"} ${SKIP_STATE}
+
+# HELP definitely_not_crosswords_ci_test_case_count CI test case counts from the latest run.
+# TYPE definitely_not_crosswords_ci_test_case_count gauge
+definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="passed"} ${PASSED_INT}
+definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="failed"} ${FAILED_INT}
+definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="skipped"} ${SKIPPED_INT}
+
+# HELP definitely_not_crosswords_ci_test_duration_seconds Duration in seconds for the latest run.
+# TYPE definitely_not_crosswords_ci_test_duration_seconds gauge
+definitely_not_crosswords_ci_test_duration_seconds{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}"} ${DURATION}
+
+# HELP definitely_not_crosswords_ci_test_run_timestamp Unix timestamp of last completed run.
+# TYPE definitely_not_crosswords_ci_test_run_timestamp gauge
+definitely_not_crosswords_ci_test_run_timestamp{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}"} ${RUN_START_TS}
+
+# HELP definitely_not_crosswords_ci_test_suite_cases_total Total test cases by suite outcome for the latest run.
+# TYPE definitely_not_crosswords_ci_test_suite_cases_total gauge
+definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="passed"} ${PASSED_INT}
+definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="failed"} ${FAILED_INT}
+definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="skipped"} ${SKIPPED_INT}
+EOF_METRICS
+
+          PUSH_URL="${PUSHGATEWAY_URL}/metrics/job/definitely-not-crosswords-ci-tests/branch/${BRANCH_SLUG}/suite/${SUITE}"
+          echo "Pushing test metrics to ${PUSH_URL}"
+          curl --fail-with-body --show-error --silent --data-binary @"$METRICS_FILE" "${PUSH_URL}"
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
@@ -72,9 +267,6 @@ jobs:
     outputs:
       is_major: ${{ steps.check_commits.outputs.is_major }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
       - name: Check commits for breaking changes
         id: check_commits
         env:
@@ -91,7 +283,7 @@ jobs:
           # Breaking change:
           #   - commit starts with type followed by !: e.g. "feat!: add new feature"
           #   - OR commit body contains "BREAKING CHANGE" or "BREAKING CHANGES"
-          has_breaking=$(gh pr view $PR_NUMBER --json commits --jq '[.commits[] | (.messageHeadline + "\n" + .messageBody) | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
+          has_breaking=$(gh pr view $PR_NUMBER --json commits --jq '[.commits[].message | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
           
           if [ "$has_breaking" = "true" ]; then
             echo "is_major=true" >> $GITHUB_OUTPUT
@@ -109,9 +301,6 @@ jobs:
     needs: conventional-commits-check
     if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
       - name: Verify Review Status
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -141,9 +330,6 @@ jobs:
     needs: [ build-and-push, conventional-commits-check, approval-check ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
       - name: Enable Auto-Merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

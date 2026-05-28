@@ -1,4 +1,13 @@
 export default {
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ['"Source Sans 3"', 'system-ui', 'sans-serif'],
+        serif: ['"Libre Baskerville"', 'Georgia', 'serif'],
+        mono: ['Inconsolata', 'monospace'],
+      },
+    },
+  },
   variants: {},
   presets: [require('./tailwind/tailwind-workspace-preset')],
   content: [

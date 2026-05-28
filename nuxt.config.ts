@@ -36,6 +36,11 @@ export default defineNuxtConfig({
   vite: {
     optimizeDeps: {
       include: ['@prisma/client']
+    },
+    server: {
+      watch: {
+        ignored: ['**/test-results/**', '**/playwright-report/**']
+      }
     }
   }
 })

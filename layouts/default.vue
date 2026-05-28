@@ -19,7 +19,7 @@
             <circle cx="2" cy="2" r="1.2" fill="currentColor" />
             <circle cx="6" cy="2" r="1.2" fill="currentColor" />
             <circle cx="10" cy="2" r="1.2" fill="currentColor" />
-            <circle cx="14" cy="2" r="1.2" fill="currentColor" />
+            <circle cx="14" cy="2" r="1.2" fill="currentColor" class="opacity-30" />
             <circle cx="18" cy="2" r="1.2" fill="currentColor" />
             <circle cx="22" cy="2" r="1.2" fill="currentColor" />
 
@@ -33,11 +33,11 @@
 
             <!-- Row 2 -->
             <circle cx="2" cy="10" r="1.2" fill="currentColor" />
-            <circle cx="6" cy="10" r="1.2" fill="currentColor" />
+            <circle cx="6" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
             <circle cx="10" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
             <circle cx="14" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
             <circle cx="18" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
-            <circle cx="22" cy="10" r="1.2" fill="currentColor" />
+            <circle cx="22" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
 
             <!-- Row 3 -->
             <circle cx="2" cy="14" r="1.2" fill="currentColor" />
@@ -51,7 +51,7 @@
             <circle cx="2" cy="18" r="1.2" fill="currentColor" />
             <circle cx="6" cy="18" r="1.2" fill="currentColor" />
             <circle cx="10" cy="18" r="1.2" fill="currentColor" />
-            <circle cx="14" cy="18" r="1.2" fill="currentColor" />
+            <circle cx="14" cy="18" r="1.2" fill="currentColor" class="opacity-30" />
             <circle cx="18" cy="18" r="1.2" fill="currentColor" />
             <circle cx="22" cy="18" r="1.2" fill="currentColor" />
 

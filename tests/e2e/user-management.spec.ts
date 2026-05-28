@@ -110,14 +110,6 @@ test.describe('User Management E2E Flow', () => {
         }
       });
 
-      await page.route('**/api/auth/csrf', async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ csrfToken: 'mock-csrf-token' })
-        });
-      });
-
       // Inject active session cookie dynamically for both localhost and the specific test server hostname
       const host = baseURL ? new URL(baseURL).hostname : '127.0.0.1';
       await page.context().addCookies([
@@ -147,7 +139,13 @@ test.describe('User Management E2E Flow', () => {
     test('should update profile name on the profile page', async ({ page }) => {
       console.log('👤 Navigating to Profile Page...');
       await page.gotoPath('/profile');
+      await page.waitForTimeout(1000); // Ensure hydration completes
+
       await expect(page.locator('h3:has-text("Profile Settings")')).toBeVisible();
+
+      // Wait for Vue hydration by checking the default mock name is populated
+      const nameInput = page.locator('#profile-name-input');
+      await expect(nameInput).toHaveValue('Olive Casazza', { timeout: 10000 });
 
       // Fill in a new display name
       const newName = 'Olive Updated';
@@ -207,6 +205,11 @@ test.describe('User Management E2E Flow', () => {
       // Go to profile and trigger deletion
       console.log('🗑️ Navigating to profile to delete account...');
       await page.gotoPath('/profile');
+      await page.waitForTimeout(1000); // Ensure hydration completes
+
+      // Safeguard: Wait for Vue hydration by verifying the input has populated
+      const nameInput = page.locator('#profile-name-input');
+      await expect(nameInput).toHaveValue(deleteName, { timeout: 10000 });
       
       const deleteBtn = page.locator('#delete-account-btn');
       await expect(deleteBtn).toBeVisible();

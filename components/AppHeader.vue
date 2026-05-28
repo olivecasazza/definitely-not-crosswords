@@ -2,13 +2,13 @@
   <div class="flex flex-row items-center justify-between px-4 sm:px-6 py-3 border-b border-[var(--border-app)] bg-[rgba(24,24,27,0.78)] backdrop-blur-md transition-all duration-300 w-full select-none sticky top-0 z-50">
     
     <!-- Left Section: Logo & Branding -->
-    <div class="flex items-center gap-3 cursor-pointer select-none" @click="navigateTo('/')">
-      <svg class="w-5 h-5 text-[var(--pastel-yellow)] shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <div class="flex items-center cursor-pointer select-none" @click="navigateTo('/')">
+      <svg class="w-8 h-8 text-[var(--pastel-yellow)] shrink-0 hover:scale-105 active:scale-95 transition-all duration-200" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <!-- Row 0 -->
         <circle cx="2" cy="2" r="1.2" fill="currentColor" />
         <circle cx="6" cy="2" r="1.2" fill="currentColor" />
         <circle cx="10" cy="2" r="1.2" fill="currentColor" />
-        <circle cx="14" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="14" cy="2" r="1.2" fill="currentColor" class="opacity-30" />
         <circle cx="18" cy="2" r="1.2" fill="currentColor" />
         <circle cx="22" cy="2" r="1.2" fill="currentColor" />
 
@@ -22,11 +22,11 @@
 
         <!-- Row 2 -->
         <circle cx="2" cy="10" r="1.2" fill="currentColor" />
-        <circle cx="6" cy="10" r="1.2" fill="currentColor" />
+        <circle cx="6" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
         <circle cx="10" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
         <circle cx="14" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
         <circle cx="18" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
-        <circle cx="22" cy="10" r="1.2" fill="currentColor" />
+        <circle cx="22" cy="10" r="1.2" fill="currentColor" class="opacity-30" />
 
         <!-- Row 3 -->
         <circle cx="2" cy="14" r="1.2" fill="currentColor" />
@@ -40,7 +40,7 @@
         <circle cx="2" cy="18" r="1.2" fill="currentColor" />
         <circle cx="6" cy="18" r="1.2" fill="currentColor" />
         <circle cx="10" cy="18" r="1.2" fill="currentColor" />
-        <circle cx="14" cy="18" r="1.2" fill="currentColor" />
+        <circle cx="14" cy="18" r="1.2" fill="currentColor" class="opacity-30" />
         <circle cx="18" cy="18" r="1.2" fill="currentColor" />
         <circle cx="22" cy="18" r="1.2" fill="currentColor" />
 
@@ -52,9 +52,6 @@
         <circle cx="18" cy="22" r="1.2" fill="currentColor" />
         <circle cx="22" cy="22" r="1.2" fill="currentColor" />
       </svg>
-      <span class="font-bold text-lg sm:text-xl text-[var(--text-primary)]">
-        Definitely Not Crosswords
-      </span>
     </div>
 
     <!-- Center Section: Clean Navigation Links -->

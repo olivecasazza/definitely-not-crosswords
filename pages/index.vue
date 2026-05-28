@@ -6,7 +6,7 @@
         {{ name?.charAt(0) || 'U' }}
       </div>
       <div class="text-center">
-        <h2 class="text-lg font-bold font-mono text-[var(--text-primary)]">{{ name }}</h2>
+        <h2 class="text-lg font-bold font-primary text-[var(--text-primary)]">{{ name }}</h2>
         <p class="text-sm font-mono text-[var(--text-secondary)]">{{ email }}</p>
       </div>
     </div>

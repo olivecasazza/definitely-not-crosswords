@@ -2,7 +2,7 @@
   <main class="flex-grow p-6 w-full max-w-4xl mx-auto flex flex-col gap-6">
     <div class="app-card p-6 flex flex-col gap-6">
       <div class="border-b border-[var(--border-app)] pb-4">
-        <h1 class="text-lg font-bold font-mono tracking-wider">CROSSWORD GENERATOR</h1>
+        <h1 class="text-lg font-bold font-primary tracking-wider">CROSSWORD GENERATOR</h1>
       </div>
 
       <div class="flex flex-col gap-4">

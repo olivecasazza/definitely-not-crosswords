@@ -131,41 +131,41 @@ jobs:
           if [ -f "$REPORT_FILE" ]; then
             read -r PASSED FAILED SKIPPED < <(
               REPORT_FILE="$REPORT_FILE" node - <<'NODE'
-const fs = require('fs')
+              const fs = require('fs')
 
-const reportFile = process.env.REPORT_FILE || 'test-results/junit-results.xml'
-const xml = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : ''
+              const reportFile = process.env.REPORT_FILE || 'test-results/junit-results.xml'
+              const xml = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : ''
 
-function pick(pattern, fallback = 0) {
-  const match = xml.match(pattern)
-  if (!match) return fallback
-  return Number(match[1] ?? fallback)
-}
+              function pick(pattern, fallback = 0) {
+                const match = xml.match(pattern)
+                if (!match) return fallback
+                return Number(match[1] ?? fallback)
+              }
 
-let tests = 0
-let failures = 0
-let skipped = 0
-let errors = 0
+              let tests = 0
+              let failures = 0
+              let skipped = 0
+              let errors = 0
 
-for (const m of xml.matchAll(/<testsuite[^>]*>/g)) {
-  const suite = m[0]
-  tests += Number((suite.match(/tests="(\d+)"/) || [0, 0])[1])
-  failures += Number((suite.match(/failures="(\d+)"/) || [0, 0])[1])
-  skipped += Number((suite.match(/skipped="(\d+)"/) || [0, 0])[1])
-  errors += Number((suite.match(/errors="(\d+)"/) || [0, 0])[1])
-}
+              for (const m of xml.matchAll(/<testsuite[^>]*>/g)) {
+                const suite = m[0]
+                tests += Number((suite.match(/tests="(\d+)"/) || [0, 0])[1])
+                failures += Number((suite.match(/failures="(\d+)"/) || [0, 0])[1])
+                skipped += Number((suite.match(/skipped="(\d+)"/) || [0, 0])[1])
+                errors += Number((suite.match(/errors="(\d+)"/) || [0, 0])[1])
+              }
 
-if (tests === 0) {
-  tests = pick(/tests="(\d+)"/)
-  failures = pick(/failures="(\d+)"/)
-  skipped = pick(/skipped="(\d+)"/)
-  errors = pick(/errors="(\d+)"/)
-}
+              if (tests === 0) {
+                tests = pick(/tests="(\d+)"/)
+                failures = pick(/failures="(\d+)"/)
+                skipped = pick(/skipped="(\d+)"/)
+                errors = pick(/errors="(\d+)"/)
+              }
 
-const totalFailed = failures + errors
-const totalPassed = Math.max(0, tests - totalFailed - skipped)
-process.stdout.write([totalPassed, totalFailed, skipped].join(' '))
-NODE
+              const totalFailed = failures + errors
+              const totalPassed = Math.max(0, tests - totalFailed - skipped)
+              process.stdout.write([totalPassed, totalFailed, skipped].join(' '))
+              NODE
             )
           fi
 

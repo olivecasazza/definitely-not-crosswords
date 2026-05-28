@@ -1,9 +1,9 @@
 import { H3Event } from 'h3'
+import { prisma } from '../trpc/router'
 
 const startupTime = new Date()
 
 const handler = eventHandler(async (event: H3Event) => {
-  const prisma = event.context.prisma
   try {
     await prisma.$queryRaw`SELECT 1;`
   } catch (error) {

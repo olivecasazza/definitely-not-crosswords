@@ -42,8 +42,8 @@
           NUXT_TELEMETRY_DISABLED = "1";
 
           buildPhase = ''
+            pnpm prisma generate
             pnpm build
-            pnpm prune --prod --ignore-scripts
           '';
 
           installPhase = ''
@@ -52,6 +52,35 @@
             cp -r node_modules $out/
             cp -r prisma $out/
             cp -r otel.cjs $out/
+
+            # Fix hardcoded file:///build imports in compiled JS files
+            echo "🔧 Fixing sandboxed file:///build imports..."
+            cat << 'EOF' > patch.js
+            const fs = require("fs");
+            const path = require("path");
+            
+            const outNodeModulesDir = path.resolve(process.argv[3]);
+            
+            function walk(dir) {
+              for (const file of fs.readdirSync(dir)) {
+                const fullPath = path.join(dir, file);
+                if (fs.statSync(fullPath).isDirectory()) {
+                  walk(fullPath);
+                } else if (file.endsWith(".mjs") || file.endsWith(".js")) {
+                  let content = fs.readFileSync(fullPath, "utf8");
+                  if (content.includes("file:///build")) {
+                    console.log("   Patching " + fullPath);
+                    const relativeNodeModules = path.relative(path.dirname(fullPath), outNodeModulesDir);
+                    content = content.replace(/file:\/\/\/build\/[^\/]+\/node_modules\//g, relativeNodeModules + "/");
+                    fs.writeFileSync(fullPath, content, "utf8");
+                  }
+                }
+              }
+            }
+            walk(process.argv[2]);
+            EOF
+            node patch.js $out/.output $out/node_modules
+            rm patch.js
 
             # Delete dangling/broken symlinks to satisfy Nix's noBrokenSymlinks check
             echo "🧹 Cleaning up dangling symlinks in $out..."

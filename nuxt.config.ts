@@ -14,6 +14,12 @@ export default defineNuxtConfig({
   ],
   runtimeConfig: {
     version: '0.0.1',
+    lemonSqueezy: {
+      apiKey: '',
+      storeId: '',
+      variantId: '',
+      webhookSecret: '',
+    },
   },
   typescript: {
     shim: false
@@ -27,8 +33,10 @@ export default defineNuxtConfig({
       websocket: true
     },
     externals: {
-      trace: false,
-      inline: ['@trpc/server']
+      trace: false
+    },
+    rollupConfig: {
+      preserveSymlinks: true
     }
   },
   routeRules: {
@@ -38,6 +46,9 @@ export default defineNuxtConfig({
     '/game/**': { ssr: false }
   },
   vite: {
+    resolve: {
+      preserveSymlinks: true
+    },
     optimizeDeps: {
       include: ['@prisma/client']
     },

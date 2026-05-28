@@ -75,18 +75,18 @@ watch(selectedQuestion, (newQuestion) => {
       <div class="flex flex-row justify-between items-center border-b border-[var(--border-app)] pb-3">
         <div class="flex items-center gap-2">
           <span :class="[
-            'text-[10px] font-mono tracking-widest font-bold px-2 py-0.5 rounded uppercase border',
+            'text-[10px] font-sans tracking-widest font-bold px-2 py-0.5 rounded uppercase border',
             selectedQuestion.direction === 'ACROSS' 
               ? 'bg-[rgba(254,234,153,0.1)] text-[var(--pastel-yellow)] border-[rgba(254,234,153,0.2)]'
               : 'bg-[rgba(168,230,207,0.1)] text-[var(--pastel-green)] border-[rgba(168,230,207,0.2)]'
           ]">
             {{ selectedQuestion.direction }}
           </span>
-          <span class="text-xs font-mono font-semibold text-[var(--text-secondary)] tracking-wider">
+          <span class="text-xs font-sans font-semibold text-[var(--text-secondary)] tracking-wider">
             CLUE {{ selectedQuestion.number }} &bull; {{ selectedQuestion.answer.length }} LETTERS
           </span>
         </div>
-        <button @click="unSelect" class="text-xs font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+        <button @click="unSelect" class="text-xs font-sans text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
           ESC to clear
         </button>
       </div>
@@ -103,7 +103,7 @@ watch(selectedQuestion, (newQuestion) => {
             v-for="(modification, index) of gameActionData" 
             :key="modification.cordX + '-' + modification.cordY"
             :ref="el => { if (el) inputs[index] = el as HTMLInputElement }"
-            class="w-9 h-9 sm:w-11 sm:h-11 app-input text-center text-lg sm:text-xl font-bold uppercase font-mono transition-all duration-150 focus:scale-105"
+            class="w-9 h-9 sm:w-11 sm:h-11 app-input text-center text-lg sm:text-xl font-bold uppercase font-sans transition-all duration-150 focus:scale-105"
             :class="[
               focusedIndex === index 
                 ? 'border-[var(--pastel-yellow)] shadow-[0_0_12px_rgba(254,234,153,0.25)] ring-1 ring-[var(--pastel-yellow)]' 
@@ -145,7 +145,7 @@ watch(selectedQuestion, (newQuestion) => {
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
         </svg>
       </div>
-      <h3 class="text-sm font-semibold text-[var(--text-primary)] tracking-wide font-mono uppercase">Ready to solve?</h3>
+      <h3 class="text-base font-semibold text-[var(--text-primary)] font-serif">Ready to solve?</h3>
       <p class="text-xs text-[var(--text-secondary)] mt-1.5 max-w-xs leading-relaxed">
         Tap a square on the crossword board or select a clue from the list to start typing your answers.
       </p>

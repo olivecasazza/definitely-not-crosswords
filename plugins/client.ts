@@ -18,6 +18,7 @@ export default defineNuxtPlugin(async () => {
 
   const wsClient = createWSClient({
     url: wsUrl,
+    lazy: true,
     WebSocket: process.server ? (await import('ws').then(r => r.default || r)) : globalThis.WebSocket as any
   })
 

@@ -2,8 +2,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Source Sans 3"', 'system-ui', 'sans-serif'],
-        serif: ['"Libre Baskerville"', 'Georgia', 'serif'],
+        sans: ['"Montserrat"', 'system-ui', 'sans-serif'],
+        serif: ['"Montserrat"', 'system-ui', 'sans-serif'],
         mono: ['Inconsolata', 'monospace'],
       },
     },

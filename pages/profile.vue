@@ -182,6 +182,9 @@ onMounted(() => {
     userName.value = data.value.user.name;
     form.name = data.value.user.name;
   }
+  if (typeof window !== "undefined") {
+    (window as any).__nuxt_hydrated = true;
+  }
 });
 
 async function updateProfileName() {

@@ -64,6 +64,143 @@ test.describe('Crossword Game E2E and TDD Tests', () => {
       }
     ]);
 
+    // Mock the tRPC HTTP queries and mutations since they go over httpBatchLink
+    await page.route('**/api/trpc/activeGame.get*', async (route) => {
+      const mockState = await page.evaluate(() => (window as any).__MOCK_STATE__);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ result: { data: mockState?.activeGame || null } }])
+      });
+    });
+
+    await page.route('**/api/trpc/generator.listJobs*', async (route) => {
+      const mockState = await page.evaluate(() => (window as any).__MOCK_STATE__);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ result: { data: mockState?.jobs || [] } }])
+      });
+    });
+
+    await page.route('**/api/trpc/generator.getJob*', async (route) => {
+      const mockState = await page.evaluate(() => (window as any).__MOCK_STATE__);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{
+          result: {
+            data: {
+              id: 'mock-job-id',
+              status: 'SUCCEEDED',
+              topic: 'Space Exploration and Science',
+              width: 21,
+              height: 21,
+              createdAt: new Date().toISOString(),
+              resultGame: mockState?.activeGame?.game || null
+            }
+          }
+        }])
+      });
+    });
+
+    await page.route('**/api/trpc/stats.getCompletedGame*', async (route) => {
+      const mockState = await page.evaluate(() => (window as any).__MOCK_STATE__);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{
+          result: {
+            data: {
+              id: 'mock-completed-game-id',
+              createdAt: new Date().toISOString(),
+              game: mockState?.activeGame?.game || null,
+              gameStats: {
+                id: 'mock-stats-id',
+                memberScores: [
+                  {
+                    id: 'score-1',
+                    score: 40,
+                    correctGuesses: 4,
+                    incorrectGuesses: 0,
+                    member: mockState?.activeGame?.gameMembers?.[0]
+                  },
+                  {
+                    id: 'score-2',
+                    score: 30,
+                    correctGuesses: 4,
+                    incorrectGuesses: 5,
+                    member: mockState?.activeGame?.gameMembers?.[1]
+                  }
+                ]
+              }
+            }
+          }
+        }])
+      });
+    });
+
+    await page.route('**/api/trpc/activeGame.addActions*', async (route) => {
+      const postData = route.request().postDataJSON();
+      const input = Array.isArray(postData) ? postData[0] : postData;
+      const actionsToRegister = input?.actions || [];
+
+      const newActions = await page.evaluate((acts) => {
+        const state = (window as any).__MOCK_STATE__;
+        if (!state) return [];
+        const newActs = acts.map((act: any) => ({
+          id: `mock-action-${Math.random()}`,
+          ...act,
+          userId: 'user-1',
+          type: 'GameAction',
+          submittedAt: new Date().toISOString()
+        }));
+        state.activeGame.actions = [
+          ...(state.activeGame.actions || []),
+          ...newActs
+        ];
+        (window as any).__TRIGGER_SUBSCRIPTION__('activeGame.onAddActions', newActs);
+        return newActs;
+      }, actionsToRegister);
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ result: { data: newActions } }])
+      });
+    });
+
+    await page.route('**/api/trpc/activeGame.complete*', async (route) => {
+      await page.evaluate(() => {
+        const completedPayload = {
+          activeGameId: 'mock-active-game-id',
+          completedGameId: 'mock-completed-game-id'
+        };
+        (window as any).__TRIGGER_SUBSCRIPTION__('activeGame.onGameCompleted', completedPayload);
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ result: { data: { id: 'mock-completed-game-id' } } }])
+      });
+    });
+
+    await page.route('**/api/trpc/generator.publishGeneratedGame*', async (route) => {
+      await page.evaluate(() => {
+        const state = (window as any).__MOCK_STATE__;
+        if (state && state.activeGame && state.activeGame.game) {
+          state.activeGame.game.published = true;
+        }
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ result: { data: { published: true } } }])
+      });
+    });
+
     // Add init script to mock WebSocket-based tRPC calls cleanly.
     // This provides a completely robust TDD environment and isolated testing environment.
     await page.addInitScript(() => {
@@ -143,19 +280,39 @@ test.describe('Crossword Game E2E and TDD Tests', () => {
       (window as any).__MOCK_STATE__ = mockState;
       (window as any).__MOCK_SOCKETS__ = [];
 
-      class MockWebSocket extends OriginalWebSocket {
+      class MockWebSocket extends EventTarget {
+        url: string;
+        readyState: number;
+        onopen: any = null;
+        onmessage: any = null;
+        onerror: any = null;
+        onclose: any = null;
+
         constructor(url: string, protocols?: string | string[]) {
-          super(url, protocols);
+          super();
+          this.url = url;
+          this.readyState = 0; // CONNECTING
           console.log(`[Mock WS] Constructor called with url: ${url}`);
           (window as any).__MOCK_SOCKETS__.push(this);
+
+          // Simulate connection open
+          setTimeout(() => {
+            if (this.readyState === 0) {
+              this.readyState = 1; // OPEN
+              const openEvent = new Event('open');
+              this.dispatchEvent(openEvent);
+              if (typeof this.onopen === 'function') {
+                this.onopen(openEvent);
+              }
+            }
+          }, 10);
         }
 
-        send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        send(data: string) {
           if (typeof data !== 'string') {
-            super.send(data);
             return;
           }
-
+          console.log(`[Mock WS] Sending data: ${data}`);
           try {
             const parsed = JSON.parse(data);
             
@@ -324,10 +481,8 @@ test.describe('Crossword Game E2E and TDD Tests', () => {
               if (handled) return;
             }
           } catch (e) {
-            // ignore
+            console.error('[Mock WS] Error in send:', e);
           }
-
-          super.send(data);
         }
 
         sendResponse(id: number, data: any) {
@@ -339,10 +494,14 @@ test.describe('Crossword Game E2E and TDD Tests', () => {
             }
           };
           setTimeout(() => {
-            this.dispatchEvent(new MessageEvent('message', {
+            const msgEvent = new MessageEvent('message', {
               data: JSON.stringify(resp),
               origin: this.url
-            }));
+            });
+            this.dispatchEvent(msgEvent);
+            if (typeof this.onmessage === 'function') {
+              this.onmessage(msgEvent);
+            }
           }, 20);
         }
 
@@ -354,10 +513,14 @@ test.describe('Crossword Game E2E and TDD Tests', () => {
             }
           };
           setTimeout(() => {
-            this.dispatchEvent(new MessageEvent('message', {
+            const msgEvent = new MessageEvent('message', {
               data: JSON.stringify(resp),
               origin: this.url
-            }));
+            });
+            this.dispatchEvent(msgEvent);
+            if (typeof this.onmessage === 'function') {
+              this.onmessage(msgEvent);
+            }
           }, 10);
         }
 
@@ -369,10 +532,25 @@ test.describe('Crossword Game E2E and TDD Tests', () => {
               data
             }
           };
-          this.dispatchEvent(new MessageEvent('message', {
-            data: JSON.stringify(resp),
-            origin: this.url
-          }));
+          setTimeout(() => {
+            const msgEvent = new MessageEvent('message', {
+              data: JSON.stringify(resp),
+              origin: this.url
+            });
+            this.dispatchEvent(msgEvent);
+            if (typeof this.onmessage === 'function') {
+              this.onmessage(msgEvent);
+            }
+          }, 10);
+        }
+
+        close() {
+          this.readyState = 3; // CLOSED
+          const closeEvent = new Event('close');
+          this.dispatchEvent(closeEvent);
+          if (typeof this.onclose === 'function') {
+            this.onclose(closeEvent);
+          }
         }
       }
 

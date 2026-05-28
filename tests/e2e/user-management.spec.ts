@@ -139,7 +139,9 @@ test.describe('User Management E2E Flow', () => {
     test('should update profile name on the profile page', async ({ page }) => {
       console.log('👤 Navigating to Profile Page...');
       await page.gotoPath('/profile');
-      await page.waitForTimeout(1000); // Ensure hydration completes
+      
+      // Wait deterministically for Vue hydration to complete
+      await page.waitForFunction(() => (window as any).__nuxt_hydrated === true, { timeout: 15000 });
 
       await expect(page.locator('h3:has-text("Profile Settings")')).toBeVisible();
 
@@ -205,7 +207,9 @@ test.describe('User Management E2E Flow', () => {
       // Go to profile and trigger deletion
       console.log('🗑️ Navigating to profile to delete account...');
       await page.gotoPath('/profile');
-      await page.waitForTimeout(1000); // Ensure hydration completes
+      
+      // Wait deterministically for Vue hydration to complete
+      await page.waitForFunction(() => (window as any).__nuxt_hydrated === true, { timeout: 15000 });
 
       // Safeguard: Wait for Vue hydration by verifying the input has populated
       const nameInput = page.locator('#profile-name-input');

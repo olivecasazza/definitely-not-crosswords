@@ -63,7 +63,7 @@
             <circle cx="18" cy="22" r="1.2" fill="currentColor" />
             <circle cx="22" cy="22" r="1.2" fill="currentColor" />
           </svg>
-          <span class="font-bold text-[var(--text-primary)] tracking-wide font-mono uppercase text-sm">Definitely Not Crosswords</span>
+          <span class="font-bold text-[var(--text-primary)] font-serif text-base">Definitely Not Crosswords</span>
         </div>
         <div class="font-medium text-[var(--text-secondary)] opacity-80">
           &copy; {{ new Date().getFullYear() }} Definitely Not Crosswords. All rights reserved.

@@ -75,7 +75,7 @@ function isFocusedCell(cell: Cell): boolean {
         <!-- Letter cell -->
         <div v-else class="w-full h-full">
           <div :class="[
-            'w-full h-full rounded border flex items-center justify-center font-mono font-bold text-base sm:text-lg md:text-xl transition-all duration-150 relative uppercase select-none',
+            'w-full h-full rounded border flex items-center justify-center font-sans font-bold text-base sm:text-lg md:text-xl transition-all duration-150 relative uppercase select-none',
             isFocusedCell(cell) 
               ? 'bg-[var(--pastel-yellow)] text-slate-900 border-[var(--pastel-yellow)] scale-105 shadow-[0_0_12px_rgba(254,234,153,0.35)] z-10' 
               : '',
@@ -96,7 +96,7 @@ function isFocusedCell(cell: Cell): boolean {
               : ''
           ]">
             <!-- Tiny starting number -->
-            <span v-if="getCellNumber(cell)" class="absolute top-[2px] left-[3px] text-[7px] sm:text-[9px] font-mono leading-none text-[var(--text-secondary)] opacity-85 pointer-events-none select-none font-bold">
+            <span v-if="getCellNumber(cell)" class="absolute top-[2px] left-[3px] text-[7px] sm:text-[9px] font-sans leading-none text-[var(--text-secondary)] opacity-85 pointer-events-none select-none font-bold">
               {{ getCellNumber(cell) }}
             </span>
             

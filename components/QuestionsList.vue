@@ -58,11 +58,11 @@ watch(selectedQuestion, (newQuestion) => {
     
     <!-- Consolidated Header Tabs -->
     <div class="flex flex-row justify-between items-center border-b border-[var(--border-app)] pb-3 mb-1 shrink-0">
-      <h2 class="text-[var(--text-secondary)] font-semibold text-xs tracking-wider uppercase px-1 font-mono">Clues</h2>
+      <h2 class="text-[var(--text-secondary)] font-semibold text-sm px-1 font-serif">Clues</h2>
       <div class="flex flex-row gap-1">
         <button 
           :class="[
-            'px-3 py-1 font-mono text-[10px] uppercase tracking-wider rounded border transition-all duration-150',
+            'px-3 py-1 font-sans text-[10px] uppercase tracking-wider rounded border transition-all duration-150',
             selectedDirection === 'ACROSS' 
               ? 'bg-[var(--pastel-yellow)] text-slate-900 border-[var(--pastel-yellow)] font-bold'
               : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-app)] hover:border-[var(--border-hover)]'
@@ -73,7 +73,7 @@ watch(selectedQuestion, (newQuestion) => {
         </button>
         <button 
           :class="[
-            'px-3 py-1 font-mono text-[10px] uppercase tracking-wider rounded border transition-all duration-150',
+            'px-3 py-1 font-sans text-[10px] uppercase tracking-wider rounded border transition-all duration-150',
             selectedDirection === 'DOWN' 
               ? 'bg-[var(--pastel-green)] text-slate-900 border-[var(--pastel-green)] font-bold'
               : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-app)] hover:border-[var(--border-hover)]'
@@ -132,17 +132,17 @@ watch(selectedQuestion, (newQuestion) => {
                 <div v-if="!getCellDisplayState(question, cell).state" class="w-5 h-5 rounded bg-[var(--bg-cell-empty)] border border-[var(--border-app)] opacity-30"></div>
                 
                 <div v-else-if="getCellDisplayState(question, cell).actionType === 'placeholder'" 
-                  class="w-5 h-5 rounded flex items-center justify-center font-mono font-bold text-[10px] bg-[var(--bg-cell-letter)] text-[var(--text-primary)] border border-[var(--pastel-yellow)] uppercase">
+                  class="w-5 h-5 rounded flex items-center justify-center font-sans font-bold text-[10px] bg-[var(--bg-cell-letter)] text-[var(--text-primary)] border border-[var(--pastel-yellow)] uppercase">
                   {{ getCellDisplayState(question, cell).state }}
                 </div>
                 
                 <div v-else-if="getCellDisplayState(question, cell).actionType === 'incorrectGuess'" 
-                  class="w-5 h-5 rounded flex items-center justify-center font-mono font-bold text-[10px] bg-[rgba(255,140,140,0.18)] text-[var(--pastel-red)] border border-[var(--pastel-red)] uppercase">
+                  class="w-5 h-5 rounded flex items-center justify-center font-sans font-bold text-[10px] bg-[rgba(255,140,140,0.18)] text-[var(--pastel-red)] border border-[var(--pastel-red)] uppercase">
                   {{ getCellDisplayState(question, cell).state }}
                 </div>
                 
                 <div v-else-if="getCellDisplayState(question, cell).actionType === 'correctGuess'" 
-                  class="w-5 h-5 rounded flex items-center justify-center font-mono font-bold text-[10px] bg-[rgba(168,230,207,0.18)] text-[var(--pastel-green)] border border-[var(--pastel-green)] uppercase">
+                  class="w-5 h-5 rounded flex items-center justify-center font-sans font-bold text-[10px] bg-[rgba(168,230,207,0.18)] text-[var(--pastel-green)] border border-[var(--pastel-green)] uppercase">
                   {{ getCellDisplayState(question, cell).state }}
                 </div>
               </div>

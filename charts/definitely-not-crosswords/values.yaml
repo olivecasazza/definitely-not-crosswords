@@ -84,6 +84,8 @@ adminUsers:
 
 # Database Configuration (PostgreSQL)
 database:
+  migrations:
+    enabled: true
   # CloudNative-PG Integration
   cnpg:
     enabled: false

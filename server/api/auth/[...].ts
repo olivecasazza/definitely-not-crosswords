@@ -1,6 +1,5 @@
 import { NuxtAuthHandler } from "#auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import KeycloakProvider from "next-auth/providers/keycloak";
 
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import pkg from "@prisma/client";
@@ -10,6 +9,11 @@ const { PrismaClient } = pkg;
 const prisma = new PrismaClient();
 const isProduction = process.env.NODE_ENV === "production" && process.env.E2E_TEST !== "true";
 const stripAuthPathSuffix = (value: string) => value.replace(/\/api\/auth\/?$/, "");
+const oidcProviderId = process.env.OIDC_PROVIDER_ID || "keycloak";
+const oidcProviderName = process.env.OIDC_PROVIDER_NAME || "SSO";
+const oidcIssuer = process.env.OIDC_ISSUER || process.env.KEYCLOAK_ISSUER;
+const oidcClientId = process.env.OIDC_CLIENT_ID || process.env.KEYCLOAK_CLIENT_ID;
+const oidcClientSecret = process.env.OIDC_CLIENT_SECRET || process.env.KEYCLOAK_CLIENT_SECRET;
 
 const authHandler = NuxtAuthHandler({
   adapter: PrismaAdapter(prisma),
@@ -87,13 +91,31 @@ const authHandler = NuxtAuthHandler({
           }),
         ]
       : []),
-    KeycloakProvider.default({
-      clientId: process.env.KEYCLOAK_CLIENT_ID as string,
-      clientSecret: process.env.KEYCLOAK_CLIENT_SECRET as string,
-      issuer: process.env.KEYCLOAK_ISSUER as string,
+    {
+      id: oidcProviderId,
+      name: oidcProviderName,
+      type: "oauth",
+      wellKnown: `${oidcIssuer}/.well-known/openid-configuration`,
+      authorization: {
+        params: {
+          scope: "openid email profile",
+        },
+      },
+      idToken: true,
+      checks: ["pkce", "state"],
+      clientId: oidcClientId as string,
+      clientSecret: oidcClientSecret as string,
+      profile(profile) {
+        return {
+          id: profile.sub,
+          name: profile.name || profile.preferred_username || profile.email,
+          email: profile.email,
+          image: profile.picture,
+        };
+      },
       // Existing users (same verified email) can link to Keycloak on first OAuth login.
       allowDangerousEmailAccountLinking: true,
-    }),
+    },
   ],
 });
 

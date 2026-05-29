@@ -47,7 +47,7 @@ const wss = Object.assign(new EventEmitter(), {
 applyWSSHandler({
   wss,
   router: appRouter,
-  createContext: () => createContext(),
+  createContext: ({ req }) => createContext(req),
 });
 
 function getSocket(peer: Peer): TrpcPeerSocket | undefined {

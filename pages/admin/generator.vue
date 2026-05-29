@@ -94,7 +94,13 @@
     <div class="app-card overflow-hidden">
       <div class="p-4 border-b border-[var(--border-app)] flex items-center justify-between">
         <h2 class="text-sm font-bold font-mono tracking-wider">GENERATION JOBS</h2>
-        <button class="app-btn text-xs font-mono uppercase" @click="refreshJobs">Refresh</button>
+        <button class="app-btn text-xs font-mono uppercase" :disabled="isLoadingJobs" @click="refreshJobs">
+          {{ isLoadingJobs ? "Refreshing" : "Refresh" }}
+        </button>
+      </div>
+
+      <div v-if="jobsError" class="border-b border-[var(--border-app)] bg-[var(--color-error)]/10 px-4 py-3 text-sm text-[var(--color-error)]">
+        {{ jobsError }}
       </div>
 
       <div class="overflow-x-auto">
@@ -143,8 +149,13 @@
               </td>
               <td class="px-4 py-3 text-[var(--text-secondary)]">{{ new Date(job.createdAt).toLocaleDateString() }}</td>
             </tr>
-            <tr v-if="!jobs.length">
-              <td class="px-4 py-6 text-center text-[var(--text-secondary)]" colspan="6">No generation jobs found.</td>
+            <tr v-if="isLoadingJobs && !jobs.length">
+              <td class="px-4 py-6 text-center text-[var(--text-secondary)]" colspan="6">Loading generation jobs...</td>
+            </tr>
+            <tr v-else-if="!jobs.length">
+              <td class="px-4 py-6 text-center text-[var(--text-secondary)]" colspan="6">
+                {{ jobsError ? "Unable to load generation jobs." : "No generation jobs found." }}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -176,6 +187,8 @@ const jobs = ref<any[]>([]);
 const generatedGame = ref<any | null>(null);
 const errorMessage = ref("");
 const isGenerating = ref(false);
+const isLoadingJobs = ref(false);
+const jobsError = ref("");
 const publishingGameId = ref<string | null>(null);
 
 // Live generation streaming state (fed by the runGeneration subscription).
@@ -186,10 +199,23 @@ const genStartedAt = ref<number | null>(null);
 let genSub: { unsubscribe: () => void } | null = null;
 
 async function refreshJobs() {
-  if (!user.value?.user?.email) return;
-  jobs.value = await $client.generator.listJobs.query({
-    take: 25,
-  });
+  if (!user.value?.user?.email) {
+    jobsError.value = "Sign in again to load generation jobs.";
+    return;
+  }
+
+  isLoadingJobs.value = true;
+  jobsError.value = "";
+
+  try {
+    jobs.value = await $client.generator.listJobs.query({
+      take: 25,
+    });
+  } catch (error) {
+    jobsError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    isLoadingJobs.value = false;
+  }
 }
 
 async function handleGenEvent(event: any) {
@@ -280,5 +306,11 @@ async function publishGame(gameId: string) {
   }
 }
 
-await refreshJobs();
+watch(
+  () => user.value?.user?.email,
+  (email) => {
+    if (email) void refreshJobs();
+  },
+  { immediate: true }
+);
 </script>

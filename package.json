@@ -7,6 +7,7 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "seed:dictionary": "node scripts/seed_wordnet_dictionary.mjs",
+    "prepare:crossword-assets": "node scripts/prepare_crossword_assets.mjs",
     "postinstall": "nuxt prepare",
     "test:e2e": "playwright test"
   },

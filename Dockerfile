@@ -25,6 +25,9 @@ RUN pnpm prisma generate
 # Copy the rest of the application code
 COPY . .
 
+# Download ignored runtime assets required by the generator.
+RUN node scripts/prepare_crossword_assets.mjs
+
 # Build the Nuxt 3 application
 ENV NODE_ENV=production
 RUN pnpm run build

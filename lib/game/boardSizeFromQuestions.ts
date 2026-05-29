@@ -1,6 +1,6 @@
-import { Question } from '@prisma/client'
-import { ICoordinates } from './boardState'
-import { WithComputedProperties } from './question'
+import type { Question } from '@prisma/client'
+import type { ICoordinates } from './boardState'
+import type { WithComputedProperties } from './question'
 
 export function GetBoardSize (questions: WithComputedProperties<Question>[]): ICoordinates {
   const boardSize = questions

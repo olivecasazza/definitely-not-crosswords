@@ -1,6 +1,6 @@
-import { GameAction, Question } from "@prisma/client";
-import { Cell } from "./cell";
-import { WithComputedProperties } from "./question";
+import type { GameAction, Question } from "@prisma/client";
+import type { Cell } from "./cell";
+import type { WithComputedProperties } from "./question";
 import { SortGameActionByDateDesc } from "./gameAction";
 
 export class ICoordinates {

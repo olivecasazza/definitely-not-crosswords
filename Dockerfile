@@ -47,6 +47,7 @@ COPY package.json pnpm-lock.yaml .npmrc pnpm-workspace.yaml* ./
 COPY --from=builder /app/.output /app/.output
 COPY --from=builder /app/node_modules /app/node_modules
 COPY --from=builder /app/prisma /app/prisma
+COPY --from=builder /app/scripts /app/scripts
 COPY --from=builder /app/otel.cjs /app/otel.cjs
 
 # Expose Nuxt default port and WebSocket port

@@ -44,8 +44,16 @@ test.describe('User Management E2E Flow', () => {
       await page.gotoPath('/auth/signup');
       await expect(page.locator('h1')).toHaveText('Create Account');
 
+      const testUsername = `e2e_user_${Math.random().toString(36).substring(7)}`;
+      const testPassword = 'supersecurepassword123';
+
       await page.locator('#name').fill(testName);
+      await page.locator('#username').fill(testUsername);
       await page.locator('#email').fill(testEmail);
+      await page.locator('#password').fill(testPassword);
+
+      // Wait for debounce validation
+      await page.waitForTimeout(1000);
       await page.locator('button[type="submit"]').click();
 
       // Verify signup success
@@ -86,8 +94,8 @@ test.describe('User Management E2E Flow', () => {
       // Smart next-auth session interceptor with URL rewrite fallback
       await page.route('**/api/auth/session', async (route) => {
         const requestUrl = route.request().url();
-        const targetUrl = requestUrl.includes('localhost:3000') 
-          ? requestUrl.replace('http://localhost:3000', baseURL || '') 
+        const targetUrl = requestUrl.includes('localhost:3000')
+          ? requestUrl.replace('http://localhost:3000', baseURL || '')
           : requestUrl;
 
         const cookies = await page.context().cookies();
@@ -135,11 +143,11 @@ test.describe('User Management E2E Flow', () => {
         }
       ]);
     });
-    
+
     test('should update profile name on the profile page', async ({ page }) => {
       console.log('👤 Navigating to Profile Page...');
       await page.gotoPath('/profile');
-      
+
       // Wait deterministically for Vue hydration to complete
       await page.waitForFunction(() => (window as any).__nuxt_hydrated === true, { timeout: 15000 });
 
@@ -166,7 +174,7 @@ test.describe('User Management E2E Flow', () => {
     test('should sign out successfully using AppHeader "Sign Out" button', async ({ page }) => {
       console.log('🚪 Testing Sign Out...');
       await page.gotoPath('/');
-      
+
       const signOutBtn = page.locator('button:has-text("Sign Out")').first();
       await expect(signOutBtn).toBeVisible();
       await signOutBtn.click();
@@ -186,10 +194,18 @@ test.describe('User Management E2E Flow', () => {
       // Use clean session for signup & login
       const browser = page.context();
       await browser.clearCookies();
-      
+
       await page.gotoPath('/auth/signup');
+      const deleteUsername = `e2e_delete_${Math.random().toString(36).substring(7)}`;
+      const deletePassword = 'supersecurepassword123';
+
       await page.locator('#name').fill(deleteName);
+      await page.locator('#username').fill(deleteUsername);
       await page.locator('#email').fill(deleteEmail);
+      await page.locator('#password').fill(deletePassword);
+
+      // Wait for debounce validation
+      await page.waitForTimeout(1000);
       await page.locator('button[type="submit"]').click();
 
       const verificationLink = page.locator('#verification-link');
@@ -207,14 +223,14 @@ test.describe('User Management E2E Flow', () => {
       // Go to profile and trigger deletion
       console.log('🗑️ Navigating to profile to delete account...');
       await page.gotoPath('/profile');
-      
+
       // Wait deterministically for Vue hydration to complete
       await page.waitForFunction(() => (window as any).__nuxt_hydrated === true, { timeout: 15000 });
 
       // Safeguard: Wait for Vue hydration by verifying the input has populated
       const nameInput = page.locator('#profile-name-input');
       await expect(nameInput).toHaveValue(deleteName, { timeout: 10000 });
-      
+
       const deleteBtn = page.locator('#delete-account-btn');
       await expect(deleteBtn).toBeVisible();
       await deleteBtn.click();

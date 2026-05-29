@@ -54,7 +54,8 @@
     "trpc-nuxt": "^0.10.22",
     "websocket-polyfill": "^0.0.3",
     "ws": "^8.21.0",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@lemonsqueezy/lemonsqueezy.js": "^3.0.0"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

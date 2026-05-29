@@ -1,4 +1,4 @@
-import { GameAction } from '@prisma/client';
+import type { GameAction } from '@prisma/client';
 
 export type CellState = string | '';
 export interface Cell {
@@ -20,4 +20,3 @@ export function IsCellCorrect (cell: Cell): boolean {
   if (latestModification == '') { return false }
   return latestModification === cell.correctState
 }
-

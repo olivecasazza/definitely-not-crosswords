@@ -9,6 +9,7 @@ import { activeGameRouter } from './activeGame';
 import { generatorRouter } from './generator';
 import { statsRouter } from './stats';
 import { userRouter } from './user';
+import { subscriptionRouter } from './subscription';
 
 export const ee = new EventEmitter();
 export const prisma = new PrismaClient();
@@ -19,7 +20,8 @@ export const appRouter = router({
     gameList: gameListRouter,
     generator: generatorRouter,
     stats: statsRouter,
-    user: userRouter
+    user: userRouter,
+    subscription: subscriptionRouter,
 });
 
 export type AppRouter = typeof appRouter;

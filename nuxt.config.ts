@@ -14,6 +14,12 @@ export default defineNuxtConfig({
   ],
   runtimeConfig: {
     version: '0.0.1',
+    lemonSqueezy: {
+      apiKey: '',
+      storeId: '',
+      variantId: '',
+      webhookSecret: '',
+    },
   },
   typescript: {
     shim: false
@@ -22,7 +28,9 @@ export default defineNuxtConfig({
     transpile: ['trpc-nuxt']
   },
   nitro: {
-    plugins: ['~/nitro/ws'],
+    experimental: {
+      websocket: true
+    },
     externals: {
       trace: false
     }

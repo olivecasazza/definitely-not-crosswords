@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia';
-import { Cell } from '~/lib/game';
+import type { Cell } from '~/lib/game';
 import { useActiveGameStore } from '~/stores/activeGame';
 import { computed } from 'vue';
 

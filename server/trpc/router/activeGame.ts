@@ -1,5 +1,5 @@
 import { observable } from "@trpc/server/observable";
-import { publicProcedure, router } from "../trpc";
+import { protectedProcedure, publicProcedure, router } from "../trpc";
 import { z } from "zod";
 import { ee, prisma } from ".";
 import { GameAction, Prisma } from "@prisma/client";
@@ -20,11 +20,10 @@ export const activeGameRouter = router({
       return () => ee.off("game-completed", onComplete);
     });
   }),
-  addActions: publicProcedure
+  addActions: protectedProcedure
     .input(
       z.object({
         id: z.string().uuid(),
-        userEmail: z.string(),
         actions: z
           .object({
             activeGameId: z.string(),
@@ -37,16 +36,12 @@ export const activeGameRouter = router({
           .array(),
       })
     )
-    .mutation(async (opts) => {
-      const user = await prisma.user.findUnique({
-        where: { email: opts.input.userEmail },
-        select: { id: true },
-      });
-      const createdActions = opts.input.actions.map((a) => {
+    .mutation(async ({ input, ctx }) => {
+      const createdActions = input.actions.map((a) => {
         return {
           id: crypto.randomUUID(),
           ...a,
-          userId: user?.id || "",
+          userId: ctx.user.id,
           type: "GameAction",
           submittedAt: new Date(),
         } as GameAction;

@@ -8,6 +8,7 @@ import {
   type GenerationProgressCallback,
   type GenerationProgressEvent,
 } from "../../services/crossword/generateCrossword";
+import { roleHasCapability } from "../../../lib/auth/roles";
 
 const generationParamsSchema = z.object({
   topic: z.string().trim().min(1),
@@ -47,11 +48,15 @@ function validateGenerationParams(params: z.infer<typeof generationParamsSchema>
 }
 
 /**
- * Check whether a user is allowed to generate. Pro users (ACTIVE or CANCELLED
- * subscription) are unlimited; free users get 5 per calendar month.
+ * Check whether a user is allowed to generate. Users with generator management
+ * capability and Pro users are unlimited; free users get 5 per calendar month.
  * Throws TRPCError FORBIDDEN when the free-tier limit is reached.
  */
-async function checkQuota(userId: string): Promise<{ isPro: boolean }> {
+async function checkQuota(userId: string, role: string): Promise<{ isUnlimited: boolean }> {
+  if (roleHasCapability(role, "generator:manage")) {
+    return { isUnlimited: true };
+  }
+
   const subscription = await prisma.subscription.findUnique({
     where: { userId },
     select: { status: true },
@@ -91,7 +96,7 @@ async function checkQuota(userId: string): Promise<{ isPro: boolean }> {
     }
   }
 
-  return { isPro };
+  return { isUnlimited: isPro };
 }
 
 /** Increment the monthly generation counter for a free-tier user. */
@@ -211,9 +216,9 @@ export const generatorRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       validateGenerationParams(input.params);
-      const { isPro } = await checkQuota(ctx.user.id);
+      const { isUnlimited } = await checkQuota(ctx.user.id, ctx.user.role);
       const result = await executeGeneration(ctx.user.id, input.params, input.title);
-      if (!isPro) await incrementQuota(ctx.user.id);
+      if (!isUnlimited) await incrementQuota(ctx.user.id);
       return result;
     }),
 
@@ -231,7 +236,7 @@ export const generatorRouter = router({
       // Authorize + validate before returning the observable, so a rejection
       // surfaces as a client `onError` rather than a stream that emits then ends.
       validateGenerationParams(input.params);
-      const { isPro } = await checkQuota(ctx.user.id);
+      const { isUnlimited } = await checkQuota(ctx.user.id, ctx.user.role);
 
       return observable<GenerationEvent>((emit) => {
         let cancelled = false;
@@ -250,7 +255,7 @@ export const generatorRouter = router({
               onEvent: (event) => safeEmit({ ...event, at: Date.now() }),
             });
 
-            if (!isPro) await incrementQuota(ctx.user.id);
+            if (!isUnlimited) await incrementQuota(ctx.user.id);
 
             safeEmit({
               type: "completed",

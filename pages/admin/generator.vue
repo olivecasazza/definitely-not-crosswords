@@ -6,31 +6,6 @@
         <h1 class="text-lg font-bold font-primary tracking-wider">CROSSWORD GENERATOR</h1>
       </div>
 
-      <!-- Quota indicator -->
-      <div class="flex items-center justify-between py-2 px-3 rounded-md bg-[var(--bg-card-secondary,var(--bg-secondary))]" v-if="!subscriptionStore.loading">
-        <div class="flex items-center gap-2 text-sm">
-          <template v-if="subscriptionStore.isPro">
-            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-xs font-bold uppercase tracking-wider">
-              ⭐ Pro
-            </span>
-            <span class="text-[var(--text-secondary)]">Unlimited generations</span>
-          </template>
-          <template v-else>
-            <span class="font-mono font-bold" :class="subscriptionStore.isQuotaExhausted ? 'text-red-400' : 'text-[var(--text-primary)]'">
-              {{ subscriptionStore.quotaRemaining }}/5
-            </span>
-            <span class="text-[var(--text-secondary)]">generations remaining this month</span>
-          </template>
-        </div>
-        <button
-          v-if="!subscriptionStore.isPro"
-          class="app-btn text-xs px-3 py-1 bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 font-bold"
-          @click="subscriptionStore.openCheckout()"
-        >
-          Upgrade to Pro — $10/yr
-        </button>
-      </div>
-
       <div class="flex flex-col gap-4">
         <div class="flex flex-wrap items-end gap-3">
           <div class="flex min-w-[280px] flex-1 flex-col gap-1.5">
@@ -45,7 +20,7 @@
 
           <button
             class="app-btn app-btn-active h-[38px] min-w-[120px] font-bold"
-            :disabled="isGenerating || !user?.user?.email || subscriptionStore.isQuotaExhausted"
+            :disabled="isGenerating || !user?.user?.email"
             @click="generate"
           >
             {{ isGenerating ? "Generating..." : "Generate" }}
@@ -185,10 +160,6 @@ definePageMeta({
 
 const { data: user } = useAuth();
 const { $client } = useNuxtApp();
-
-import { useSubscriptionStore } from '~/stores/subscription';
-const subscriptionStore = useSubscriptionStore();
-onMounted(() => subscriptionStore.fetchStatus());
 
 const form = reactive({
   topic: "space exploration and planetary science",

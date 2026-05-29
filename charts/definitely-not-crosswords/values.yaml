@@ -68,6 +68,20 @@ auth:
   origin: "https://definitely-not-crosswords.local"
   nextAuthSecret: "supersecretsecret"
 
+# Admin users are reconciled before the app starts. Existing users are updated
+# to the configured role and marked verified when emailVerified is true.
+adminUsers:
+  enabled: true
+  users:
+    - email: "olive@casazza.info"
+      name: "Olive Casazza"
+      role: "ADMIN"
+      emailVerified: true
+    - email: "olive.casazza@gmail.com"
+      name: "Olive Casazza"
+      role: "ADMIN"
+      emailVerified: true
+
 # Database Configuration (PostgreSQL)
 database:
   # CloudNative-PG Integration

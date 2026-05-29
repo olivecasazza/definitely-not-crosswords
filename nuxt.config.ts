@@ -28,7 +28,6 @@ export default defineNuxtConfig({
     transpile: ['trpc-nuxt', '@trpc/server']
   },
   nitro: {
-    plugins: ['~/nitro/ws'],
     experimental: {
       websocket: true
     },

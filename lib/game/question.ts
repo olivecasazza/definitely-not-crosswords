@@ -1,7 +1,7 @@
-import { Game, GameAction, Question, QuestionDirectionEnum } from '@prisma/client'
+import type { GameAction, Question } from '@prisma/client'
 import { ICoordinates } from './boardState'
 import { SortGameActionByDateDesc } from './gameAction'
-import { Cell } from './cell'
+import type { Cell } from './cell'
 
 // Extend the T generic with the fullName attribute
 export type WithComputedProperties<Question> = Question & {
@@ -18,7 +18,7 @@ export function computeQuestionAnswerMap<T extends Question> (
   dbo.answer.split('').forEach((character, index) => {
     let x = dbo.rootX
     let y = dbo.rootY
-    dbo.direction === "ACROSS" as QuestionDirectionEnum
+    dbo.direction === "ACROSS"
       ? (x += index)
       : (y += index)
     answerMap[index] = {
@@ -58,7 +58,7 @@ export const GetCordAtAnswerIndex = (
 ): ICoordinates => {
   let cordX = q.rootX
   let cordY = q.rootY
-  q.direction === QuestionDirectionEnum.ACROSS
+  q.direction === "ACROSS"
     ? (cordX += index)
     : (cordY += index)
   return { x: cordX, y: cordY }

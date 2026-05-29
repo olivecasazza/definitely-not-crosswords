@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { Question } from "@prisma/client";
+import type { Question } from "@prisma/client";
 import { storeToRefs } from "pinia";
 import { useActiveGameStore } from "~/stores/activeGame";
 import { reactive, watch, nextTick } from "vue";
-import { Cell } from "~/lib/game";
+import type { Cell } from "~/lib/game";
 
 const activeGameStore = useActiveGameStore();
 const { selectQuestion, filterDown, filterAcross } = activeGameStore;

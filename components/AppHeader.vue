@@ -112,16 +112,13 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-
-definePageMeta({
-  middleware: "auth",
-});
+import { roleHasCapability } from '~/lib/auth/roles';
 
 const { data, signOut } = useAuth();
 const user = computed(() => data.value?.user);
 
 const isAdmin = computed(() => {
-  return (data.value?.user as { role?: string } | undefined)?.role === "ADMIN";
+  return roleHasCapability((data.value?.user as { role?: string } | undefined)?.role, "admin:access");
 });
 
 const isLight = useState('isLight');
@@ -141,7 +138,7 @@ const navLinks = computed(() => {
     { label: 'Stats', path: '/stats' }
   ];
   if (isAdmin.value) {
-    links.push({ label: 'Generator', path: '/admin/generator' });
+    links.push({ label: 'Admin', path: '/admin' });
   }
   return links;
 });

@@ -27,6 +27,29 @@ spec:
       serviceAccountName: {{ include "definitely-not-crosswords.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.adminUsers.enabled }}
+      initContainers:
+        - name: seed-admin-users
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "/app/scripts/seed_admin_users.mjs"]
+          env:
+            - name: ADMIN_USERS_JSON
+              value: {{ toJson .Values.adminUsers | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.database.cnpg.enabled }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-db-app
+                  key: uri
+                  {{- else if .Values.database.external.existingSecret }}
+                  name: {{ .Values.database.external.existingSecret }}
+                  key: {{ .Values.database.external.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                  key: DATABASE_URL
+                  {{- end }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -67,7 +90,7 @@ spec:
             - name: KEYCLOAK_ISSUER
               value: {{ .Values.auth.issuer | quote }}
             - name: NUXT_AUTH_ORIGIN
-              value: {{ .Values.auth.origin | quote }}
+              value: {{ .Values.auth.origin | trimSuffix "/api/auth/" | trimSuffix "/api/auth" | quote }}
             - name: KEYCLOAK_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

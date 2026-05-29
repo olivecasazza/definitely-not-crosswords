@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { publicProcedure, router } from "../trpc";
+import { protectedProcedure, publicProcedure, router } from "../trpc";
 import { prisma } from ".";
 
 export const statsRouter = router({
@@ -229,23 +229,20 @@ export const statsRouter = router({
     }),
 
   // Get Head-to-Head comparison between the current user and an opponent
-  getHeadToHead: publicProcedure
+  getHeadToHead: protectedProcedure
     .input(
       z.object({
-        userEmail: z.string().email(),
         opponentId: z.string(),
       })
     )
-    .query(async ({ input }) => {
-      const user = await prisma.user.findUnique({
-        where: { email: input.userEmail },
-      });
+    .query(async ({ input, ctx }) => {
+      const user = ctx.user;
       const opponent = await prisma.user.findUnique({
         where: { id: input.opponentId },
       });
 
-      if (!user || !opponent) {
-        throw new Error("User or opponent not found");
+      if (!opponent) {
+        throw new Error("Opponent not found");
       }
 
       // Find all completed games BOTH participated in

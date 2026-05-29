@@ -8,15 +8,16 @@ import type {
 
 export type QuestionDirectionEnum = "ACROSS" | "DOWN";
 export type GameActionTypeEnum = "placeholder" | "correctGuess" | "incorrectGuess";
-import { Ref } from "vue";
-import { defineStore, storeToRefs } from "pinia";
-import { BoardState, Cell } from "~/lib/game";
+import type { Ref } from "vue";
+import { defineStore } from "pinia";
+import { BoardState } from "~/lib/game";
+import type { Cell } from "~/lib/game";
 import { GetBoardSize } from "~/lib/game/boardSizeFromQuestions";
 import {
   computeQuestionAnswerMap,
-  WithComputedProperties,
 } from "~/lib/game/question";
-import { useUserStore } from "./user";
+import type { WithComputedProperties } from "~/lib/game/question";
+
 
 export const useActiveGameStore = defineStore("activeGame", () => {
   // state
@@ -234,13 +235,11 @@ export const useActiveGameStore = defineStore("activeGame", () => {
       });
     }
 
-    const { email } = storeToRefs(useUserStore());
     const route = useRoute();
     const { $client } = useNuxtApp();
     
     await $client.activeGame.addActions.mutate({
       id: route.params.id as string,
-      userEmail: email.value as string,
       actions: gameActionData.value,
     });
 

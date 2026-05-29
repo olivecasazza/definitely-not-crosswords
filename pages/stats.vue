@@ -21,7 +21,6 @@ const { data: players, pending: pendingPlayers } = await $client.stats.getAllPla
 const selectedOpponentId = ref<string>('')
 const { data: h2hData, pending: pendingH2H, refresh: refreshH2H } = await $client.stats.getHeadToHead.useQuery(
   computed(() => ({
-    userEmail: user.value?.user?.email || '',
     opponentId: selectedOpponentId.value
   })),
   { enabled: computed(() => !!user.value?.user?.email && !!selectedOpponentId.value) }

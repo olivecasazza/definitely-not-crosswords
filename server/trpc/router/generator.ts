@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
 import { z } from "zod";
 import { prisma } from ".";
-import { publicProcedure, router } from "../trpc";
+import { adminProcedure, router } from "../trpc";
 import {
   generateCrosswordFromDictionary,
   type GenerationProgressCallback,
@@ -30,22 +30,6 @@ const generatedQuestionSchema = z.object({
   direction: z.enum(["ACROSS", "DOWN"]),
 });
 
-async function requireAdmin(userEmail: string) {
-  const user = await prisma.user.findUnique({
-    where: { email: userEmail },
-    select: { id: true, role: true },
-  });
-
-  if (!user || user.role !== "ADMIN") {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "Admin access is required.",
-    });
-  }
-
-  return user;
-}
-
 function validateGenerationParams(params: z.infer<typeof generationParamsSchema>) {
   if (params.minWordLength > params.maxWordLength) {
     throw new TRPCError({
@@ -60,6 +44,62 @@ function validateGenerationParams(params: z.infer<typeof generationParamsSchema>
       message: "maxWordLength cannot exceed the larger grid dimension.",
     });
   }
+}
+
+/**
+ * Check whether a user is allowed to generate. Pro users (ACTIVE or CANCELLED
+ * subscription) are unlimited; free users get 5 per calendar month.
+ * Throws TRPCError FORBIDDEN when the free-tier limit is reached.
+ */
+async function checkQuota(userId: string): Promise<{ isPro: boolean }> {
+  const subscription = await prisma.subscription.findUnique({
+    where: { userId },
+    select: { status: true },
+  });
+  const isPro = subscription?.status === 'ACTIVE' || subscription?.status === 'CANCELLED';
+
+  if (!isPro) {
+    const now = new Date();
+    let quota = await prisma.generationQuota.findUnique({
+      where: { userId },
+    });
+
+    if (!quota) {
+      quota = await prisma.generationQuota.create({
+        data: { userId },
+      });
+    }
+
+    // Lazy monthly reset
+    const resetDate = new Date(quota.monthResetAt);
+    const isCurrentMonth =
+      resetDate.getUTCFullYear() === now.getUTCFullYear() &&
+      resetDate.getUTCMonth() === now.getUTCMonth();
+
+    if (!isCurrentMonth) {
+      quota = await prisma.generationQuota.update({
+        where: { id: quota.id },
+        data: { usedThisMonth: 0, monthResetAt: now },
+      });
+    }
+
+    if (quota.usedThisMonth >= 5) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'Monthly generation limit reached. Upgrade to Pro for unlimited generations.',
+      });
+    }
+  }
+
+  return { isPro };
+}
+
+/** Increment the monthly generation counter for a free-tier user. */
+async function incrementQuota(userId: string): Promise<void> {
+  await prisma.generationQuota.update({
+    where: { userId },
+    data: { usedThisMonth: { increment: 1 } },
+  });
 }
 
 /**
@@ -162,36 +202,36 @@ async function executeGeneration(
 }
 
 export const generatorRouter = router({
-  generateDraftGame: publicProcedure
+  generateDraftGame: adminProcedure
     .input(
       z.object({
-        userEmail: z.string().email(),
         title: z.string().trim().min(1).optional(),
         params: generationParamsSchema,
       })
     )
-    .mutation(async ({ input }) => {
-      const admin = await requireAdmin(input.userEmail);
+    .mutation(async ({ input, ctx }) => {
       validateGenerationParams(input.params);
-      return executeGeneration(admin.id, input.params, input.title);
+      const { isPro } = await checkQuota(ctx.user.id);
+      const result = await executeGeneration(ctx.user.id, input.params, input.title);
+      if (!isPro) await incrementQuota(ctx.user.id);
+      return result;
     }),
 
   // Streaming variant of generateDraftGame: same work, but emits granular
   // progress over a WebSocket subscription so the admin UI can show live
   // stage/progress/log events instead of a multi-minute spinner.
-  runGeneration: publicProcedure
+  runGeneration: adminProcedure
     .input(
       z.object({
-        userEmail: z.string().email(),
         title: z.string().trim().min(1).optional(),
         params: generationParamsSchema,
       })
     )
-    .subscription(async ({ input }) => {
+    .subscription(async ({ input, ctx }) => {
       // Authorize + validate before returning the observable, so a rejection
       // surfaces as a client `onError` rather than a stream that emits then ends.
-      const admin = await requireAdmin(input.userEmail);
       validateGenerationParams(input.params);
+      const { isPro } = await checkQuota(ctx.user.id);
 
       return observable<GenerationEvent>((emit) => {
         let cancelled = false;
@@ -202,13 +242,15 @@ export const generatorRouter = router({
         void (async () => {
           let jobId: string | null = null;
           try {
-            const result = await executeGeneration(admin.id, input.params, input.title, {
+            const result = await executeGeneration(ctx.user.id, input.params, input.title, {
               onJobCreated: (id) => {
                 jobId = id;
                 safeEmit({ type: "started", jobId: id, at: Date.now() });
               },
               onEvent: (event) => safeEmit({ ...event, at: Date.now() }),
             });
+
+            if (!isPro) await incrementQuota(ctx.user.id);
 
             safeEmit({
               type: "completed",
@@ -239,15 +281,13 @@ export const generatorRouter = router({
       });
     }),
 
-  createJob: publicProcedure
+  createJob: adminProcedure
     .input(
       z.object({
-        userEmail: z.string().email(),
         params: generationParamsSchema,
       })
     )
-    .mutation(async ({ input }) => {
-      const admin = await requireAdmin(input.userEmail);
+    .mutation(async ({ input, ctx }) => {
       validateGenerationParams(input.params);
 
       return await prisma.crosswordGenerationJob.create({
@@ -259,21 +299,18 @@ export const generatorRouter = router({
           minWordLength: input.params.minWordLength,
           maxWordLength: input.params.maxWordLength,
           params: input.params,
-          createdBy: { connect: { id: admin.id } },
+          createdBy: { connect: { id: ctx.user.id } },
         },
       });
     }),
 
-  listJobs: publicProcedure
+  listJobs: adminProcedure
     .input(
       z.object({
-        userEmail: z.string().email(),
         take: z.number().int().min(1).max(100).default(25),
       })
     )
     .query(async ({ input }) => {
-      await requireAdmin(input.userEmail);
-
       return await prisma.crosswordGenerationJob.findMany({
         take: input.take,
         orderBy: { createdAt: "desc" },
@@ -284,16 +321,13 @@ export const generatorRouter = router({
       });
     }),
 
-  getJob: publicProcedure
+  getJob: adminProcedure
     .input(
       z.object({
-        userEmail: z.string().email(),
         id: z.string().uuid(),
       })
     )
     .query(async ({ input }) => {
-      await requireAdmin(input.userEmail);
-
       return await prisma.crosswordGenerationJob.findUnique({
         where: { id: input.id },
         include: {
@@ -307,10 +341,9 @@ export const generatorRouter = router({
       });
     }),
 
-  saveDraftGame: publicProcedure
+  saveDraftGame: adminProcedure
     .input(
       z.object({
-        userEmail: z.string().email(),
         jobId: z.string().uuid(),
         title: z.string().trim().min(1),
         metrics: z.record(z.unknown()).optional(),
@@ -318,8 +351,6 @@ export const generatorRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      await requireAdmin(input.userEmail);
-
       const job = await prisma.crosswordGenerationJob.findUnique({
         where: { id: input.jobId },
         select: { id: true, resultGameId: true },
@@ -371,18 +402,15 @@ export const generatorRouter = router({
       });
     }),
 
-  markFailed: publicProcedure
+  markFailed: adminProcedure
     .input(
       z.object({
-        userEmail: z.string().email(),
         jobId: z.string().uuid(),
         error: z.string().trim().min(1),
         metrics: z.record(z.unknown()).optional(),
       })
     )
     .mutation(async ({ input }) => {
-      await requireAdmin(input.userEmail);
-
       return await prisma.crosswordGenerationJob.update({
         where: { id: input.jobId },
         data: {
@@ -393,16 +421,13 @@ export const generatorRouter = router({
       });
     }),
 
-  publishGeneratedGame: publicProcedure
+  publishGeneratedGame: adminProcedure
     .input(
       z.object({
-        userEmail: z.string().email(),
         gameId: z.string().uuid(),
       })
     )
     .mutation(async ({ input }) => {
-      await requireAdmin(input.userEmail);
-
       const game = await prisma.game.findUnique({
         where: { id: input.gameId },
         select: { id: true, source: true },

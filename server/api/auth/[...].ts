@@ -9,6 +9,7 @@ const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
 const isProduction = process.env.NODE_ENV === "production" && process.env.E2E_TEST !== "true";
+const stripAuthPathSuffix = (value: string) => value.replace(/\/api\/auth\/?$/, "");
 
 const authHandler = NuxtAuthHandler({
   adapter: PrismaAdapter(prisma),
@@ -19,7 +20,7 @@ const authHandler = NuxtAuthHandler({
   },
   callbacks: {
     async redirect({ url, baseUrl }) {
-      const targetBase = process.env.NEXTAUTH_URL || baseUrl;
+      const targetBase = stripAuthPathSuffix(process.env.NEXTAUTH_URL || baseUrl);
       if (url.startsWith("/")) {
         return `${targetBase}${url}`;
       }
@@ -90,6 +91,8 @@ const authHandler = NuxtAuthHandler({
       clientId: process.env.KEYCLOAK_CLIENT_ID as string,
       clientSecret: process.env.KEYCLOAK_CLIENT_SECRET as string,
       issuer: process.env.KEYCLOAK_ISSUER as string,
+      // Existing users (same verified email) can link to Keycloak on first OAuth login.
+      allowDangerousEmailAccountLinking: true,
     }),
   ],
 });
@@ -99,7 +102,7 @@ export default defineEventHandler(async (event) => {
   const host = event.node.req.headers.host;
   if (host) {
     const protocol = event.node.req.headers['x-forwarded-proto'] || 'http';
-    const dynamicOrigin = `${protocol}://${host}`;
+    const dynamicOrigin = stripAuthPathSuffix(`${protocol}://${host}`);
     process.env.NEXTAUTH_URL = dynamicOrigin;
     process.env.AUTH_ORIGIN = dynamicOrigin;
   }

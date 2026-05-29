@@ -76,6 +76,7 @@ async function seedAdminUsers() {
             role: user.role,
             emailVerified: verifiedAt,
           },
+          select: { id: true },
         });
         console.log(`Created seeded user ${user.email} with role ${user.role}.`);
         continue;
@@ -96,6 +97,7 @@ async function seedAdminUsers() {
         await prisma.user.update({
           where: { email: user.email },
           data: updateData,
+          select: { id: true },
         });
         console.log(`Updated seeded user ${user.email}.`);
       } else {

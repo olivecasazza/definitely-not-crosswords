@@ -83,8 +83,13 @@ test.describe('User Management E2E Flow', () => {
       await page.waitForURL('/', { timeout: 15000 });
       await expect(page).toHaveURL(/.*\//);
 
-      // Verify the sign-out button is visible in the header
-      const signOutBtn = page.locator('button:has-text("Sign Out")');
+      // Verify the profile dropdown button is visible and click it
+      const profileDropdownBtn = page.locator('button[aria-haspopup="true"]').first();
+      await expect(profileDropdownBtn).toBeVisible();
+      await profileDropdownBtn.click();
+
+      // Now verify the sign-out button is visible inside the open dropdown
+      const signOutBtn = page.locator('button:has-text("Sign Out")').first();
       await expect(signOutBtn).toBeVisible();
     });
   });
@@ -174,7 +179,12 @@ test.describe('User Management E2E Flow', () => {
     test('should sign out successfully using AppHeader "Sign Out" button', async ({ page }) => {
       console.log('🚪 Testing Sign Out...');
       await page.gotoPath('/');
-
+      
+      // Open the profile dropdown first
+      const profileDropdownBtn = page.locator('button[aria-haspopup="true"]').first();
+      await expect(profileDropdownBtn).toBeVisible();
+      await profileDropdownBtn.click();
+      
       const signOutBtn = page.locator('button:has-text("Sign Out")').first();
       await expect(signOutBtn).toBeVisible();
       await signOutBtn.click();

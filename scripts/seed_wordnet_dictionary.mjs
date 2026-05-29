@@ -112,10 +112,18 @@ async function main() {
   }
 
   const wordRows = [...wordRowsByWord.values()];
+  const parsedDefinitionRowsByKey = new Map();
+  for (const row of parsedRows) {
+    const key = `${row.word}:${row.partOfSpeech}:${row.synsetOffset}`;
+    if (!parsedDefinitionRowsByKey.has(key)) {
+      parsedDefinitionRowsByKey.set(key, row);
+    }
+  }
+  const uniqueParsedDefinitionRows = [...parsedDefinitionRowsByKey.values()];
 
   if (isDryRun) {
     console.log(`Parsed ${wordRows.length} WordNet words.`);
-    console.log(`Parsed ${parsedRows.length} WordNet definitions.`);
+    console.log(`Parsed ${parsedRows.length} WordNet definitions (${uniqueParsedDefinitionRows.length} unique).`);
     console.log("Dry run complete; database was not modified.");
     return;
   }
@@ -133,7 +141,7 @@ async function main() {
         prisma.dictionaryDefinition.count({ where: { source: "WORDNET" } }),
       ]);
 
-      if (wordCount >= wordRows.length && definitionCount >= parsedRows.length) {
+      if (wordCount >= wordRows.length && definitionCount >= uniqueParsedDefinitionRows.length) {
         console.log(`Dictionary already seeded (${wordCount} words, ${definitionCount} definitions).`);
         return;
       }
@@ -167,7 +175,7 @@ async function main() {
       wordIdByWord.set(word.word, word.id);
     }
 
-    const definitionRows = parsedRows
+    const definitionRows = uniqueParsedDefinitionRows
       .map((row) => {
         const wordId = wordIdByWord.get(row.word);
         if (!wordId) return null;

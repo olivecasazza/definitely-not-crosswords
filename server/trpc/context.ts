@@ -10,7 +10,11 @@ const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
 
-type ContextRequest = H3Event | IncomingMessage;
+type HeaderRequest = {
+  headers?: IncomingMessage["headers"] | Headers;
+};
+
+type ContextRequest = H3Event | IncomingMessage | Request | HeaderRequest;
 
 async function findUserByEmail(email?: string | null) {
   if (!email) return null;
@@ -29,6 +33,19 @@ function isH3Event(input: ContextRequest): input is H3Event {
   return "node" in input;
 }
 
+async function getSessionToken(req: HeaderRequest) {
+  const baseParams = {
+    req: req as Parameters<typeof getToken>[0]["req"],
+    secret: process.env.NEXTAUTH_SECRET,
+  };
+
+  return (
+    (await getToken(baseParams)) ??
+    (await getToken({ ...baseParams, secureCookie: true })) ??
+    (await getToken({ ...baseParams, secureCookie: false }))
+  );
+}
+
 export const createContext = async (input?: ContextRequest) => {
   const ee = new EventEmitter();
 
@@ -43,7 +60,7 @@ export const createContext = async (input?: ContextRequest) => {
 
       if (!user) {
         const req = isH3Event(input) ? input.node.req : input;
-        const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+        const token = await getSessionToken(req);
         user = await findUserByEmail(token?.email);
       }
     } catch {

@@ -47,11 +47,11 @@ const { data: games, pending } = await $client.gameList.get.useQuery({
 
 function handleGameClick(game: any) {
   if (game.type === 'Game') {
-    navigateTo(`game/${game.id}/new`);
+    navigateTo(`/game/${game.id}/new`);
   } else if (game.type === 'ActiveGame') {
-    navigateTo(`game/${game.id}`);
+    navigateTo(`/game/${game.id}`);
   } else if (game.type === 'CompletedGame') {
-    navigateTo(`game/${game.id}/completed`);
+    navigateTo(`/game/${game.id}/completed`);
   }
 }
 </script>

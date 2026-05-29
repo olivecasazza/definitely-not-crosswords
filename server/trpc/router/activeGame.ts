@@ -6,6 +6,116 @@ import { GameAction, Prisma } from "@prisma/client";
 import crypto from "node:crypto";
 
 export const activeGameRouter = router({
+  getStartDetails: protectedProcedure
+    .input(
+      z.object({
+        gameId: z.string().uuid(),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const game = await prisma.game.findUnique({
+        where: { id: input.gameId },
+        include: {
+          questions: {
+            select: {
+              id: true,
+              rootX: true,
+              rootY: true,
+              answer: true,
+              direction: true,
+            },
+          },
+          active: {
+            where: {
+              gameMembers: {
+                some: { userId: ctx.user.id },
+              },
+            },
+            select: { id: true },
+            take: 1,
+          },
+          completed: {
+            where: {
+              gameMembers: {
+                some: { userId: ctx.user.id },
+              },
+            },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      });
+
+      if (!game || !game.published) {
+        throw new Error("Game not found");
+      }
+
+      const maxQuestionExtent = game.questions.reduce(
+        (max, question) =>
+          Math.max(
+            max,
+            question.direction === "ACROSS"
+              ? question.rootX + question.answer.length
+              : question.rootY + question.answer.length
+          ),
+        0
+      );
+
+      return {
+        id: game.id,
+        title: game.title,
+        source: game.source,
+        questionCount: game.questions.length,
+        gridSize: maxQuestionExtent,
+        activeGameId: game.active[0]?.id ?? null,
+        completedGameId: game.completed[0]?.id ?? null,
+      };
+    }),
+
+  start: protectedProcedure
+    .input(
+      z.object({
+        gameId: z.string().uuid(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const existing = await prisma.activeGame.findFirst({
+        where: {
+          gameId: input.gameId,
+          gameMembers: {
+            some: { userId: ctx.user.id },
+          },
+        },
+        select: { id: true },
+      });
+
+      if (existing) {
+        return existing;
+      }
+
+      const game = await prisma.game.findUnique({
+        where: { id: input.gameId },
+        select: { id: true, published: true },
+      });
+
+      if (!game || !game.published) {
+        throw new Error("Game not found");
+      }
+
+      return await prisma.activeGame.create({
+        data: {
+          game: { connect: { id: input.gameId } },
+          gameMembers: {
+            create: {
+              isOwner: true,
+              user: { connect: { id: ctx.user.id } },
+            },
+          },
+        },
+        select: { id: true },
+      });
+    }),
+
   onAddActions: publicProcedure.subscription(() => {
     return observable<GameAction[]>((emit) => {
       const onAdd = (data: GameAction[]) => emit.next(data);
@@ -173,4 +283,3 @@ export const activeGameRouter = router({
       return result;
     }),
 });
-

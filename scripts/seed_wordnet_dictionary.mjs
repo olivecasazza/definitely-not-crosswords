@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 const WORDNET_DICT_DIR = "data/crossword/wordnet/dict";
 const MIN_WORD_LENGTH = 2;
 const MAX_WORD_LENGTH = 50;
-const CHUNK_SIZE = 1000;
+const WORD_CHUNK_SIZE = 1000;
+const DEFINITION_CHUNK_SIZE = 5000;
 const isDryRun = process.argv.includes("--dry-run");
+const isSkipIfPresent = process.argv.includes("--skip-if-present");
 
 const dataFiles = [
   { file: "data.noun", partOfSpeech: "NOUN" },
@@ -20,6 +23,10 @@ function chunk(values, size) {
     chunks.push(values.slice(index, index + size));
   }
   return chunks;
+}
+
+function logProgress(label, completed, total) {
+  console.log(`${label}: ${Math.min(completed, total)}/${total}`);
 }
 
 function normalizeLemma(lemma) {
@@ -88,6 +95,24 @@ function parseWordNetDataFile(filePath, partOfSpeech) {
 }
 
 async function main() {
+  let prisma;
+
+  if (isSkipIfPresent && !isDryRun) {
+    const { PrismaClient } = await import("@prisma/client");
+    prisma = new PrismaClient();
+
+    const [wordCount, definitionCount] = await Promise.all([
+      prisma.dictionaryWord.count(),
+      prisma.dictionaryDefinition.count(),
+    ]);
+
+    if (wordCount > 0 && definitionCount > 0) {
+      console.log(`Dictionary already seeded (${wordCount} words, ${definitionCount} definitions).`);
+      await prisma.$disconnect();
+      return;
+    }
+  }
+
   const parsedRows = dataFiles.flatMap(({ file, partOfSpeech }) => {
     const filePath = path.join(WORDNET_DICT_DIR, file);
     return parseWordNetDataFile(filePath, partOfSpeech);
@@ -113,26 +138,38 @@ async function main() {
     return;
   }
 
-  const { PrismaClient } = await import("@prisma/client");
-  const prisma = new PrismaClient();
+  if (!prisma) {
+    const { PrismaClient } = await import("@prisma/client");
+    prisma = new PrismaClient();
+  }
 
   try {
-    for (const rows of chunk(wordRows, CHUNK_SIZE)) {
-      await prisma.dictionaryWord.createMany({
-        data: rows,
-        skipDuplicates: true,
-      });
+    const existingWordCount = await prisma.dictionaryWord.count({
+      where: { source: "WORDNET" },
+    });
+
+    if (existingWordCount < wordRows.length) {
+      let completed = 0;
+      for (const rows of chunk(wordRows, WORD_CHUNK_SIZE)) {
+        await prisma.dictionaryWord.createMany({
+          data: rows,
+          skipDuplicates: true,
+        });
+        completed += rows.length;
+        logProgress("WordNet words", completed, wordRows.length);
+      }
+    } else {
+      console.log(`WordNet words already present (${existingWordCount}/${wordRows.length}).`);
     }
 
     const wordIdByWord = new Map();
-    for (const words of chunk([...wordRowsByWord.keys()], CHUNK_SIZE)) {
-      const existingWords = await prisma.dictionaryWord.findMany({
-        where: { word: { in: words } },
-        select: { id: true, word: true },
-      });
-      for (const word of existingWords) {
-        wordIdByWord.set(word.word, word.id);
-      }
+    const existingWords = await prisma.dictionaryWord.findMany({
+      where: { source: "WORDNET" },
+      select: { id: true, word: true },
+    });
+
+    for (const word of existingWords) {
+      wordIdByWord.set(word.word, word.id);
     }
 
     const definitionRows = parsedRows
@@ -141,21 +178,55 @@ async function main() {
         if (!wordId) return null;
         return {
           wordId,
+          id: randomUUID(),
           partOfSpeech: row.partOfSpeech,
           synsetOffset: row.synsetOffset,
           lemma: row.lemma,
           gloss: row.gloss,
-          examples: row.examples ?? undefined,
+          examples: row.examples ?? null,
           source: "WORDNET",
         };
       })
       .filter(Boolean);
 
-    for (const rows of chunk(definitionRows, CHUNK_SIZE)) {
-      await prisma.dictionaryDefinition.createMany({
-        data: rows,
-        skipDuplicates: true,
-      });
+    const existingDefinitionCount = await prisma.dictionaryDefinition.count({
+      where: { source: "WORDNET" },
+    });
+
+    if (existingDefinitionCount < definitionRows.length) {
+      let completed = 0;
+      for (const rows of chunk(definitionRows, DEFINITION_CHUNK_SIZE)) {
+        await prisma.$executeRawUnsafe(
+          `
+            INSERT INTO "DictionaryDefinition"
+              ("id", "wordId", "partOfSpeech", "synsetOffset", "lemma", "gloss", "examples", "source")
+            SELECT
+              definition_rows."id",
+              definition_rows."wordId",
+              definition_rows."partOfSpeech"::"DictionaryPartOfSpeech",
+              definition_rows."synsetOffset",
+              definition_rows."lemma",
+              definition_rows."gloss",
+              definition_rows."examples",
+              'WORDNET'::"DictionarySource"
+            FROM jsonb_to_recordset($1::jsonb) AS definition_rows(
+              "id" text,
+              "wordId" text,
+              "partOfSpeech" text,
+              "synsetOffset" text,
+              "lemma" text,
+              "gloss" text,
+              "examples" jsonb
+            )
+            ON CONFLICT ("wordId", "partOfSpeech", "synsetOffset") DO NOTHING
+          `,
+          JSON.stringify(rows)
+        );
+        completed += rows.length;
+        logProgress("WordNet definitions", completed, definitionRows.length);
+      }
+    } else {
+      console.log(`WordNet definitions already present (${existingDefinitionCount}/${definitionRows.length}).`);
     }
 
     console.log(`Seeded ${wordRows.length} WordNet words.`);

@@ -27,7 +27,7 @@ spec:
       serviceAccountName: {{ include "definitely-not-crosswords.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if or .Values.database.migrations.enabled .Values.adminUsers.enabled }}
+      {{- if or .Values.database.migrations.enabled .Values.adminUsers.enabled .Values.dictionarySeed.enabled }}
       initContainers:
         {{- if .Values.database.migrations.enabled }}
         - name: migrate-db
@@ -57,6 +57,26 @@ spec:
           env:
             - name: ADMIN_USERS_JSON
               value: {{ toJson .Values.adminUsers | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.database.cnpg.enabled }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-db-app
+                  key: uri
+                  {{- else if .Values.database.external.existingSecret }}
+                  name: {{ .Values.database.external.existingSecret }}
+                  key: {{ .Values.database.external.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                  key: DATABASE_URL
+                  {{- end }}
+        {{- end }}
+        {{- if .Values.dictionarySeed.enabled }}
+        - name: seed-dictionary
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "/app/scripts/seed_wordnet_dictionary.mjs", "--skip-if-present"]
+          env:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

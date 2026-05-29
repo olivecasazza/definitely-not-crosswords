@@ -82,6 +82,11 @@ adminUsers:
       role: "ADMIN"
       emailVerified: true
 
+# Dictionary data is reconciled before the app starts. The seed script is
+# idempotent and skips work when dictionary rows and definitions already exist.
+dictionarySeed:
+  enabled: true
+
 # Database Configuration (PostgreSQL)
 database:
   migrations:

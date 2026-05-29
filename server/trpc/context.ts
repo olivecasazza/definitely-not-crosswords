@@ -33,9 +33,46 @@ function isH3Event(input: ContextRequest): input is H3Event {
   return "node" in input;
 }
 
+function getHeaderValue(req: HeaderRequest, name: string) {
+  const headers = req.headers;
+  if (!headers) return undefined;
+  if (headers instanceof Headers) return headers.get(name) ?? undefined;
+
+  const value = headers[name.toLowerCase()];
+  if (Array.isArray(value)) return value.join("; ");
+  return value;
+}
+
+function parseCookieHeader(cookieHeader?: string) {
+  if (!cookieHeader) return undefined;
+
+  return Object.fromEntries(
+    cookieHeader
+      .split(";")
+      .map((cookie) => cookie.trim())
+      .filter(Boolean)
+      .map((cookie) => {
+        const separatorIndex = cookie.indexOf("=");
+        if (separatorIndex === -1) return [cookie, ""];
+        return [
+          cookie.slice(0, separatorIndex),
+          decodeURIComponent(cookie.slice(separatorIndex + 1)),
+        ];
+      })
+  );
+}
+
+function normalizeTokenRequest(req: HeaderRequest) {
+  return {
+    ...req,
+    cookies: "cookies" in req ? req.cookies : parseCookieHeader(getHeaderValue(req, "cookie")),
+  };
+}
+
 async function getSessionToken(req: HeaderRequest) {
+  const normalizedReq = normalizeTokenRequest(req);
   const baseParams = {
-    req: req as Parameters<typeof getToken>[0]["req"],
+    req: normalizedReq as Parameters<typeof getToken>[0]["req"],
     secret: process.env.NEXTAUTH_SECRET,
   };
 

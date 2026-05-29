@@ -95,24 +95,6 @@ function parseWordNetDataFile(filePath, partOfSpeech) {
 }
 
 async function main() {
-  let prisma;
-
-  if (isSkipIfPresent && !isDryRun) {
-    const { PrismaClient } = await import("@prisma/client");
-    prisma = new PrismaClient();
-
-    const [wordCount, definitionCount] = await Promise.all([
-      prisma.dictionaryWord.count(),
-      prisma.dictionaryDefinition.count(),
-    ]);
-
-    if (wordCount > 0 && definitionCount > 0) {
-      console.log(`Dictionary already seeded (${wordCount} words, ${definitionCount} definitions).`);
-      await prisma.$disconnect();
-      return;
-    }
-  }
-
   const parsedRows = dataFiles.flatMap(({ file, partOfSpeech }) => {
     const filePath = path.join(WORDNET_DICT_DIR, file);
     return parseWordNetDataFile(filePath, partOfSpeech);
@@ -138,12 +120,25 @@ async function main() {
     return;
   }
 
+  let prisma;
   if (!prisma) {
     const { PrismaClient } = await import("@prisma/client");
     prisma = new PrismaClient();
   }
 
   try {
+    if (isSkipIfPresent) {
+      const [wordCount, definitionCount] = await Promise.all([
+        prisma.dictionaryWord.count({ where: { source: "WORDNET" } }),
+        prisma.dictionaryDefinition.count({ where: { source: "WORDNET" } }),
+      ]);
+
+      if (wordCount >= wordRows.length && definitionCount >= parsedRows.length) {
+        console.log(`Dictionary already seeded (${wordCount} words, ${definitionCount} definitions).`);
+        return;
+      }
+    }
+
     const existingWordCount = await prisma.dictionaryWord.count({
       where: { source: "WORDNET" },
     });

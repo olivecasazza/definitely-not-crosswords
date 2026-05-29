@@ -126,6 +126,20 @@ export type GenerationEvent =
     }
   | { type: "failed"; jobId: string | null; error: string; at: number };
 
+type PersistedGenerationEvent = GenerationEvent | ({ at: number } & GenerationProgressEvent);
+
+function compactGenerationParams(params: z.infer<typeof generationParamsSchema>) {
+  return {
+    topic: params.topic,
+    grid: `${params.width}x${params.height}`,
+    minWordLength: params.minWordLength,
+    maxWordLength: params.maxWordLength,
+    targetWords: params.targetWords,
+    runs: params.runs,
+    maxAttempts: params.maxAttempts,
+  };
+}
+
 /**
  * Shared job lifecycle: create the job row, run the (instrumented) pipeline,
  * persist the resulting game, and mark the job SUCCEEDED/FAILED. Used by both
@@ -141,23 +155,60 @@ async function executeGeneration(
     onJobCreated?: (jobId: string) => void;
   }
 ) {
+  const startedAt = new Date();
+  const eventLog: PersistedGenerationEvent[] = [];
+  let persistLogChain = Promise.resolve();
+
   const job = await prisma.crosswordGenerationJob.create({
     data: {
       status: "RUNNING",
+      title,
       topic: params.topic,
       width: params.width,
       height: params.height,
       minWordLength: params.minWordLength,
       maxWordLength: params.maxWordLength,
       params,
+      metadata: {
+        requestedTitle: title ?? null,
+        params: compactGenerationParams(params),
+      },
+      eventLog: [],
+      startedAt,
       createdBy: { connect: { id: adminId } },
     },
   });
   hooks?.onJobCreated?.(job.id);
 
+  const persistEventLog = () => {
+    const snapshot = eventLog.slice();
+    persistLogChain = persistLogChain
+      .then(() =>
+        prisma.crosswordGenerationJob.update({
+          where: { id: job.id },
+          data: { eventLog: snapshot as any },
+        })
+      )
+      .then(() => undefined)
+      .catch(() => undefined);
+  };
+
+  const pushEvent = (event: PersistedGenerationEvent) => {
+    eventLog.push(event);
+    persistEventLog();
+  };
+
   try {
-    const generated = await generateCrosswordFromDictionary(prisma, params, hooks?.onEvent);
+    pushEvent({ type: "started", jobId: job.id, at: startedAt.getTime() });
+
+    const generated = await generateCrosswordFromDictionary(prisma, params, (event) => {
+      hooks?.onEvent?.(event);
+      pushEvent({ ...event, at: Date.now() });
+    });
+    await persistLogChain;
     const resolvedTitle = title ?? generated.title;
+    const completedAt = new Date();
+    const durationMs = completedAt.getTime() - startedAt.getTime();
 
     const game = await prisma.$transaction(async (tx) => {
       const createdGame = await tx.game.create({
@@ -185,7 +236,29 @@ async function executeGeneration(
         where: { id: job.id },
         data: {
           status: "SUCCEEDED",
+          title: resolvedTitle,
           metrics: generated.metrics,
+          metadata: {
+            requestedTitle: title ?? null,
+            resolvedTitle,
+            params: compactGenerationParams(params),
+            questionCount: generated.questions.length,
+            resultGameId: createdGame.id,
+          },
+          eventLog: [
+            ...eventLog,
+            {
+              type: "completed",
+              jobId: job.id,
+              gameId: createdGame.id,
+              title: resolvedTitle,
+              questionCount: generated.questions.length,
+              metrics: generated.metrics,
+              at: completedAt.getTime(),
+            },
+          ] as any,
+          completedAt,
+          durationMs,
           resultGame: { connect: { id: createdGame.id } },
         },
       });
@@ -195,11 +268,26 @@ async function executeGeneration(
 
     return { jobId: job.id, game, metrics: generated.metrics };
   } catch (error) {
+    await persistLogChain;
+    const completedAt = new Date();
+    const durationMs = completedAt.getTime() - startedAt.getTime();
+    const message = error instanceof Error ? error.message : String(error);
     await prisma.crosswordGenerationJob.update({
       where: { id: job.id },
       data: {
         status: "FAILED",
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
+        metadata: {
+          requestedTitle: title ?? null,
+          params: compactGenerationParams(params),
+          failedAt: completedAt.toISOString(),
+        },
+        eventLog: [
+          ...eventLog,
+          { type: "failed", jobId: job.id, error: message, at: completedAt.getTime() },
+        ] as any,
+        completedAt,
+        durationMs,
       },
     });
     throw error;
@@ -298,12 +386,17 @@ export const generatorRouter = router({
       return await prisma.crosswordGenerationJob.create({
         data: {
           status: "QUEUED",
+          title: null,
           topic: input.params.topic,
           width: input.params.width,
           height: input.params.height,
           minWordLength: input.params.minWordLength,
           maxWordLength: input.params.maxWordLength,
           params: input.params,
+          metadata: {
+            params: compactGenerationParams(input.params),
+          },
+          eventLog: [],
           createdBy: { connect: { id: ctx.user.id } },
         },
       });
@@ -398,7 +491,25 @@ export const generatorRouter = router({
           where: { id: input.jobId },
           data: {
             status: "SUCCEEDED",
+            title: input.title,
             metrics: input.metrics ?? {},
+            metadata: {
+              title: input.title,
+              questionCount: input.questions.length,
+              savedManually: true,
+            },
+            eventLog: [
+              {
+                type: "completed",
+                jobId: input.jobId,
+                gameId: game.id,
+                title: input.title,
+                questionCount: input.questions.length,
+                metrics: input.metrics ?? {},
+                at: Date.now(),
+              },
+            ],
+            completedAt: new Date(),
             resultGame: { connect: { id: game.id } },
           },
         });
@@ -422,6 +533,15 @@ export const generatorRouter = router({
           status: "FAILED",
           error: input.error,
           metrics: input.metrics ?? undefined,
+          eventLog: [
+            {
+              type: "failed",
+              jobId: input.jobId,
+              error: input.error,
+              at: Date.now(),
+            },
+          ],
+          completedAt: new Date(),
         },
       });
     }),

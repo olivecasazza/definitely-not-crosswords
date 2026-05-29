@@ -1,5 +1,5 @@
 <template>
-  <main class="flex-grow p-6 w-full max-w-4xl mx-auto flex flex-col gap-6">
+  <main class="flex-grow p-6 w-full max-w-6xl mx-auto flex flex-col gap-6">
     <div class="app-card p-6 flex flex-col gap-6">
       <AdminNav />
       <div class="border-b border-[var(--border-app)] pb-4">
@@ -91,6 +91,87 @@
       </div>
     </div>
 
+    <div v-if="selectedJob" class="app-card p-5 flex flex-col gap-5">
+      <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div class="min-w-0">
+          <p class="text-xs font-mono uppercase tracking-wider text-[var(--text-secondary)]">
+            Generation Job
+          </p>
+          <h2 class="mt-1 text-xl font-bold text-[var(--text-primary)]">
+            {{ selectedJob.title || selectedJob.resultGame?.title || selectedJob.topic }}
+          </h2>
+          <p class="mt-1 text-sm text-[var(--text-secondary)]">
+            {{ selectedJob.topic }} · {{ selectedJob.width }}x{{ selectedJob.height }} · {{ formatDuration(selectedJob.durationMs) }}
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-if="selectedJob.resultGame && !selectedJob.resultGame.published"
+            class="app-btn app-btn-active text-xs"
+            :disabled="publishingGameId === selectedJob.resultGame.id"
+            @click="publishGame(selectedJob.resultGame.id)"
+          >
+            {{ publishingGameId === selectedJob.resultGame.id ? "Publishing..." : "Publish" }}
+          </button>
+          <button class="app-btn text-xs" @click="selectedJob = null">Close</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div class="rounded border border-[var(--border-app)] bg-[var(--bg-cell-empty)] p-3">
+          <p class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-secondary)]">Status</p>
+          <p class="mt-1 text-sm font-bold text-[var(--text-primary)]">{{ selectedJob.status }}</p>
+        </div>
+        <div class="rounded border border-[var(--border-app)] bg-[var(--bg-cell-empty)] p-3">
+          <p class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-secondary)]">Started</p>
+          <p class="mt-1 text-sm text-[var(--text-primary)]">{{ formatDateTime(selectedJob.startedAt || selectedJob.createdAt) }}</p>
+        </div>
+        <div class="rounded border border-[var(--border-app)] bg-[var(--bg-cell-empty)] p-3">
+          <p class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-secondary)]">Completed</p>
+          <p class="mt-1 text-sm text-[var(--text-primary)]">{{ selectedJob.completedAt ? formatDateTime(selectedJob.completedAt) : "-" }}</p>
+        </div>
+        <div class="rounded border border-[var(--border-app)] bg-[var(--bg-cell-empty)] p-3">
+          <p class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-secondary)]">Created By</p>
+          <p class="mt-1 text-sm text-[var(--text-primary)]">{{ selectedJob.createdBy?.email || "unknown" }}</p>
+        </div>
+      </div>
+
+      <div v-if="selectedJob.error" class="rounded border border-[var(--color-error)] bg-[var(--color-error)]/10 p-3 text-sm text-[var(--color-error)]">
+        {{ selectedJob.error }}
+      </div>
+
+      <SolvedGameView v-if="selectedJob.resultGame" :game="selectedJob.resultGame" />
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <section class="flex flex-col gap-2">
+          <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+            Generation Log
+          </h3>
+          <div class="max-h-80 overflow-auto rounded border border-[var(--border-app)] bg-[var(--bg-cell-empty)] p-3 font-mono text-xs">
+            <div v-if="selectedEventLog.length" class="flex flex-col gap-2">
+              <div v-for="(entry, index) in selectedEventLog" :key="index" class="border-b border-[var(--border-app)]/60 pb-2 last:border-b-0 last:pb-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-bold uppercase text-[var(--pastel-yellow)]">{{ entry.type }}</span>
+                  <span class="text-[var(--text-secondary)]">{{ formatLogTime(entry.at) }}</span>
+                </div>
+                <p v-if="entry.message" class="mt-1 text-[var(--text-primary)]">{{ entry.message }}</p>
+                <p v-else-if="entry.error" class="mt-1 text-[var(--color-error)]">{{ entry.error }}</p>
+                <p v-else-if="entry.stage" class="mt-1 text-[var(--text-secondary)]">{{ entry.stage }}</p>
+              </div>
+            </div>
+            <p v-else class="text-[var(--text-secondary)]">No generation log was saved for this job.</p>
+          </div>
+        </section>
+
+        <section class="flex flex-col gap-2">
+          <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+            Metadata
+          </h3>
+          <pre class="max-h-80 overflow-auto rounded border border-[var(--border-app)] bg-[var(--bg-cell-empty)] p-3 text-xs text-[var(--text-secondary)]">{{ stringifyJobInfo(selectedJob) }}</pre>
+        </section>
+      </div>
+    </div>
+
     <div class="app-card overflow-hidden">
       <div class="p-4 border-b border-[var(--border-app)] flex items-center justify-between">
         <h2 class="text-sm font-bold font-mono tracking-wider">GENERATION JOBS</h2>
@@ -137,17 +218,21 @@
                 <span v-else class="text-[var(--text-secondary)]">-</span>
               </td>
               <td class="px-4 py-3">
-                <button
-                  v-if="job.resultGame && !job.resultGame.published"
-                  class="app-btn text-xs"
-                  :disabled="publishingGameId === job.resultGame.id"
-                  @click="publishGame(job.resultGame.id)"
-                >
-                  Publish
-                </button>
-                <span v-else class="text-[var(--text-secondary)]">-</span>
+                <div class="flex flex-wrap gap-2">
+                  <button class="app-btn text-xs" :disabled="loadingJobId === job.id" @click="openJob(job.id)">
+                    {{ loadingJobId === job.id ? "Opening" : "View" }}
+                  </button>
+                  <button
+                    v-if="job.resultGame && !job.resultGame.published"
+                    class="app-btn text-xs"
+                    :disabled="publishingGameId === job.resultGame.id"
+                    @click="publishGame(job.resultGame.id)"
+                  >
+                    Publish
+                  </button>
+                </div>
               </td>
-              <td class="px-4 py-3 text-[var(--text-secondary)]">{{ new Date(job.createdAt).toLocaleDateString() }}</td>
+              <td class="px-4 py-3 text-[var(--text-secondary)]">{{ formatDateTime(job.createdAt) }}</td>
             </tr>
             <tr v-if="isLoadingJobs && !jobs.length">
               <td class="px-4 py-6 text-center text-[var(--text-secondary)]" colspan="6">Loading generation jobs...</td>
@@ -185,10 +270,12 @@ const form = reactive({
 
 const jobs = ref<any[]>([]);
 const generatedGame = ref<any | null>(null);
+const selectedJob = ref<any | null>(null);
 const errorMessage = ref("");
 const isGenerating = ref(false);
 const isLoadingJobs = ref(false);
 const jobsError = ref("");
+const loadingJobId = ref<string | null>(null);
 const publishingGameId = ref<string | null>(null);
 
 // Live generation streaming state (fed by the runGeneration subscription).
@@ -197,6 +284,55 @@ const genProgress = ref<{ stage: string; current: number; total: number; message
 const genStatus = ref<"idle" | "running" | "succeeded" | "failed">("idle");
 const genStartedAt = ref<number | null>(null);
 let genSub: { unsubscribe: () => void } | null = null;
+
+const selectedEventLog = computed<any[]>(() => {
+  const log = selectedJob.value?.eventLog;
+  return Array.isArray(log) ? log : [];
+});
+
+function formatDateTime(value: string | Date | null | undefined) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
+function formatDuration(durationMs: number | null | undefined) {
+  if (!durationMs) return "not finished";
+  const seconds = Math.round(durationMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function formatLogTime(value: number | string | Date | null | undefined) {
+  if (!value) return "";
+  return new Date(value).toLocaleTimeString();
+}
+
+function stringifyJobInfo(job: any) {
+  return JSON.stringify(
+    {
+      params: job.params,
+      metadata: job.metadata,
+      metrics: job.metrics,
+    },
+    null,
+    2
+  );
+}
+
+async function openJob(jobId: string) {
+  loadingJobId.value = jobId;
+  errorMessage.value = "";
+
+  try {
+    selectedJob.value = await $client.generator.getJob.query({ id: jobId });
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    loadingJobId.value = null;
+  }
+}
 
 async function refreshJobs() {
   if (!user.value?.user?.email) {
@@ -238,6 +374,7 @@ async function handleGenEvent(event: any) {
       const job = await $client.generator.getJob.query({
         id: event.jobId,
       });
+      selectedJob.value = job;
       generatedGame.value = job?.resultGame ?? null;
     } catch {
       // The jobs table refresh below still surfaces the result.
@@ -297,6 +434,12 @@ async function publishGame(gameId: string) {
     });
     if (generatedGame.value?.id === game.id) {
       generatedGame.value = { ...generatedGame.value, published: true };
+    }
+    if (selectedJob.value?.resultGame?.id === game.id) {
+      selectedJob.value = {
+        ...selectedJob.value,
+        resultGame: { ...selectedJob.value.resultGame, published: true },
+      };
     }
     await refreshJobs();
   } catch (error) {

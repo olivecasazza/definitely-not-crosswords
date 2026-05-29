@@ -149,6 +149,7 @@ model Game {
 model CrosswordGenerationJob {
   id            String           @id @default(uuid())
   status        GenerationStatus @default(QUEUED)
+  title         String?
   topic         String
   width         Int
   height        Int
@@ -156,7 +157,12 @@ model CrosswordGenerationJob {
   maxWordLength Int
   params        Json
   metrics       Json?
+  metadata      Json?
+  eventLog      Json?
   error         String?          @db.Text
+  startedAt     DateTime?
+  completedAt   DateTime?
+  durationMs    Int?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   createdById   String

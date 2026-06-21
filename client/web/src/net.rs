@@ -18,10 +18,7 @@ const HTTP_BASE: &str = "/api/trpc";
 /// A tRPC query. `input` is the raw procedure input (None for no-arg procs).
 pub async fn query(proc: &str, input: Option<Value>) -> Result<Value, String> {
     let url = rpc::query_url(HTTP_BASE, proc, input.as_ref());
-    let resp = Request::get(&url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = Request::get(&url).send().await.map_err(|e| e.to_string())?;
     let text = resp.text().await.map_err(|e| e.to_string())?;
     rpc::parse_batch_single(&text)
 }
@@ -58,7 +55,11 @@ pub async fn mutation_as<T: DeserializeOwned>(
 /// WebSocket origin for subscriptions, derived from the page origin.
 fn ws_url() -> String {
     let loc = web_sys::window().unwrap().location();
-    let proto = if loc.protocol().unwrap_or_default() == "https:" { "wss" } else { "ws" };
+    let proto = if loc.protocol().unwrap_or_default() == "https:" {
+        "wss"
+    } else {
+        "ws"
+    };
     let host = loc.host().unwrap_or_default();
     format!("{proto}://{host}/api/trpc-ws")
 }
@@ -121,7 +122,9 @@ pub fn subscribe(
         }
     });
 
-    Subscription { _cancel: Some(cancel_tx) }
+    Subscription {
+        _cancel: Some(cancel_tx),
+    }
 }
 
 /// Handle to a live subscription; dropping it cancels the stream.

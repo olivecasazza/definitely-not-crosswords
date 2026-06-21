@@ -11,7 +11,9 @@ use gloo_storage::{LocalStorage, Storage};
 pub fn AppHeader() -> Element {
     let state = use_app_state();
     let mut light = use_signal(|| {
-        LocalStorage::get::<String>("theme").map(|t| t == "light").unwrap_or(false)
+        LocalStorage::get::<String>("theme")
+            .map(|t| t == "light")
+            .unwrap_or(false)
     });
     let user = state.user();
 

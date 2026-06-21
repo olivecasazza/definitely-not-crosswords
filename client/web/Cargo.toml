@@ -1,0 +1,15 @@
+[package]
+name = "crossword-web"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+crossword-core = { path = "../core" }
+dioxus = { version = "0.6", features = ["web"] }
+serde.workspace = true
+panel-kit = { path = "/home/olive/Repositories/panel-kit" }
+gloo-storage = "0.3"
+# Pinned to the wasm-bindgen-cli nixpkgs ships (panel-kit's lock pins the same);
+# dx refuses to bindgen against a mismatched CLI.
+wasm-bindgen = "=0.2.121"

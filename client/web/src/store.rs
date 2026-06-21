@@ -77,12 +77,18 @@ pub fn use_app_state() -> AppState {
 }
 
 async fn fetch_session() -> Option<User> {
-    let resp = gloo_net::http::Request::get("/api/auth/session").send().await.ok()?;
+    let resp = gloo_net::http::Request::get("/api/auth/session")
+        .send()
+        .await
+        .ok()?;
     let parsed: SessionResponse = resp.json().await.ok()?;
     parsed.user
 }
 
 async fn fetch_sub() -> Option<SubStatus> {
-    let resp = gloo_net::http::Request::get("/api/subscription").send().await.ok()?;
+    let resp = gloo_net::http::Request::get("/api/subscription")
+        .send()
+        .await
+        .ok()?;
     resp.json().await.ok()
 }

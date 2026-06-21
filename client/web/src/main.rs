@@ -80,7 +80,9 @@ fn App() -> Element {
     provide_app_state();
     // Theme: `.light` on <html>, persisted to localStorage (ported from app.vue).
     use_hook(|| {
-        let light = LocalStorage::get::<String>("theme").map(|t| t == "light").unwrap_or(false);
+        let light = LocalStorage::get::<String>("theme")
+            .map(|t| t == "light")
+            .unwrap_or(false);
         set_light_class(light);
     });
 
@@ -117,7 +119,11 @@ pub fn set_light_class(light: bool) {
     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
         if let Some(html) = doc.document_element() {
             let list = html.class_list();
-            let _ = if light { list.add_1("light") } else { list.remove_1("light") };
+            let _ = if light {
+                list.add_1("light")
+            } else {
+                list.remove_1("light")
+            };
         }
     }
     let _ = LocalStorage::set("theme", if light { "light" } else { "dark" });

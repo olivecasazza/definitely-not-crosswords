@@ -14,7 +14,12 @@ pub enum Role {
 pub fn capabilities(role: Role) -> &'static [&'static str] {
     match role {
         Role::User => &["game:play", "profile:manage"],
-        Role::Admin => &["game:play", "profile:manage", "admin:access", "generator:manage"],
+        Role::Admin => &[
+            "game:play",
+            "profile:manage",
+            "admin:access",
+            "generator:manage",
+        ],
     }
 }
 
@@ -35,7 +40,10 @@ mod tests {
 
     #[test]
     fn role_json() {
-        assert_eq!(serde_json::from_str::<Role>("\"ADMIN\"").unwrap(), Role::Admin);
+        assert_eq!(
+            serde_json::from_str::<Role>("\"ADMIN\"").unwrap(),
+            Role::Admin
+        );
         assert_eq!(serde_json::to_string(&Role::User).unwrap(), "\"USER\"");
     }
 }

@@ -161,12 +161,13 @@ pub fn Stats() -> Element {
 
     // All players for H2H dropdown — depends on session (to exclude self)
     let players_res = use_resource(move || async move {
-        let email = state.user().and_then(|u| u.email);
-        net::query_as::<Vec<PlayerStub>>(
-            "stats.getAllPlayers",
-            Some(json!({ "excludeEmail": email })),
-        )
-        .await
+        // Omit excludeEmail entirely when unknown — the zod schema rejects an
+        // explicit null (it's `string().optional()`, not nullable).
+        let input = match state.user().and_then(|u| u.email) {
+            Some(email) => json!({ "excludeEmail": email }),
+            None => json!({}),
+        };
+        net::query_as::<Vec<PlayerStub>>("stats.getAllPlayers", Some(input)).await
     });
 
     // H2H — only fires when opponent is selected

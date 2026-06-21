@@ -111,7 +111,7 @@ pub fn GamePlay(id: String) -> Element {
         let mut subs = _subs;
         let id = id_for_load.clone();
         spawn_local(async move {
-            match net::query("activeGame.get", Some(json!(id))).await {
+            match net::query("activeGame.get", Some(json!({ "id": id }))).await {
                 Ok(Value::Null) => {
                     load_error.set(Some("Game not found".into()));
                     loading.set(false);

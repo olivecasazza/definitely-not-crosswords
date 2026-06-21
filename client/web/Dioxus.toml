@@ -4,3 +4,10 @@ default_platform = "web"
 
 [web.app]
 title = "definitely-not-crosswords"
+
+# Dev: proxy the API to the running Nuxt server so requests are same-origin and
+# the next-auth session cookie is sent. Start Nuxt with `pnpm dev` on :3000.
+# NOTE: WebSocket subscriptions (/api/trpc-ws) need a proxy that forwards the
+# upgrade; if dx's proxy doesn't, run the wasm app served from Nuxt instead.
+[[web.proxy]]
+backend = "http://127.0.0.1:3000/api/"

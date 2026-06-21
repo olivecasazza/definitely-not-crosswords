@@ -48,6 +48,8 @@ pub const DESIGN: &str = r#"
 }
 
 * { box-sizing: border-box; }
+/* Square corners globally — house style. Overrides panel-kit + component CSS. */
+*, *::before, *::after { border-radius: 0 !important; }
 body {
   margin: 0;
   background-color: var(--bg-app);

@@ -4,6 +4,20 @@ use dioxus::prelude::*;
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
 
+/// Extract a human-readable message from a tRPC error string.
+///
+/// `parse_batch_single` returns the full error JSON object as a string when the
+/// server responds with `[{"error":{...}}]`. Try to pull `error.message`; fall
+/// back to the raw string for plain network/parse errors.
+fn trpc_err_msg(e: String) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&e) {
+        if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+            return msg.to_string();
+        }
+    }
+    e
+}
+
 #[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Discount {
@@ -77,7 +91,7 @@ pub fn AdminDiscounts() -> Element {
                     let parsed: Vec<Discount> = serde_json::from_value(v).unwrap_or_default();
                     discounts.set(parsed);
                 }
-                Err(e) => error_msg.set(e),
+                Err(e) => error_msg.set(trpc_err_msg(e)),
             }
         });
     };
@@ -90,7 +104,7 @@ pub fn AdminDiscounts() -> Element {
                     let parsed: Vec<Discount> = serde_json::from_value(v).unwrap_or_default();
                     discounts.set(parsed);
                 }
-                Err(e) => error_msg.set(e),
+                Err(e) => error_msg.set(trpc_err_msg(e)),
             }
             loading.set(false);
         });
@@ -179,7 +193,7 @@ pub fn AdminDiscounts() -> Element {
                     f_test_mode.set(false);
                     refresh();
                 }
-                Err(e) => error_msg.set(e),
+                Err(e) => error_msg.set(trpc_err_msg(e)),
             }
             saving.set(false);
         });
@@ -427,7 +441,7 @@ pub fn AdminDiscounts() -> Element {
                                                                                 refresh();
                                                                             }
                                                                             Err(e) => {
-                                                                                error_msg.set(e);
+                                                                                error_msg.set(trpc_err_msg(e));
                                                                                 refresh();
                                                                             }
                                                                         }
@@ -453,7 +467,7 @@ pub fn AdminDiscounts() -> Element {
                                                                                 refresh();
                                                                             }
                                                                             Err(e) => {
-                                                                                error_msg.set(e);
+                                                                                error_msg.set(trpc_err_msg(e));
                                                                                 refresh();
                                                                             }
                                                                         }

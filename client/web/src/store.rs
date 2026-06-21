@@ -63,9 +63,15 @@ pub fn provide_app_state() -> AppState {
         let mut session = state.session;
         let mut sub = state.sub;
         spawn_local(async move {
-            session.set(Some(fetch_session().await));
-            if let Some(s) = fetch_sub().await {
-                sub.set(Some(s));
+            let user = fetch_session().await;
+            let signed_in = user.is_some();
+            session.set(Some(user));
+            // Only hit the authed /api/subscription endpoint when signed in —
+            // otherwise it 401s and clutters the console.
+            if signed_in {
+                if let Some(s) = fetch_sub().await {
+                    sub.set(Some(s));
+                }
             }
         });
     });

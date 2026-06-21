@@ -19,7 +19,28 @@ pub fn AppHeader() -> Element {
 
     rsx! {
         header { class: "site-header",
-            Link { to: Route::Home {}, class: "brand", "definitely-not-crosswords" }
+            Link { to: Route::Home {}, class: "brand",
+                svg {
+                    class: "logo",
+                    view_box: "0 0 24 24",
+                    fill: "none",
+                    xmlns: "http://www.w3.org/2000/svg",
+                    // 6×6 dot grid; the cross of dots is dimmed (opacity 0.3),
+                    // ported faithfully from the original AppHeader.vue logo.
+                    for y in [2, 6, 10, 14, 18, 22] {
+                        for x in [2, 6, 10, 14, 18, 22] {
+                            circle {
+                                cx: "{x}",
+                                cy: "{y}",
+                                r: "1.2",
+                                fill: "currentColor",
+                                opacity: if logo_dot_dimmed(x, y) { "0.3" } else { "1" },
+                            }
+                        }
+                    }
+                }
+                span { "definitely-not-crosswords" }
+            }
             nav { class: "row",
                 Link { to: Route::Games {}, class: "navlink", "Games" }
                 Link { to: Route::Stats {}, class: "navlink", "Stats" }
@@ -52,11 +73,20 @@ pub fn AppHeader() -> Element {
     }
 }
 
+/// The dimmed dots form a plus/cross in the grid (matches the original logo's
+/// `opacity-30` circles): the column x=14 (rows 2–18) and the row y=10 (x=6–22).
+fn logo_dot_dimmed(x: i32, y: i32) -> bool {
+    (x == 14 && (2..=18).contains(&y)) || (y == 10 && (6..=22).contains(&x))
+}
+
 const HEADER_CSS: &str = "
 .site-header { position: sticky; top: 0; z-index: 50; display: flex; align-items: center;
   justify-content: space-between; padding: .6rem 1.5rem; background: var(--bg-card);
   border-bottom: 1px solid var(--border-app); }
-.site-header .brand { font-weight: 700; }
+.site-header .brand { font-weight: 700; display: inline-flex; align-items: center; gap: .5rem; }
+.site-header .brand .logo { width: 1.5rem; height: 1.5rem; color: var(--pastel-yellow);
+  transition: transform .2s ease; }
+.site-header .brand:hover .logo { transform: scale(1.05); }
 .site-header .navlink { color: var(--text-secondary); padding: .35rem .5rem; border-radius: .375rem; }
 .site-header .navlink:hover { color: var(--text-primary); }
 ";

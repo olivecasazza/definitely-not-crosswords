@@ -164,6 +164,65 @@ pub fn Login() -> Element {
         }
     };
 
+    // Dev bypass: signs in via the backend's `local-dev` credentials provider
+    // (email-only admin, registered only in non-production). No-op in prod.
+    let handle_dev_bypass = {
+        let mut loading = loading;
+        let mut error = error;
+        move |_| {
+            spawn_local(async move {
+                loading.set(true);
+                error.set(String::new());
+                let csrf = async {
+                    let resp =
+                        Request::get("/api/auth/csrf").send().await.map_err(|e| e.to_string())?;
+                    let d: CsrfResponse = resp.json().await.map_err(|e| e.to_string())?;
+                    Ok::<String, String>(d.csrf_token)
+                }
+                .await;
+                let csrf_token = match csrf {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error.set(format!("Failed to fetch CSRF token: {e}"));
+                        loading.set(false);
+                        return;
+                    }
+                };
+                let body = form_encode(&[
+                    ("csrfToken", &csrf_token),
+                    ("email", "olive.casazza@gmail.com"),
+                    ("callbackUrl", "/"),
+                    ("json", "true"),
+                ]);
+                let resp = Request::post("/api/auth/callback/local-dev")
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(body)
+                    .unwrap()
+                    .send()
+                    .await;
+                match resp {
+                    Ok(r) => {
+                        let text = r.text().await.unwrap_or_default();
+                        let errored = serde_json::from_str::<serde_json::Value>(&text)
+                            .ok()
+                            .and_then(|v| v["url"].as_str().map(|s| s.contains("error=")))
+                            .unwrap_or(false);
+                        if errored {
+                            error.set("Dev bypass unavailable (production build?).".into());
+                            loading.set(false);
+                        } else if let Some(win) = web_sys::window() {
+                            let _ = win.location().set_href("/");
+                        }
+                    }
+                    Err(e) => {
+                        error.set(e.to_string());
+                        loading.set(false);
+                    }
+                }
+            });
+        }
+    };
+
     rsx! {
         div {
             style: "
@@ -289,6 +348,16 @@ pub fn Login() -> Element {
                     style: "width: 100%; padding: .75rem 1rem; font-weight: 600; font-size: .875rem; text-transform: uppercase; letter-spacing: .05em;",
                     onclick: handle_keycloak,
                     "Continue with SSO"
+                }
+
+                // Dev-only bypass (no-op against a production backend).
+                button {
+                    r#type: "button",
+                    class: "app-btn",
+                    style: "width: 100%; padding: .75rem 1rem; margin-top: .75rem; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em;",
+                    disabled: *loading.read(),
+                    onclick: handle_dev_bypass,
+                    "🔑 Developer Admin Bypass"
                 }
 
                 // Footer

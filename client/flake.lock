@@ -273,14 +273,18 @@
     "panel-kit": {
       "flake": false,
       "locked": {
-        "lastModified": 1782101029,
-        "narHash": "sha256-NIVXY8eFGAMsDNZ378EHc6tYzBmn3LKYxcOEvjYXhfI=",
-        "path": "/home/olive/Repositories/panel-kit",
-        "type": "path"
+        "lastModified": 1781980457,
+        "narHash": "sha256-uYghtFhiqpR1ste3HyLSkIGa0r26YzvuBOIuNsV4b1Q=",
+        "owner": "olivecasazza",
+        "repo": "panel-kit",
+        "rev": "dac9f0061b73fa8fdb554a9575985a413facaebb",
+        "type": "github"
       },
       "original": {
-        "path": "/home/olive/Repositories/panel-kit",
-        "type": "path"
+        "owner": "olivecasazza",
+        "repo": "panel-kit",
+        "rev": "dac9f0061b73fa8fdb554a9575985a413facaebb",
+        "type": "github"
       }
     },
     "root": {

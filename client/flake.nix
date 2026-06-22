@@ -1,6 +1,11 @@
 {
   description = "definitely-not-crosswords Rust/Dioxus frontend: crossword-core + crossword-web (wasm), built reproducibly with crane; omnix CI.";
 
+  # NOTE: `src` is a derivation (it vendors panel-kit in), so crane reads its
+  # Cargo manifests via import-from-derivation. `nix build`/Hydra allow IFD by
+  # default; only `nix flake check`'s pure-eval mode blocks it — run it with
+  # `--option allow-import-from-derivation true` locally.
+
   nixConfig = {
     extra-substituters = [
       "https://nix-community.cachix.org"
@@ -26,11 +31,11 @@
     omnix.url = "github:juspay/omnix";
 
     # The web crate depends on panel-kit by absolute host path, which isn't
-    # reachable in the Nix sandbox. Pull it in as an input and rewrite the path
-    # at build time (see `src` below). Defaults to the local checkout so this
-    # builds today; for Hydra/remote CI override with the pushed git rev:
-    #   --override-input panel-kit github:olivecasazza/panel-kit/<rev>
-    panel-kit.url = "path:/home/olive/Repositories/panel-kit";
+    # reachable in the Nix sandbox. Pull it in as an input (pinned to the pushed
+    # rev so Hydra/buildbot can fetch it too) and rewrite the path at build time
+    # (see `src` below). For local panel-kit iteration, override:
+    #   --override-input panel-kit path:/home/olive/Repositories/panel-kit
+    panel-kit.url = "github:olivecasazza/panel-kit/dac9f0061b73fa8fdb554a9575985a413facaebb";
     panel-kit.flake = false;
   };
 
@@ -80,8 +85,17 @@
               $out/web/Cargo.toml
           '';
 
+          # Vendor deps from the plain lockfile (a real path), NOT from the
+          # runCommand-built `src` derivation — reading the lock out of a
+          # derivation at eval time is import-from-derivation, which pure eval
+          # (the github panel-kit input) forbids. Explicit pname/version below
+          # keep crane from import-from-deriving the crate name out of `src` too.
+          cargoVendorDir = craneLib.vendorCargoDeps { src = ./.; };
+
           commonArgs = {
-            inherit src;
+            inherit src cargoVendorDir;
+            pname = "crossword-client";
+            version = "0.1.0";
             strictDeps = true;
             # Build the workspace; the wasm crate is handled separately.
             cargoExtraArgs = "--workspace --exclude crossword-web";
@@ -93,7 +107,9 @@
           });
 
           wasmArgs = {
-            inherit src;
+            inherit src cargoVendorDir;
+            pname = "crossword-web";
+            version = "0.1.0";
             strictDeps = true;
             CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
             doCheck = false; # no test runner on bare wasm32
@@ -144,7 +160,11 @@
           };
 
           checks = {
-            cargo-fmt = craneLib.cargoFmt { inherit src; };
+            cargo-fmt = craneLib.cargoFmt {
+              inherit src;
+              pname = "crossword-client";
+              version = "0.1.0";
+            };
             cargo-clippy = craneLib.cargoClippy (commonArgs // {
               inherit cargoArtifacts;
               cargoClippyExtraArgs = "--all-targets -- -D warnings";

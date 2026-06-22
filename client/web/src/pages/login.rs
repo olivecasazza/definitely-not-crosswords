@@ -174,8 +174,10 @@ pub fn Login() -> Element {
                 loading.set(true);
                 error.set(String::new());
                 let csrf = async {
-                    let resp =
-                        Request::get("/api/auth/csrf").send().await.map_err(|e| e.to_string())?;
+                    let resp = Request::get("/api/auth/csrf")
+                        .send()
+                        .await
+                        .map_err(|e| e.to_string())?;
                     let d: CsrfResponse = resp.json().await.map_err(|e| e.to_string())?;
                     Ok::<String, String>(d.csrf_token)
                 }

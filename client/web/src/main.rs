@@ -121,10 +121,13 @@ pub fn set_light_class(light: bool) {
     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
         if let Some(html) = doc.document_element() {
             let list = html.class_list();
+            // NOTE: "light-mode", not "light" — panel-kit uses `.light` for its
+            // traffic-light dots; putting `.light` on <html> applied those button
+            // styles to the whole document and broke the page.
             let _ = if light {
-                list.add_1("light")
+                list.add_1("light-mode")
             } else {
-                list.remove_1("light")
+                list.remove_1("light-mode")
             };
         }
     }

@@ -94,6 +94,7 @@ pub fn Games() -> Element {
     };
 
     let ws = use_workspace("games_layout", default_layout);
+    crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         // Parse items once; early-return for loading / error / not-signed-in states

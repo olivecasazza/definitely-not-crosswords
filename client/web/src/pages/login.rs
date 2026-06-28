@@ -35,12 +35,14 @@ struct CsrfResponse {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum Panel {
+    Welcome,
     SignIn,
 }
 
 impl PanelKind for Panel {
     fn title(self) -> &'static str {
         match self {
+            Panel::Welcome => "Welcome",
             Panel::SignIn => "Sign In",
         }
     }
@@ -48,7 +50,36 @@ impl PanelKind for Panel {
 
 fn default_layout() -> Vec<PanelWin<Panel>> {
     let mut b = LayoutBuilder::new();
-    vec![b.at(Panel::SignIn, 700.0, 60.0, 520.0, 640.0)]
+    vec![
+        b.at(Panel::Welcome, 520.0, 150.0, 380.0, 600.0),
+        b.at(Panel::SignIn, 920.0, 150.0, 480.0, 600.0),
+    ]
+}
+
+/// Dimmed-cross pattern shared with the header logo.
+fn dimmed(x: i32, y: i32) -> bool {
+    (x == 14 && (2..=18).contains(&y)) || (y == 10 && (6..=22).contains(&x))
+}
+
+/// The dot-grid brand mark.
+fn brand_panel(subtitle: &str) -> Element {
+    rsx! {
+        div { style: "display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; gap:1rem; padding:1.5rem;",
+            svg {
+                width: "72", height: "72", view_box: "0 0 24 24", fill: "none",
+                xmlns: "http://www.w3.org/2000/svg", style: "color: var(--pastel-yellow);",
+                for y in [2, 6, 10, 14, 18, 22] {
+                    for x in [2, 6, 10, 14, 18, 22] {
+                        circle { cx: "{x}", cy: "{y}", r: "1.2", fill: "currentColor",
+                            opacity: if dimmed(x, y) { "0.3" } else { "1" } }
+                    }
+                }
+            }
+            h1 { style: "font-family: var(--mono, monospace); font-size: 1.3rem; font-weight: 800; margin: 0;",
+                "definitely-not-crosswords" }
+            p { class: "muted", style: "font-size: .8rem; line-height: 1.6; max-width: 16rem;", "{subtitle}" }
+        }
+    }
 }
 
 #[component]
@@ -245,13 +276,14 @@ pub fn Login() -> Element {
     };
 
     let ws = use_workspace("login_layout", default_layout);
+    crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
+            Panel::Welcome => brand_panel("Cooperative, real-time crosswords. Sign in to race the grid and climb the leaderboard."),
             Panel::SignIn => rsx! {
                 div {
-                    class: "app-card",
-                    style: "width: 100%; max-width: 28rem; padding: 2rem;",
+                    style: "height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 1.25rem; padding: 1.5rem 1.75rem; overflow-y: auto;",
 
                     // Header
                     div {

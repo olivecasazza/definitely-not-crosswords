@@ -25,7 +25,7 @@ pub const DESIGN: &str = r#"
   --color-warning: var(--pastel-yellow);
   --color-error: var(--pastel-red);
 }
-.light {
+.light-mode {
   --bg-app: #ffffff;
   --bg-card: #f4f4f5;
   --bg-cell-empty: #e4e4e7;
@@ -36,20 +36,29 @@ pub const DESIGN: &str = r#"
   --border-hover: #d4d4d8;
 }
 
-/* Map panel-kit's variables onto the app tokens. */
+/* Map ALL of panel-kit's theme variables onto the app tokens so the panel
+   chrome (surface, title bars, borders, badges, inverse chips) flips with the
+   theme too. Anything left unmapped keeps panel-kit's dark default and breaks
+   light mode. The fixed accent lights (--blue/--yellow/--pink/--red/--green)
+   are intentionally left as panel-kit's — they read on both themes. */
 :root {
-  --bg: var(--bg-card);
+  --bg: var(--bg-app);          /* workspace background, behind panels */
+  --panel: var(--bg-card);      /* panel surface + title bar */
   --fg: var(--text-primary);
   --dim: var(--text-secondary);
   --line: var(--border-app);
   --line2: var(--border-hover);
   --accent: var(--color-primary);
+  --inv-bg: var(--text-primary); /* inverse chip: contrasts the surface */
+  --inv-fg: var(--bg-app);
+  --badge-bg: var(--bg-cell-letter);
+  --badge-fg: var(--text-primary);
+  --badge-c: var(--text-secondary);
+  --badge-info: var(--color-primary);
   --mono: 'Inconsolata', ui-monospace, monospace;
 }
 
 * { box-sizing: border-box; }
-/* Square corners globally — house style. Overrides panel-kit + component CSS. */
-*, *::before, *::after { border-radius: 0 !important; }
 body {
   margin: 0;
   background-color: var(--bg-app);

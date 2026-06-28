@@ -134,6 +134,7 @@ pub fn GameCompleted(id: String) -> Element {
     };
 
     let ws = use_workspace("game_completed_layout", default_layout);
+    crate::store::sync_panel_mode(ws.mode);
 
     // Snapshot resource state via Rc so both panel arms of the body closure share it.
     // read_unchecked (not peek) keeps the component subscribed to the resource signal.

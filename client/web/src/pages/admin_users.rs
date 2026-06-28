@@ -149,6 +149,7 @@ pub fn AdminUsers() -> Element {
     };
 
     let ws = use_workspace("admin_users_layout", default_layout);
+    crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {

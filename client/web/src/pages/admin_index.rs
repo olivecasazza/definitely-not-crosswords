@@ -26,6 +26,7 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
 pub fn AdminIndex() -> Element {
     let nav = use_navigator();
     let ws = use_workspace("admin_index_layout", default_layout);
+    crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {

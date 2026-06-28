@@ -64,6 +64,7 @@ pub fn GameNew(id: String) -> Element {
     let nav = use_navigator();
 
     let ws = use_workspace("game_new_layout", default_layout);
+    crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         let details_snapshot = details_res.read_unchecked();

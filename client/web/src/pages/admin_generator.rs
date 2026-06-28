@@ -170,6 +170,7 @@ pub fn AdminGenerator() -> Element {
     // ── workspace ─────────────────────────────────────────────────────────────
 
     let ws = use_workspace("admin_generator_layout", default_layout);
+    crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         let status = gen_status.read().clone();

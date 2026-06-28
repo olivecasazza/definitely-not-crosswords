@@ -510,6 +510,7 @@ pub fn GamePlay(id: String) -> Element {
     }
 
     let ws = use_workspace_local();
+    crate::store::sync_panel_mode(ws.mode);
 
     // selected question, looked up fresh for the clue panel render
     let selected_q: Option<QuestionWithAnswerMap> = selected.read().and_then(|k| {

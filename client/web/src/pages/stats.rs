@@ -206,6 +206,7 @@ pub fn Stats() -> Element {
     });
 
     let ws = use_workspace("stats_layout", default_layout);
+    crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {

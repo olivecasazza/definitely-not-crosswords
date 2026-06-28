@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 enum Panel {
     Welcome,
     Start,
-    HowTo,
 }
 
 impl PanelKind for Panel {
@@ -16,7 +15,6 @@ impl PanelKind for Panel {
         match self {
             Panel::Welcome => "Welcome",
             Panel::Start => "Get Started",
-            Panel::HowTo => "How to Play",
         }
     }
 }
@@ -24,22 +22,27 @@ impl PanelKind for Panel {
 fn default_layout() -> Vec<PanelWin<Panel>> {
     let mut b = LayoutBuilder::new();
     vec![
-        b.at(Panel::Welcome, 24.0, 24.0, 420.0, 280.0),
-        b.at(Panel::Start, 464.0, 24.0, 320.0, 280.0),
-        b.at(Panel::HowTo, 24.0, 324.0, 420.0, 240.0),
+        b.at(Panel::Welcome, 480.0, 170.0, 560.0, 560.0),
+        b.at(Panel::Start, 1060.0, 170.0, 380.0, 560.0),
     ]
+}
+
+fn dimmed(x: i32, y: i32) -> bool {
+    (x == 14 && (2..=18).contains(&y)) || (y == 10 && (6..=22).contains(&x))
 }
 
 #[component]
 pub fn Home() -> Element {
     let state = use_app_state();
     let ws = use_workspace("home_layout", default_layout);
+    crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
             Panel::Welcome => rsx! {
-                div { class: "home-logo",
+                div { class: "home-welcome",
                     svg {
+                        class: "home-logo",
                         view_box: "0 0 24 24",
                         fill: "none",
                         xmlns: "http://www.w3.org/2000/svg",
@@ -55,32 +58,27 @@ pub fn Home() -> Element {
                             }
                         }
                     }
+                    h1 { class: "home-title", "definitely-not-crosswords" }
+                    p { class: "home-tagline",
+                        "Cooperative, real-time crosswords. Race the grid, fill the clues, and climb the leaderboard with friends."
+                    }
                 }
-                p { "Cooperative, real-time crosswords. Race the grid, fill the clues, climb the leaderboard." }
             },
             Panel::Start => {
                 let signed_in = state.user().is_some();
                 rsx! {
-                    div { class: "col",
+                    div { class: "home-start",
                         if signed_in {
-                            Link { to: Route::Games {}, class: "app-btn app-btn-active", "Play a game" }
-                            Link { to: Route::Stats {}, class: "app-btn", "Leaderboard" }
-                            Link { to: Route::Profile {}, class: "app-btn", "Profile" }
+                            Link { to: Route::Games {}, class: "app-btn app-btn-active home-cta", "Play a game" }
+                            Link { to: Route::Stats {}, class: "app-btn home-cta", "Leaderboard" }
+                            Link { to: Route::Profile {}, class: "app-btn home-cta", "Profile" }
                         } else {
-                            Link { to: Route::Login {}, class: "app-btn app-btn-active", "Sign in" }
-                            Link { to: Route::Signup {}, class: "app-btn", "Create account" }
+                            Link { to: Route::Login {}, class: "app-btn app-btn-active home-cta", "Sign in" }
+                            Link { to: Route::Signup {}, class: "app-btn home-cta", "Create account" }
                         }
                     }
                 }
             }
-            Panel::HowTo => rsx! {
-                ul { class: "home-list",
-                    li { "Pick a clue from the list or click a square on the board." }
-                    li { "Type letters — they auto-advance; arrows and backspace work too." }
-                    li { "Submit a guess; correct words lock in green, wrong ones flash red." }
-                    li { "Drag panels around, minimize to the dock, or tile them." }
-                }
-            },
         }
     };
 
@@ -97,13 +95,14 @@ pub fn Home() -> Element {
     }
 }
 
-/// Same dimmed-cross pattern as the header logo.
-fn dimmed(x: i32, y: i32) -> bool {
-    (x == 14 && (2..=18).contains(&y)) || (y == 10 && (6..=22).contains(&x))
-}
-
 const HOME_CSS: &str = "
-.home-logo { width: 4rem; height: 4rem; color: var(--pastel-yellow); margin-bottom: .75rem; }
-.home-list { margin: 0; padding-left: 1.1rem; color: var(--text-secondary); line-height: 1.7; }
-.home-list li { margin-bottom: .25rem; }
+.home-welcome { height: 100%; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; text-align: center; gap: 1.1rem; padding: 2rem; }
+.home-logo { width: 5rem; height: 5rem; color: var(--pastel-yellow); }
+.home-title { font-family: var(--mono, monospace); font-size: 1.6rem; font-weight: 800; margin: 0;
+  letter-spacing: -.01em; }
+.home-tagline { color: var(--text-secondary); max-width: 26rem; margin: 0; line-height: 1.7; font-size: .9rem; }
+.home-start { height: 100%; display: flex; flex-direction: column; justify-content: center;
+  gap: .75rem; padding: 2rem 1.75rem; }
+.home-cta { padding: .7rem 1.25rem; font-weight: 600; text-align: center; }
 ";

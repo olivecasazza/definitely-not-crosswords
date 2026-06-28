@@ -6,8 +6,35 @@
 
 use crossword_core::auth::Role;
 use dioxus::prelude::*;
+use gloo_storage::{LocalStorage, Storage};
+use panel_kit::Mode;
 use serde::Deserialize;
 use wasm_bindgen_futures::spawn_local;
+
+/// Share the floating⇄tiling mode across every view. Each route is its own
+/// panel-kit workspace (independent mode), so without this, navigating between
+/// views would flip the layout mode back to whatever that view last persisted.
+/// Call once per page, right after `use_workspace`, passing `ws.mode`.
+pub fn sync_panel_mode(mut mode: Signal<Mode>) {
+    // On mount, adopt the shared mode (overriding this workspace's own).
+    use_hook(move || {
+        if let Ok(s) = LocalStorage::get::<String>("panel_mode") {
+            mode.set(if s == "tiling" {
+                Mode::Tiling
+            } else {
+                Mode::Floating
+            });
+        }
+    });
+    // Persist any change to the shared key so other views pick it up.
+    use_effect(move || {
+        let s = match *mode.read() {
+            Mode::Tiling => "tiling",
+            Mode::Floating => "floating",
+        };
+        let _ = LocalStorage::set("panel_mode", s);
+    });
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct User {

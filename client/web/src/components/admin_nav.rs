@@ -13,15 +13,15 @@ pub fn AdminNav() -> Element {
     ];
 
     rsx! {
-        div { class: "col",
-            style: "gap:0.75rem;border-bottom:1px solid var(--border-app);padding-bottom:1rem",
-            div { class: "col", style: "gap:0.25rem",
-                h1 { style: "font-size:1.125rem;font-weight:bold;letter-spacing:0.05em", "ADMIN" }
-                p { class: "muted", style: "font-size:0.75rem",
+        style { {ADMIN_NAV_CSS} }
+        div { class: "admin-nav",
+            div { class: "admin-nav-chrome",
+                span { class: "admin-nav-label", "ADMIN" }
+                span { class: "admin-nav-desc muted",
                     "Operational controls for puzzles, users, and roles."
                 }
             }
-            nav { class: "row", style: "gap:0.5rem;flex-wrap:wrap",
+            nav { class: "admin-nav-tabs",
                 for (label , dest) in tabs {
                     {
                         let is_active = match (&route, &dest) {
@@ -34,8 +34,7 @@ pub fn AdminNav() -> Element {
                         rsx! {
                             Link {
                                 to: dest,
-                                class: if is_active { "app-btn app-btn-active" } else { "app-btn" },
-                                style: "font-size:0.75rem;font-family:monospace;text-transform:uppercase;letter-spacing:0.05em",
+                                class: if is_active { "admin-tab admin-tab-active" } else { "admin-tab" },
                                 {label}
                             }
                         }
@@ -45,3 +44,16 @@ pub fn AdminNav() -> Element {
         }
     }
 }
+
+const ADMIN_NAV_CSS: &str = r#"
+.admin-nav { display: flex; flex-direction: column; border-bottom: 1px solid var(--border-app); }
+.admin-nav-chrome { display: flex; align-items: baseline; gap: 0.75rem; padding: 6px 12px; background: var(--bg-titlebar, var(--bg-card)); border-bottom: 1px solid var(--border-app); }
+.admin-nav-label { font-size: 10px; font-weight: 700; font-family: monospace; letter-spacing: 0.1em; color: var(--text-secondary); text-transform: uppercase; }
+.admin-nav-desc { font-size: 10px; }
+.admin-nav-tabs { display: flex; flex-wrap: wrap; }
+.admin-tab { padding: 6px 14px; font-size: 10px; font-weight: 700; font-family: monospace; text-transform: uppercase; letter-spacing: 0.05em; border: none; border-right: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; transition: color .12s, background .12s; }
+.admin-tab:first-child { border-left: none; }
+.admin-tab:hover { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+.admin-tab-active { background: var(--pastel-yellow); color: #18181b; }
+.admin-tab-active:hover { background: var(--pastel-yellow); color: #18181b; }
+"#;

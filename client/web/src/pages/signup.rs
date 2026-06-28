@@ -1,7 +1,27 @@
 use crate::net;
 use dioxus::prelude::*;
+use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+enum Panel {
+    CreateAccount,
+}
+
+impl PanelKind for Panel {
+    fn title(self) -> &'static str {
+        match self {
+            Panel::CreateAccount => "Create Account",
+        }
+    }
+}
+
+fn default_layout() -> Vec<PanelWin<Panel>> {
+    let mut b = LayoutBuilder::new();
+    vec![b.at(Panel::CreateAccount, 660.0, 24.0, 600.0, 760.0)]
+}
 
 #[component]
 pub fn Signup() -> Element {
@@ -224,224 +244,232 @@ pub fn Signup() -> Element {
     let email_checking = *checking_email.read();
     let email_touched_val = *email_touched.read();
 
-    rsx! {
-        div {
-            style: "
-                min-height: 100vh;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
-                padding: 1rem;
-                background: var(--bg-app);
-            ",
+    let ws = use_workspace("signup_layout", default_layout);
 
-            div {
-                class: "app-card",
-                style: "width: 100%; max-width: 28rem; padding: 2rem;",
-
-                // Header
+    let body = move |kind: Panel, _max: bool| -> Element {
+        match kind {
+            Panel::CreateAccount => rsx! {
                 div {
-                    style: "display: flex; flex-direction: column; align-items: center; margin-bottom: 2rem;",
-                    h1 {
-                        style: "font-family: monospace; font-size: 1.5rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--text-primary); margin: 0 0 .25rem 0;",
-                        "Create Account"
-                    }
-                    p {
-                        class: "muted",
-                        style: "font-size: .75rem; font-family: monospace; margin: 0; text-align: center;",
-                        "Join the \"Definitely Not Crosswords\" experience"
-                    }
-                }
+                    class: "app-card",
+                    style: "width: 100%; max-width: 28rem; padding: 2rem;",
 
-                // Success state
-                if *success.read() {
+                    // Header
                     div {
-                        class: "success",
-                        style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid rgba(168,230,207,0.2); border-radius: .5rem; background: rgba(168,230,207,0.06); display: flex; flex-direction: column; gap: .5rem;",
-                        p { style: "margin: 0;", "Registration successful! Please verify your email." }
-                        if !verification_token.read().is_empty() {
-                            div {
-                                style: "padding-top: .5rem; border-top: 1px solid rgba(168,230,207,0.15);",
-                                p {
-                                    class: "muted",
-                                    style: "font-size: .625rem; margin: 0 0 .25rem 0;",
-                                    "Testing verification link:"
-                                }
-                                Link {
-                                    to: crate::Route::VerifyEmail {},
-                                    // Note: ideally we'd append ?token=... but Route::VerifyEmail
-                                    // has no query param; using a raw href instead.
-                                    onclick: {
-                                        let tok = verification_token.read().clone();
-                                        move |_| {
-                                            if let Some(win) = web_sys::window() {
-                                                let href = format!("/auth/verify-email?token={}", tok);
-                                                let _ = win.location().set_href(&href);
+                        style: "display: flex; flex-direction: column; align-items: center; margin-bottom: 2rem;",
+                        h1 {
+                            style: "font-family: monospace; font-size: 1.5rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--text-primary); margin: 0 0 .25rem 0;",
+                            "Create Account"
+                        }
+                        p {
+                            class: "muted",
+                            style: "font-size: .75rem; font-family: monospace; margin: 0; text-align: center;",
+                            "Join the \"Definitely Not Crosswords\" experience"
+                        }
+                    }
+
+                    // Success state
+                    if *success.read() {
+                        div {
+                            class: "success",
+                            style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid rgba(168,230,207,0.2); border-radius: .5rem; background: rgba(168,230,207,0.06); display: flex; flex-direction: column; gap: .5rem;",
+                            p { style: "margin: 0;", "Registration successful! Please verify your email." }
+                            if !verification_token.read().is_empty() {
+                                div {
+                                    style: "padding-top: .5rem; border-top: 1px solid rgba(168,230,207,0.15);",
+                                    p {
+                                        class: "muted",
+                                        style: "font-size: .625rem; margin: 0 0 .25rem 0;",
+                                        "Testing verification link:"
+                                    }
+                                    Link {
+                                        to: crate::Route::VerifyEmail {},
+                                        // Note: ideally we'd append ?token=... but Route::VerifyEmail
+                                        // has no query param; using a raw href instead.
+                                        onclick: {
+                                            let tok = verification_token.read().clone();
+                                            move |_| {
+                                                if let Some(win) = web_sys::window() {
+                                                    let href = format!("/auth/verify-email?token={}", tok);
+                                                    let _ = win.location().set_href(&href);
+                                                }
                                             }
-                                        }
-                                    },
-                                    style: "color: var(--pastel-yellow); font-weight: 600; font-size: .75rem;",
-                                    "Verify Email ({verification_token.read().chars().take(8).collect::<String>()}...)"
+                                        },
+                                        style: "color: var(--pastel-yellow); font-weight: 600; font-size: .75rem;",
+                                        "Verify Email ({verification_token.read().chars().take(8).collect::<String>()}...)"
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // Form (hidden after success)
-                if !*success.read() {
-                    form {
-                        onsubmit: handle_submit,
-                        style: "display: flex; flex-direction: column; gap: 1.25rem;",
+                    // Form (hidden after success)
+                    if !*success.read() {
+                        form {
+                            onsubmit: handle_submit.clone(),
+                            style: "display: flex; flex-direction: column; gap: 1.25rem;",
 
-                        // Error alert
-                        if !error.read().is_empty() {
-                            div {
-                                class: "error",
-                                style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid rgba(255,140,140,0.2); border-radius: .5rem; background: rgba(255,140,140,0.06);",
-                                "{error}"
-                            }
-                        }
-
-                        // Name field
-                        div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                            label {
-                                r#for: "name",
-                                style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                "Full Name"
-                            }
-                            input {
-                                id: "name",
-                                class: "app-input",
-                                style: "width: 100%; padding: .75rem 1rem;",
-                                r#type: "text",
-                                placeholder: "e.g. Olive Casazza",
-                                value: "{name}",
-                                oninput: move |e| name.clone().set(e.value()),
-                                onblur: move |_| name_touched.clone().set(true),
-                            }
-                            if *name_touched.read() && !name_error.is_empty() {
-                                p {
+                            // Error alert
+                            if !error.read().is_empty() {
+                                div {
                                     class: "error",
-                                    style: "font-size: .69rem; font-family: monospace; margin: 0;",
-                                    "{name_error}"
+                                    style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid rgba(255,140,140,0.2); border-radius: .5rem; background: rgba(255,140,140,0.06);",
+                                    "{error}"
                                 }
                             }
-                        }
 
-                        // Username field
-                        div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                            label {
-                                r#for: "username",
-                                style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                "Username"
-                            }
-                            input {
-                                id: "username",
-                                class: "app-input",
-                                style: "width: 100%; padding: .75rem 1rem;",
-                                r#type: "text",
-                                placeholder: "e.g. olivepasta",
-                                value: "{username}",
-                                oninput: move |e| username.clone().set(e.value()),
-                                onblur: on_username_blur,
-                            }
-                            if uname_touched_val {
-                                if !username_error.is_empty() {
-                                    p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "{username_error}" }
-                                } else if uname_checking {
-                                    p { class: "muted", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Checking availability..." }
-                                } else if uname_len >= 3 && !uname_available {
-                                    p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Username is already taken." }
-                                } else if uname_len >= 3 && uname_available {
-                                    p { class: "success", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Username is available!" }
+                            // Name field
+                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
+                                label {
+                                    r#for: "name",
+                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
+                                    "Full Name"
+                                }
+                                input {
+                                    id: "name",
+                                    class: "app-input",
+                                    style: "width: 100%; padding: .75rem 1rem;",
+                                    r#type: "text",
+                                    placeholder: "e.g. Olive Casazza",
+                                    value: "{name}",
+                                    oninput: move |e| name.clone().set(e.value()),
+                                    onblur: move |_| name_touched.clone().set(true),
+                                }
+                                if *name_touched.read() && !name_error.is_empty() {
+                                    p {
+                                        class: "error",
+                                        style: "font-size: .69rem; font-family: monospace; margin: 0;",
+                                        "{name_error}"
+                                    }
                                 }
                             }
-                        }
 
-                        // Email field
-                        div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                            label {
-                                r#for: "email",
-                                style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                "Email Address"
-                            }
-                            input {
-                                id: "email",
-                                class: "app-input",
-                                style: "width: 100%; padding: .75rem 1rem;",
-                                r#type: "email",
-                                placeholder: "e.g. olive.casazza@gmail.com",
-                                value: "{email}",
-                                oninput: move |e| email.clone().set(e.value()),
-                                onblur: on_email_blur,
-                            }
-                            if email_touched_val {
-                                if !email_error.is_empty() {
-                                    p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "{email_error}" }
-                                } else if email_checking {
-                                    p { class: "muted", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Checking availability..." }
-                                } else if email_len_ok && !email_available {
-                                    p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Email is already registered." }
-                                } else if email_len_ok && email_available {
-                                    p { class: "success", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Email is available!" }
+                            // Username field
+                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
+                                label {
+                                    r#for: "username",
+                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
+                                    "Username"
+                                }
+                                input {
+                                    id: "username",
+                                    class: "app-input",
+                                    style: "width: 100%; padding: .75rem 1rem;",
+                                    r#type: "text",
+                                    placeholder: "e.g. olivepasta",
+                                    value: "{username}",
+                                    oninput: move |e| username.clone().set(e.value()),
+                                    onblur: on_username_blur.clone(),
+                                }
+                                if uname_touched_val {
+                                    if !username_error.is_empty() {
+                                        p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "{username_error}" }
+                                    } else if uname_checking {
+                                        p { class: "muted", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Checking availability..." }
+                                    } else if uname_len >= 3 && !uname_available {
+                                        p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Username is already taken." }
+                                    } else if uname_len >= 3 && uname_available {
+                                        p { class: "success", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Username is available!" }
+                                    }
                                 }
                             }
-                        }
 
-                        // Password field
-                        div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                            label {
-                                r#for: "password",
-                                style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                "Password"
-                            }
-                            input {
-                                id: "password",
-                                class: "app-input",
-                                style: "width: 100%; padding: .75rem 1rem;",
-                                r#type: "password",
-                                placeholder: "••••••••",
-                                value: "{password}",
-                                oninput: move |e| password.clone().set(e.value()),
-                                onblur: move |_| password_touched.clone().set(true),
-                            }
-                            if *password_touched.read() && !password_error.is_empty() {
-                                p {
-                                    class: "error",
-                                    style: "font-size: .69rem; font-family: monospace; margin: 0;",
-                                    "{password_error}"
+                            // Email field
+                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
+                                label {
+                                    r#for: "email",
+                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
+                                    "Email Address"
+                                }
+                                input {
+                                    id: "email",
+                                    class: "app-input",
+                                    style: "width: 100%; padding: .75rem 1rem;",
+                                    r#type: "email",
+                                    placeholder: "e.g. olive.casazza@gmail.com",
+                                    value: "{email}",
+                                    oninput: move |e| email.clone().set(e.value()),
+                                    onblur: on_email_blur.clone(),
+                                }
+                                if email_touched_val {
+                                    if !email_error.is_empty() {
+                                        p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "{email_error}" }
+                                    } else if email_checking {
+                                        p { class: "muted", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Checking availability..." }
+                                    } else if email_len_ok && !email_available {
+                                        p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Email is already registered." }
+                                    } else if email_len_ok && email_available {
+                                        p { class: "success", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Email is available!" }
+                                    }
                                 }
                             }
-                        }
 
-                        // Submit
-                        button {
-                            r#type: "submit",
-                            class: "app-btn app-btn-active",
-                            style: "width: 100%; padding: .75rem 1rem; font-weight: 600; font-size: .875rem; text-transform: uppercase; letter-spacing: .05em;",
-                            disabled: *loading.read() || is_invalid,
-                            if *loading.read() { "Creating..." } else { "Sign Up" }
+                            // Password field
+                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
+                                label {
+                                    r#for: "password",
+                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
+                                    "Password"
+                                }
+                                input {
+                                    id: "password",
+                                    class: "app-input",
+                                    style: "width: 100%; padding: .75rem 1rem;",
+                                    r#type: "password",
+                                    placeholder: "••••••••",
+                                    value: "{password}",
+                                    oninput: move |e| password.clone().set(e.value()),
+                                    onblur: move |_| password_touched.clone().set(true),
+                                }
+                                if *password_touched.read() && !password_error.is_empty() {
+                                    p {
+                                        class: "error",
+                                        style: "font-size: .69rem; font-family: monospace; margin: 0;",
+                                        "{password_error}"
+                                    }
+                                }
+                            }
+
+                            // Submit
+                            button {
+                                r#type: "submit",
+                                class: "app-btn app-btn-active",
+                                style: "width: 100%; padding: .75rem 1rem; font-weight: 600; font-size: .875rem; text-transform: uppercase; letter-spacing: .05em;",
+                                disabled: *loading.read() || is_invalid,
+                                if *loading.read() { "Creating..." } else { "Sign Up" }
+                            }
+                        }
+                    }
+
+                    // Footer
+                    div {
+                        style: "margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-app); text-align: center;",
+                        p {
+                            class: "muted",
+                            style: "font-size: .75rem; font-family: monospace; margin: 0;",
+                            "Already have an account? "
+                            Link {
+                                to: crate::Route::Login {},
+                                style: "color: var(--pastel-yellow);",
+                                "Sign In"
+                            }
                         }
                     }
                 }
+            },
+        }
+    };
 
-                // Footer
-                div {
-                    style: "margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-app); text-align: center;",
-                    p {
-                        class: "muted",
-                        style: "font-size: .75rem; font-family: monospace; margin: 0;",
-                        "Already have an account? "
-                        Link {
-                            to: crate::Route::Login {},
-                            style: "color: var(--pastel-yellow);",
-                            "Sign In"
-                        }
-                    }
-                }
-            }
+    rsx! {
+        style { {SIGNUP_CSS} }
+        div {
+            class: ws.root_class(),
+            tabindex: "0",
+            onmousemove: move |e| ws.handle_mouse_move(&e),
+            onmouseup: move |_| ws.handle_mouse_up(),
+            {ws.render(body)}
+            {ws.dock()}
         }
     }
 }
+
+const SIGNUP_CSS: &str = "";

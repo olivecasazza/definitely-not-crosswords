@@ -75,6 +75,30 @@ a { color: inherit; text-decoration: none; }
   border-radius: .375rem; outline: none; padding: .4rem .6rem; transition: border-color .15s ease; }
 .app-input:focus { border-color: var(--color-primary); }
 
+/* ── App shell: header + per-view panel-kit workspace + footer ──────────────
+   Every view is a panel-kit workspace. On DESKTOP the workspace fills the area
+   between the (sticky) header and footer — panels are clamped to vw × the
+   available vh, and the page itself never scrolls. On MOBILE (<760px, where
+   panel-kit force-stacks panels) we clamp width to vw but let height scroll,
+   so stacked panels flow down the page. */
+.app-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+/* Column so a page that renders chrome (e.g. AdminNav) above its workspace
+   stacks vertically, with the workspace taking the remaining height. */
+.app-main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* Override panel-kit's default `.ws-root { height: 100vh }` so the workspace
+   fills the remaining space in `.app-main` instead of overflowing it. */
+.app-main .ws-root { flex: 1 1 auto; min-height: 0; height: auto; min-width: 0; }
+
+@media (max-width: 760px) {
+  body { overflow-y: auto; overflow-x: hidden; height: auto; }
+  .app-shell { height: auto; min-height: 100vh; overflow: visible; }
+  .app-main { display: block; }
+  .ws-root.mobile { height: auto; }
+  /* let stacked panels expand and the page scroll, instead of an inner scroll */
+  .ws-root.mobile .ws,
+  .ws-root.mobile .ws.tiling { overflow: visible; height: auto; }
+}
+
 /* Shared layout helpers used across pages (lazy stand-ins for Tailwind utils). */
 .container { max-width: 64rem; margin: 0 auto; padding: 1.5rem; }
 .row { display: flex; gap: .75rem; align-items: center; }

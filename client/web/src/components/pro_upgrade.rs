@@ -8,54 +8,49 @@ use crate::{net, store::use_app_state};
 // ── component-scoped CSS ──────────────────────────────────────────────────────
 
 const CSS: &str = r#"
-.pro-upgrade-card {
-  padding: 1.5rem;
-  border-radius: 1rem;
-  background: rgba(24,24,27,0.6);
-  backdrop-filter: blur(12px);
+.pro-upgrade {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  height: 100%;
 }
-.pro-upgrade-card .plan-row {
+.pro-upgrade .plan-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: .875rem;
-  border-radius: .75rem;
   border: 1px solid var(--border-app);
   background: rgba(18,18,18,0.5);
 }
-.pro-upgrade-card .plan-label {
+.pro-upgrade .plan-label {
   font-size: .625rem;
   font-family: var(--mono);
   text-transform: uppercase;
   letter-spacing: .08em;
   color: var(--text-secondary);
 }
-.pro-upgrade-card .plan-name {
+.pro-upgrade .plan-name {
   font-size: .875rem;
   font-weight: 700;
 }
-.pro-upgrade-card .plan-name.is-pro {
+.pro-upgrade .plan-name.is-pro {
   color: var(--pastel-green);
 }
-.pro-upgrade-card .pro-chip {
+.pro-upgrade .pro-chip {
   display: inline-block;
   padding: .125rem .5rem;
-  border-radius: .25rem;
   font-size: .625rem;
   font-weight: 700;
   text-transform: uppercase;
   background: var(--color-success);
   color: #0f172a;
 }
-.pro-upgrade-card .code-section {
+.pro-upgrade .code-section {
   display: flex;
   flex-direction: column;
   gap: .375rem;
 }
-.pro-upgrade-card .code-label {
+.pro-upgrade .code-label {
   font-size: .75rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -63,23 +58,22 @@ const CSS: &str = r#"
   color: var(--text-secondary);
   font-family: var(--mono);
 }
-.pro-upgrade-card .code-label span {
+.pro-upgrade .code-label span {
   text-transform: none;
   opacity: .6;
   font-weight: 400;
 }
-.pro-upgrade-card .code-row {
+.pro-upgrade .code-row {
   display: flex;
   gap: .5rem;
 }
-.pro-upgrade-card .code-input {
+.pro-upgrade .code-input {
   flex: 1;
   text-transform: uppercase;
 }
-.pro-upgrade-card .upgrade-btn {
+.pro-upgrade .upgrade-btn {
   width: 100%;
   padding: .75rem 1rem;
-  border-radius: .75rem;
   font-weight: 600;
   font-size: .875rem;
   letter-spacing: .08em;
@@ -94,11 +88,11 @@ const CSS: &str = r#"
   justify-content: center;
   gap: .5rem;
 }
-.pro-upgrade-card .upgrade-btn:hover { transform: scale(1.02); }
-.pro-upgrade-card .upgrade-btn:active { transform: scale(0.98); }
-.pro-upgrade-card .upgrade-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.pro-upgrade .upgrade-btn:hover { transform: scale(1.02); }
+.pro-upgrade .upgrade-btn:active { transform: scale(0.98); }
+.pro-upgrade .upgrade-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 @keyframes pu-spin { to { transform: rotate(360deg); } }
-.pro-upgrade-card .spin-ring {
+.pro-upgrade .spin-ring {
   display: inline-block;
   width: 1rem;
   height: 1rem;
@@ -283,13 +277,9 @@ pub fn ProUpgrade() -> Element {
     rsx! {
         style { {CSS} }
 
-        div { class: "pro-upgrade-card app-card",
+        div { class: "pro-upgrade",
             // Header
             div { class: "col",
-                h3 {
-                    style: "margin:0; font-size: 1.125rem; font-weight: 700; font-family: var(--mono); text-transform: uppercase; letter-spacing: .08em;",
-                    "Subscription"
-                }
                 p { class: "muted",
                     style: "margin:0; font-size: .75rem; font-family: var(--mono);",
                     "Unlock unlimited puzzle generation with Pro"

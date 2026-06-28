@@ -80,13 +80,28 @@ fn logo_dot_dimmed(x: i32, y: i32) -> bool {
 }
 
 const HEADER_CSS: &str = "
-.site-header { position: sticky; top: 0; z-index: 50; display: flex; align-items: center;
-  justify-content: space-between; padding: .6rem 1.5rem; background: var(--bg-card);
-  border-bottom: 1px solid var(--border-app); }
-.site-header .brand { font-weight: 700; display: inline-flex; align-items: center; gap: .5rem; }
-.site-header .brand .logo { width: 1.5rem; height: 1.5rem; color: var(--pastel-yellow);
-  transition: transform .2s ease; }
-.site-header .brand:hover .logo { transform: scale(1.05); }
-.site-header .navlink { color: var(--text-secondary); padding: .35rem .5rem; border-radius: .375rem; }
-.site-header .navlink:hover { color: var(--text-primary); }
+.site-header {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .35rem 1rem;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+  font-family: var(--mono); font-size: .8rem; letter-spacing: .01em;
+}
+.site-header .brand {
+  font-weight: 700; display: inline-flex; align-items: center; gap: .45rem;
+  color: var(--fg);
+}
+.site-header .brand .logo {
+  width: 1.25rem; height: 1.25rem; color: var(--accent);
+  transition: transform .2s ease;
+}
+.site-header .brand:hover .logo { transform: scale(1.1); }
+.site-header .brand span { color: var(--dim); }
+.site-header .brand:hover span { color: var(--fg); }
+.site-header nav.row { gap: .25rem; }
+.site-header .navlink {
+  color: var(--dim); padding: .25rem .5rem;
+  transition: color .15s ease;
+}
+.site-header .navlink:hover { color: var(--fg); }
 ";

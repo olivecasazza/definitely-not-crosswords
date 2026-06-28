@@ -3,6 +3,8 @@ use crate::components::generation_progress::{GenerationProgress, Progress};
 use crate::net::{mutation, query, subscribe, Subscription};
 use crate::Route;
 use dioxus::prelude::*;
+use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use wasm_bindgen_futures::spawn_local;
 
@@ -101,6 +103,34 @@ fn do_load_jobs(
     });
 }
 
+// ── panels ────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+enum Panel {
+    Parameters,
+    Progress,
+    Jobs,
+}
+
+impl PanelKind for Panel {
+    fn title(self) -> &'static str {
+        match self {
+            Panel::Parameters => "Parameters",
+            Panel::Progress => "Progress",
+            Panel::Jobs => "Jobs",
+        }
+    }
+}
+
+fn default_layout() -> Vec<PanelWin<Panel>> {
+    let mut b = LayoutBuilder::new();
+    vec![
+        b.at(Panel::Parameters, 16.0, 16.0, 640.0, 880.0),
+        b.at(Panel::Progress, 672.0, 16.0, 1232.0, 432.0),
+        b.at(Panel::Jobs, 672.0, 464.0, 1232.0, 432.0),
+    ]
+}
+
 // ── component ─────────────────────────────────────────────────────────────────
 
 #[component]
@@ -137,18 +167,16 @@ pub fn AdminGenerator() -> Element {
         do_load_jobs(jobs, jobs_loading, jobs_error);
     });
 
-    // ── render ────────────────────────────────────────────────────────────────
+    // ── workspace ─────────────────────────────────────────────────────────────
 
-    let status = gen_status.read().clone();
-    let is_running = status == "running";
+    let ws = use_workspace("admin_generator_layout", default_layout);
 
-    rsx! {
-        div { class: "container",
-            div { class: "col", style: "gap:1.5rem",
-
-                // ── header card ───────────────────────────────────────────────
-                div { class: "app-card col", style: "padding:1.5rem;gap:1.5rem",
-                    AdminNav {}
+    let body = move |kind: Panel, _max: bool| -> Element {
+        let status = gen_status.read().clone();
+        let is_running = status == "running";
+        match kind {
+            Panel::Parameters => rsx! {
+                div { class: "col", style: "gap:1.5rem;padding:1rem;overflow-y:auto;height:100%",
                     div { style: "border-bottom:1px solid var(--border-app);padding-bottom:1rem",
                         h1 { style: "font-size:1.125rem;font-weight:bold;letter-spacing:0.05em",
                             "CROSSWORD GENERATOR"
@@ -284,74 +312,83 @@ pub fn AdminGenerator() -> Element {
                         }
                     }
                 }
+            },
 
-                // ── live progress ─────────────────────────────────────────────
-                if status != "idle" {
-                    GenerationProgress {
-                        log: gen_log.read().clone(),
-                        progress: gen_progress.read().clone(),
-                        running: is_running,
-                        status: status.clone(),
-                        elapsed_secs: *elapsed_secs.read(),
+            Panel::Progress => rsx! {
+                div { class: "col", style: "gap:1rem;padding:1rem;height:100%;overflow-y:auto",
+                    // ── live progress ─────────────────────────────────────────
+                    if status != "idle" {
+                        GenerationProgress {
+                            log: gen_log.read().clone(),
+                            progress: gen_progress.read().clone(),
+                            running: is_running,
+                            status: status.clone(),
+                            elapsed_secs: *elapsed_secs.read(),
+                        }
+                    } else {
+                        div { class: "muted", style: "font-size:0.875rem;text-align:center;padding:2rem 0",
+                            "Generation output will appear here."
+                        }
                     }
-                }
 
-                // ── gen error ─────────────────────────────────────────────────
-                if !gen_error.read().is_empty() {
-                    div { class: "app-card error", style: "padding:1rem;font-size:0.875rem",
-                        {gen_error.read().clone()}
+                    // ── gen error ─────────────────────────────────────────────
+                    if !gen_error.read().is_empty() {
+                        div { class: "app-card error", style: "padding:1rem;font-size:0.875rem",
+                            {gen_error.read().clone()}
+                        }
                     }
-                }
 
-                // ── completed game CTA ────────────────────────────────────────
-                if let (Some(gid), Some(gtitle)) = (gen_game_id.read().clone(), gen_game_title.read().clone()) {
-                    div { class: "app-card", style: "padding:1rem;border-color:var(--color-success)",
-                        div { class: "row", style: "justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap",
-                            div { class: "col", style: "gap:0.25rem",
-                                div { style: "font-size:0.875rem;font-weight:600", {gtitle.clone()} }
-                                if !publish_error.read().is_empty() {
-                                    div { class: "error", style: "font-size:0.75rem", {publish_error.read().clone()} }
-                                }
-                            }
-                            div { class: "row", style: "gap:0.5rem",
-                                if !*gen_game_published.read() {
-                                    button {
-                                        class: "app-btn app-btn-active",
-                                        style: "font-weight:bold",
-                                        disabled: *publishing.read(),
-                                        onclick: {
-                                            let gid = gid.clone();
-                                            move |_| {
-                                                let game_id = gid.clone();
-                                                publishing.set(true);
-                                                publish_error.set(String::new());
-                                                spawn_local(async move {
-                                                    match mutation("generator.publishGeneratedGame", Some(json!({"gameId": game_id}))).await {
-                                                        Ok(_) => {
-                                                            gen_game_published.set(true);
-                                                            do_load_jobs(jobs, jobs_loading, jobs_error);
-                                                        }
-                                                        Err(e) => publish_error.set(e),
-                                                    }
-                                                    publishing.set(false);
-                                                });
-                                            }
-                                        },
-                                        if *publishing.read() { "Publishing…" } else { "Publish" }
+                    // ── completed game CTA ────────────────────────────────────
+                    if let (Some(gid), Some(gtitle)) = (gen_game_id.read().clone(), gen_game_title.read().clone()) {
+                        div { class: "app-card", style: "padding:1rem;border-color:var(--color-success)",
+                            div { class: "row", style: "justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap",
+                                div { class: "col", style: "gap:0.25rem",
+                                    div { style: "font-size:0.875rem;font-weight:600", {gtitle.clone()} }
+                                    if !publish_error.read().is_empty() {
+                                        div { class: "error", style: "font-size:0.75rem", {publish_error.read().clone()} }
                                     }
                                 }
-                                button {
-                                    class: "app-btn",
-                                    onclick: move |_| { nav.push(Route::Games {}); },
-                                    "View Games"
+                                div { class: "row", style: "gap:0.5rem",
+                                    if !*gen_game_published.read() {
+                                        button {
+                                            class: "app-btn app-btn-active",
+                                            style: "font-weight:bold",
+                                            disabled: *publishing.read(),
+                                            onclick: {
+                                                let gid = gid.clone();
+                                                move |_| {
+                                                    let game_id = gid.clone();
+                                                    publishing.set(true);
+                                                    publish_error.set(String::new());
+                                                    spawn_local(async move {
+                                                        match mutation("generator.publishGeneratedGame", Some(json!({"gameId": game_id}))).await {
+                                                            Ok(_) => {
+                                                                gen_game_published.set(true);
+                                                                do_load_jobs(jobs, jobs_loading, jobs_error);
+                                                            }
+                                                            Err(e) => publish_error.set(e),
+                                                        }
+                                                        publishing.set(false);
+                                                    });
+                                                }
+                                            },
+                                            if *publishing.read() { "Publishing…" } else { "Publish" }
+                                        }
+                                    }
+                                    button {
+                                        class: "app-btn",
+                                        onclick: move |_| { nav.push(Route::Games {}); },
+                                        "View Games"
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            },
 
-                // ── jobs table ────────────────────────────────────────────────
-                div { class: "app-card", style: "overflow:hidden",
+            Panel::Jobs => rsx! {
+                div { style: "overflow:hidden;height:100%;display:flex;flex-direction:column",
                     div { class: "row", style: "padding:1rem;border-bottom:1px solid var(--border-app);justify-content:space-between;align-items:center",
                         h2 { style: "font-size:0.875rem;font-weight:bold;font-family:monospace;letter-spacing:0.05em",
                             "GENERATION JOBS"
@@ -371,7 +408,7 @@ pub fn AdminGenerator() -> Element {
                         }
                     }
 
-                    div { style: "overflow-x:auto",
+                    div { style: "overflow-x:auto;flex:1",
                         table { style: "width:100%;text-align:left;font-size:0.875rem;border-collapse:collapse",
                             thead {
                                 tr {
@@ -439,7 +476,19 @@ pub fn AdminGenerator() -> Element {
                         }
                     }
                 }
-            }
+            },
+        }
+    };
+
+    rsx! {
+        AdminNav {}
+        div {
+            class: ws.root_class(),
+            tabindex: "0",
+            onmousemove: move |e| ws.handle_mouse_move(&e),
+            onmouseup: move |_| ws.handle_mouse_up(),
+            {ws.render(body)}
+            {ws.dock()}
         }
     }
 }

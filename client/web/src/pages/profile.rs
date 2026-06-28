@@ -1,4 +1,6 @@
 use dioxus::prelude::*;
+use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
 
@@ -6,6 +8,29 @@ use crate::components::pro_upgrade::ProUpgrade;
 use crate::net;
 use crate::store::use_app_state;
 use crate::Route;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+enum Panel {
+    Profile,
+    Subscription,
+}
+
+impl PanelKind for Panel {
+    fn title(self) -> &'static str {
+        match self {
+            Panel::Profile => "Profile",
+            Panel::Subscription => "Subscription",
+        }
+    }
+}
+
+fn default_layout() -> Vec<PanelWin<Panel>> {
+    let mut b = LayoutBuilder::new();
+    vec![
+        b.at(Panel::Profile, 16.0, 16.0, 1120.0, 948.0),
+        b.at(Panel::Subscription, 1152.0, 16.0, 752.0, 948.0),
+    ]
+}
 
 #[component]
 pub fn Profile() -> Element {
@@ -110,61 +135,56 @@ pub fn Profile() -> Element {
         }
     };
 
-    let first_char = display_name
-        .read()
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_else(|| "U".to_string());
+    let ws = use_workspace("profile_layout", default_layout);
 
-    rsx! {
-        style { {PROFILE_CSS} }
-        div { class: "pf-page",
+    let body = move |kind: Panel, _max: bool| -> Element {
+        match kind {
+            Panel::Profile => {
+                let first_char = display_name
+                    .read()
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().to_string())
+                    .unwrap_or_else(|| "U".to_string());
+                rsx! {
+                    div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
 
-            div { style: "max-width: 48rem; margin: 0 auto; position: relative; z-index: 10;",
-
-                // Back button
-                div { style: "margin-bottom: 2rem;",
-                    Link {
-                        to: Route::Games {},
-                        class: "app-btn",
-                        style: "width: max-content; font-size: .75rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em;",
-                        "← Back to Lobby"
-                    }
-                }
-
-                // Main layout: avatar column + settings column
-                div { class: "pf-grid",
-
-                    // Avatar card
-                    div { class: "app-card pf-avatar-card",
+                        // Back button
                         div {
-                            style: "position: relative; display: inline-block;",
-                            div { class: "pf-avatar-circle", "{first_char}" }
-                            div {
-                                class: "pf-verified-badge",
-                                title: "Email Verified",
-                                "✓"
+                            Link {
+                                to: Route::Games {},
+                                class: "app-btn",
+                                style: "width: max-content; font-size: .75rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em;",
+                                "← Back to Lobby"
                             }
                         }
-                        div { style: "text-align: center;",
-                            h2 { style: "font-weight: 700; font-size: 1.125rem; color: var(--text-primary); margin: 0 0 .25rem 0;", "{display_name}" }
-                            p { class: "muted", style: "font-size: .75rem; font-family: monospace; margin: 0;", "{user_email}" }
-                        }
-                        div { class: "pf-meta-list",
-                            div { class: "pf-meta-row",
-                                span { class: "muted", style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em;", "Account Type:" }
-                                span { style: "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-yellow);", "{user_role}" }
-                            }
-                            div { class: "pf-meta-row",
-                                span { class: "muted", style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em;", "Status:" }
-                                span { style: "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-green);", "Verified" }
-                            }
-                        }
-                    }
 
-                    // Right column: settings + upgrade + danger
-                    div { style: "display: flex; flex-direction: column; gap: 1.5rem;",
+                        // Avatar card
+                        div { class: "app-card pf-avatar-card",
+                            div {
+                                style: "position: relative; display: inline-block;",
+                                div { class: "pf-avatar-circle", "{first_char}" }
+                                div {
+                                    class: "pf-verified-badge",
+                                    title: "Email Verified",
+                                    "✓"
+                                }
+                            }
+                            div { style: "text-align: center;",
+                                h2 { style: "font-weight: 700; font-size: 1.125rem; color: var(--text-primary); margin: 0 0 .25rem 0;", "{display_name}" }
+                                p { class: "muted", style: "font-size: .75rem; font-family: monospace; margin: 0;", "{user_email}" }
+                            }
+                            div { class: "pf-meta-list",
+                                div { class: "pf-meta-row",
+                                    span { class: "muted", style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em;", "Account Type:" }
+                                    span { style: "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-yellow);", "{user_role}" }
+                                }
+                                div { class: "pf-meta-row",
+                                    span { class: "muted", style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em;", "Status:" }
+                                    span { style: "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-green);", "Verified" }
+                                }
+                            }
+                        }
 
                         // Profile settings
                         div { class: "app-card", style: "padding: 1.5rem 2rem; display: flex; flex-direction: column; gap: 1.5rem;",
@@ -185,7 +205,7 @@ pub fn Profile() -> Element {
                             }
 
                             form {
-                                onsubmit: handle_update,
+                                onsubmit: handle_update.clone(),
                                 style: "display: flex; flex-direction: column; gap: 1rem;",
                                 div { style: "display: flex; flex-direction: column; gap: .375rem;",
                                     label {
@@ -213,9 +233,6 @@ pub fn Profile() -> Element {
                                 }
                             }
                         }
-
-                        // Pro upgrade card
-                        ProUpgrade {}
 
                         // Danger zone
                         div {
@@ -245,7 +262,7 @@ pub fn Profile() -> Element {
                                             class: "app-btn app-btn-active",
                                             style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; padding: .625rem 1rem; background: var(--pastel-red); border-color: var(--pastel-red); color: #0f172a;",
                                             disabled: *deleting.read(),
-                                            onclick: handle_delete,
+                                            onclick: handle_delete.clone(),
                                             if *deleting.read() { "Deleting..." } else { "Yes, Delete Account" }
                                         }
                                         button {
@@ -262,29 +279,26 @@ pub fn Profile() -> Element {
                     }
                 }
             }
+            Panel::Subscription => rsx! {
+                ProUpgrade {}
+            },
+        }
+    };
+
+    rsx! {
+        style { {PROFILE_CSS} }
+        div {
+            class: ws.root_class(),
+            tabindex: "0",
+            onmousemove: move |e| ws.handle_mouse_move(&e),
+            onmouseup: move |_| ws.handle_mouse_up(),
+            {ws.render(body)}
+            {ws.dock()}
         }
     }
 }
 
 const PROFILE_CSS: &str = r#"
-.pf-page {
-    min-height: 100vh;
-    padding: 2.5rem 1rem;
-    background: var(--bg-app);
-    position: relative;
-    overflow: hidden;
-    user-select: none;
-}
-.pf-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 2rem;
-}
-@media (min-width: 640px) {
-    .pf-grid {
-        grid-template-columns: 1fr 2fr;
-    }
-}
 .pf-avatar-card {
     padding: 1.5rem;
     display: flex;

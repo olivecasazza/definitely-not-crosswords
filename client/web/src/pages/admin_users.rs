@@ -1,6 +1,8 @@
 use crate::components::admin_nav::AdminNav;
 use crate::net::{mutation, query};
 use dioxus::prelude::*;
+use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
 
@@ -21,6 +23,29 @@ struct AdminUser {
 struct RoleOption {
     role: String,
     capabilities: Vec<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+enum Panel {
+    AddUser,
+    Users,
+}
+
+impl PanelKind for Panel {
+    fn title(self) -> &'static str {
+        match self {
+            Panel::AddUser => "Add User",
+            Panel::Users => "Users",
+        }
+    }
+}
+
+fn default_layout() -> Vec<PanelWin<Panel>> {
+    let mut b = LayoutBuilder::new();
+    vec![
+        b.at(Panel::AddUser, 16.0, 16.0, 560.0, 880.0),
+        b.at(Panel::Users, 592.0, 16.0, 1312.0, 880.0),
+    ]
 }
 
 #[component]
@@ -123,71 +148,74 @@ pub fn AdminUsers() -> Element {
             .unwrap_or_default()
     };
 
-    rsx! {
-        div { class: "container",
-            div { class: "app-card col", style: "padding:1.5rem;gap:1.5rem",
-                AdminNav {}
+    let ws = use_workspace("admin_users_layout", default_layout);
 
-                // ── add user form ─────────────────────────────────────────────
-                form {
-                    style: "display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));align-items:end",
-                    onsubmit: add_user,
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
-                        "Email"
-                        input {
-                            class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
-                            r#type: "email",
-                            required: true,
-                            value: "{new_email}",
-                            oninput: move |e| new_email.set(e.value()),
-                        }
-                    }
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
-                        "Name"
-                        input {
-                            class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
-                            r#type: "text",
-                            value: "{new_name}",
-                            oninput: move |e| new_name.set(e.value()),
-                        }
-                    }
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
-                        "Role"
-                        select {
-                            class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size:0.875rem",
-                            value: "{new_role}",
-                            oninput: move |e| new_role.set(e.value()),
-                            for opt in role_options.read().iter() {
-                                option { value: "{opt.role}", {opt.role.clone()} }
+    let body = move |kind: Panel, _max: bool| -> Element {
+        match kind {
+            Panel::AddUser => rsx! {
+                div { class: "col", style: "gap:1rem",
+                    // ── add user form ──────────────────────────────────────────
+                    form {
+                        style: "display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));align-items:end",
+                        onsubmit: add_user,
+                        label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                            "Email"
+                            input {
+                                class: "app-input",
+                                style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                                r#type: "email",
+                                required: true,
+                                value: "{new_email}",
+                                oninput: move |e| new_email.set(e.value()),
                             }
                         }
+                        label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                            "Name"
+                            input {
+                                class: "app-input",
+                                style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                                r#type: "text",
+                                value: "{new_name}",
+                                oninput: move |e| new_name.set(e.value()),
+                            }
+                        }
+                        label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                            "Role"
+                            select {
+                                class: "app-input",
+                                style: "padding:0.5rem 0.75rem;font-size:0.875rem",
+                                value: "{new_role}",
+                                oninput: move |e| new_role.set(e.value()),
+                                for opt in role_options.read().iter() {
+                                    option { value: "{opt.role}", {opt.role.clone()} }
+                                }
+                            }
+                        }
+                        button {
+                            class: "app-btn app-btn-active",
+                            style: "height:38px;font-weight:bold",
+                            r#type: "submit",
+                            disabled: *saving.read(),
+                            if *saving.read() { "Saving…" } else { "Add User" }
+                        }
                     }
-                    button {
-                        class: "app-btn app-btn-active",
-                        style: "height:38px;font-weight:bold",
-                        r#type: "submit",
-                        disabled: *saving.read(),
-                        if *saving.read() { "Saving…" } else { "Add User" }
-                    }
-                }
 
-                // ── feedback ──────────────────────────────────────────────────
-                if !message.read().is_empty() {
-                    div { class: "app-card success", style: "padding:0.75rem;font-size:0.875rem",
-                        {message.read().clone()}
+                    // ── feedback ───────────────────────────────────────────────
+                    if !message.read().is_empty() {
+                        div { class: "app-card success", style: "padding:0.75rem;font-size:0.875rem",
+                            {message.read().clone()}
+                        }
+                    }
+                    if !error_msg.read().is_empty() {
+                        div { class: "app-card error", style: "padding:0.75rem;font-size:0.875rem",
+                            {error_msg.read().clone()}
+                        }
                     }
                 }
-                if !error_msg.read().is_empty() {
-                    div { class: "app-card error", style: "padding:0.75rem;font-size:0.875rem",
-                        {error_msg.read().clone()}
-                    }
-                }
-
-                // ── users table ───────────────────────────────────────────────
-                div { style: "overflow-x:auto",
+            },
+            Panel::Users => rsx! {
+                // ── users table ────────────────────────────────────────────────
+                div { style: "overflow-x:auto;height:100%",
                     table { style: "width:100%;text-align:left;font-size:0.875rem;border-collapse:collapse",
                         thead {
                             tr { style: "font-size:0.75rem;text-transform:uppercase;font-family:monospace",
@@ -332,7 +360,19 @@ pub fn AdminUsers() -> Element {
                         }
                     }
                 }
-            }
+            },
+        }
+    };
+
+    rsx! {
+        div {
+            class: ws.root_class(),
+            tabindex: "0",
+            onmousemove: move |e| ws.handle_mouse_move(&e),
+            onmouseup: move |_| ws.handle_mouse_up(),
+            AdminNav {}
+            {ws.render(body)}
+            {ws.dock()}
         }
     }
 }

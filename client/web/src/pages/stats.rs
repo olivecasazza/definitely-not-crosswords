@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
-use serde::Deserialize;
+use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::net;
@@ -128,11 +129,34 @@ fn bar_pct(a: i64, b: i64) -> f64 {
     }
 }
 
-#[derive(Clone, PartialEq)]
-enum Tab {
+// ---------------------------------------------------------------------------
+// Panel kind
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+enum Panel {
     Leaderboard,
     Career,
-    H2H,
+    Compare,
+}
+
+impl PanelKind for Panel {
+    fn title(self) -> &'static str {
+        match self {
+            Panel::Leaderboard => "Leaderboard",
+            Panel::Career => "Career",
+            Panel::Compare => "Compare",
+        }
+    }
+}
+
+fn default_layout() -> Vec<PanelWin<Panel>> {
+    let mut b = LayoutBuilder::new();
+    vec![
+        b.at(Panel::Leaderboard, 16.0, 16.0, 936.0, 948.0),
+        b.at(Panel::Career, 968.0, 16.0, 936.0, 466.0),
+        b.at(Panel::Compare, 968.0, 498.0, 936.0, 466.0),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +166,6 @@ enum Tab {
 #[component]
 pub fn Stats() -> Element {
     let state = use_app_state();
-    let active_tab = use_signal(|| Tab::Leaderboard);
     let selected_opponent_id = use_signal(|| String::new());
 
     // Global leaderboard — no session dependency
@@ -182,43 +205,14 @@ pub fn Stats() -> Element {
         )
     });
 
-    let current_email = state.user().and_then(|u| u.email);
+    let ws = use_workspace("stats_layout", default_layout);
 
-    rsx! {
-        style { {STATS_CSS} }
-        div { class: "st-page",
-
-            // Header + tabs
-            div { class: "st-header",
-                div { class: "st-title-block",
-                    h1 { class: "st-title", "Stats" }
-                    p { class: "muted", style: "font-size: .75rem; margin: .25rem 0 0 0; text-transform: uppercase; letter-spacing: .05em;",
-                        "Multiplayer Performance Metrics and Global Leaderboard"
-                    }
-                }
-                div { class: "st-tabs",
-                    button {
-                        class: if *active_tab.read() == Tab::Leaderboard { "st-tab st-tab-active" } else { "st-tab" },
-                        onclick: move |_| active_tab.clone().set(Tab::Leaderboard),
-                        "Global"
-                    }
-                    button {
-                        class: if *active_tab.read() == Tab::Career { "st-tab st-tab-active" } else { "st-tab" },
-                        onclick: move |_| active_tab.clone().set(Tab::Career),
-                        "Career"
-                    }
-                    button {
-                        class: if *active_tab.read() == Tab::H2H { "st-tab st-tab-active" } else { "st-tab" },
-                        onclick: move |_| active_tab.clone().set(Tab::H2H),
-                        "Compare"
-                    }
-                }
-            }
-
-            // Tab bodies
-            match *active_tab.read() {
-                Tab::Leaderboard => rsx! {
-                    div { style: "display: flex; flex-direction: column; gap: 1.5rem;",
+    let body = move |kind: Panel, _max: bool| -> Element {
+        match kind {
+            Panel::Leaderboard => {
+                let current_email = state.user().and_then(|u| u.email);
+                rsx! {
+                    div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
                         match &*leaderboard_res.read_unchecked() {
                             None => rsx! { div { class: "muted st-loading", "Fetching rankings..." } },
                             Some(Err(e)) => rsx! { div { class: "error", style: "padding: 1rem; font-size: .75rem; font-family: monospace;", "{e}" } },
@@ -317,105 +311,105 @@ pub fn Stats() -> Element {
                             }
                         }
                     }
-                },
-                Tab::Career => rsx! {
-                    div { style: "display: flex; flex-direction: column; gap: 1.5rem;",
-                        match &*career_res.read_unchecked() {
-                            None => rsx! { div { class: "muted st-loading", "Compiling career file..." } },
-                            Some(None) => rsx! { div { class: "muted st-loading", "Sign in to view career stats." } },
-                            Some(Some(Err(e))) => rsx! { div { class: "error", style: "padding: 1rem; font-size: .75rem; font-family: monospace;", "{e}" } },
-                            Some(Some(Ok(stats))) if stats.games_played == 0 => rsx! {
-                                div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: .75rem; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 1rem;",
-                                    span { "No games played yet on this profile." }
-                                    Link { to: Route::Games {}, class: "app-btn", style: "font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-yellow);", "Launch a Game" }
+                }
+            }
+            Panel::Career => rsx! {
+                div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
+                    match &*career_res.read_unchecked() {
+                        None => rsx! { div { class: "muted st-loading", "Compiling career file..." } },
+                        Some(None) => rsx! { div { class: "muted st-loading", "Sign in to view career stats." } },
+                        Some(Some(Err(e))) => rsx! { div { class: "error", style: "padding: 1rem; font-size: .75rem; font-family: monospace;", "{e}" } },
+                        Some(Some(Ok(stats))) if stats.games_played == 0 => rsx! {
+                            div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: .75rem; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 1rem;",
+                                span { "No games played yet on this profile." }
+                                Link { to: Route::Games {}, class: "app-btn", style: "font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-yellow);", "Launch a Game" }
+                            }
+                        },
+                        Some(Some(Ok(stats))) => rsx! {
+                            div { style: "display: flex; flex-direction: column; gap: 2rem;",
+
+                                // Stat cards row
+                                div { style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;",
+                                    div { class: "app-card st-stat-card",
+                                        span { class: "muted st-stat-label", "Global Rank" }
+                                        div { style: "display: flex; align-items: baseline; gap: .25rem;",
+                                            span { style: "font-size: 1.5rem; font-weight: 900; color: var(--pastel-yellow);", "#{stats.global_rank}" }
+                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "of {stats.total_players}" }
+                                        }
+                                    }
+                                    div { class: "app-card st-stat-card",
+                                        span { class: "muted st-stat-label", "Career Score" }
+                                        span { style: "font-size: 1.5rem; font-weight: 900; color: var(--pastel-yellow);", "{stats.total_score}" }
+                                    }
+                                    div { class: "app-card st-stat-card",
+                                        span { class: "muted st-stat-label", "Games Played" }
+                                        span { style: "font-size: 1.5rem; font-weight: 900; color: var(--text-primary);", "{stats.games_played}" }
+                                    }
+                                    div { class: "app-card st-stat-card",
+                                        span { class: "muted st-stat-label", "Solve Accuracy" }
+                                        span { style: "font-size: 1.5rem; font-weight: 900; color: var(--pastel-green);", "{stats.accuracy}%" }
+                                    }
                                 }
-                            },
-                            Some(Some(Ok(stats))) => rsx! {
-                                div { style: "display: flex; flex-direction: column; gap: 2rem;",
 
-                                    // Stat cards row
-                                    div { style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;",
-                                        div { class: "app-card st-stat-card",
-                                            span { class: "muted st-stat-label", "Global Rank" }
-                                            div { style: "display: flex; align-items: baseline; gap: .25rem;",
-                                                span { style: "font-size: 1.5rem; font-weight: 900; color: var(--pastel-yellow);", "#{stats.global_rank}" }
-                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "of {stats.total_players}" }
-                                            }
+                                // Accuracy breakdown bar
+                                div { class: "app-card", style: "padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;",
+                                    span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase;", "Accuracy Breakdown" }
+                                    div { style: "display: flex; flex-direction: column; gap: .5rem;",
+                                        div { style: "display: flex; justify-content: space-between; font-size: .625rem; color: var(--text-secondary); text-transform: uppercase;",
+                                            span { "Correct: {stats.total_correct}" }
+                                            span { "Incorrect: {stats.total_incorrect}" }
                                         }
-                                        div { class: "app-card st-stat-card",
-                                            span { class: "muted st-stat-label", "Career Score" }
-                                            span { style: "font-size: 1.5rem; font-weight: 900; color: var(--pastel-yellow);", "{stats.total_score}" }
+                                        div { class: "st-bar-track",
+                                            div { class: "st-bar-segment", style: "width: {stats.accuracy}%; background: var(--pastel-green);" }
+                                            div { class: "st-bar-segment", style: "width: {100 - stats.accuracy}%; background: var(--pastel-red);" }
                                         }
-                                        div { class: "app-card st-stat-card",
-                                            span { class: "muted st-stat-label", "Games Played" }
-                                            span { style: "font-size: 1.5rem; font-weight: 900; color: var(--text-primary);", "{stats.games_played}" }
-                                        }
-                                        div { class: "app-card st-stat-card",
-                                            span { class: "muted st-stat-label", "Solve Accuracy" }
-                                            span { style: "font-size: 1.5rem; font-weight: 900; color: var(--pastel-green);", "{stats.accuracy}%" }
+                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; line-height: 1.6;",
+                                            "Your overall ratio is "
+                                            span { style: "color: var(--pastel-green); font-weight: 700;", "{stats.total_correct} correct guesses" }
+                                            " out of "
+                                            span { style: "color: var(--text-primary); font-weight: 700;", "{stats.total_correct + stats.total_incorrect} total guesses" }
+                                            "."
                                         }
                                     }
+                                }
 
-                                    // Accuracy breakdown bar
-                                    div { class: "app-card", style: "padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;",
-                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase;", "Accuracy Breakdown" }
-                                        div { style: "display: flex; flex-direction: column; gap: .5rem;",
-                                            div { style: "display: flex; justify-content: space-between; font-size: .625rem; color: var(--text-secondary); text-transform: uppercase;",
-                                                span { "Correct: {stats.total_correct}" }
-                                                span { "Incorrect: {stats.total_incorrect}" }
-                                            }
-                                            div { class: "st-bar-track",
-                                                div { class: "st-bar-segment", style: "width: {stats.accuracy}%; background: var(--pastel-green);" }
-                                                div { class: "st-bar-segment", style: "width: {100 - stats.accuracy}%; background: var(--pastel-red);" }
-                                            }
-                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; line-height: 1.6;",
-                                                "Your overall ratio is "
-                                                span { style: "color: var(--pastel-green); font-weight: 700;", "{stats.total_correct} correct guesses" }
-                                                " out of "
-                                                span { style: "color: var(--text-primary); font-weight: 700;", "{stats.total_correct + stats.total_incorrect} total guesses" }
-                                                "."
-                                            }
-                                        }
-                                    }
-
-                                    // Recent games
+                                // Recent games
+                                div { style: "display: flex; flex-direction: column; gap: .75rem;",
+                                    span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Match Log History" }
                                     div { style: "display: flex; flex-direction: column; gap: .75rem;",
-                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Match Log History" }
-                                        div { style: "display: flex; flex-direction: column; gap: .75rem;",
-                                            for game_opt in stats.recent_games.iter() {
-                                                if let Some(game) = game_opt {
-                                                    div { class: "app-card", style: "padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: .75rem;",
-                                                        div { style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem;",
-                                                            div { style: "display: flex; flex-direction: column; min-width: 0;",
-                                                                span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{game.title}" }
-                                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {date_short(&game.created_at)}" }
+                                        for game_opt in stats.recent_games.iter() {
+                                            if let Some(game) = game_opt {
+                                                div { class: "app-card", style: "padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: .75rem;",
+                                                    div { style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem;",
+                                                        div { style: "display: flex; flex-direction: column; min-width: 0;",
+                                                            span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{game.title}" }
+                                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {date_short(&game.created_at)}" }
+                                                        }
+                                                        div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0; font-family: monospace;",
+                                                            div { style: "display: flex; flex-direction: column;",
+                                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Guesses" }
+                                                                span { style: "font-size: .75rem; font-weight: 600; color: var(--text-primary);",
+                                                                    span { style: "color: var(--pastel-green);", "{game.correct_guesses}" }
+                                                                    " / "
+                                                                    span { style: "color: var(--pastel-red);", "{game.incorrect_guesses}" }
+                                                                }
                                                             }
-                                                            div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0; font-family: monospace;",
-                                                                div { style: "display: flex; flex-direction: column;",
-                                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Guesses" }
-                                                                    span { style: "font-size: .75rem; font-weight: 600; color: var(--text-primary);",
-                                                                        span { style: "color: var(--pastel-green);", "{game.correct_guesses}" }
-                                                                        " / "
-                                                                        span { style: "color: var(--pastel-red);", "{game.incorrect_guesses}" }
-                                                                    }
+                                                            div { style: "display: flex; flex-direction: column;",
+                                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Place" }
+                                                                span { style: "font-size: .75rem; font-weight: 700; color: var(--text-primary);",
+                                                                    "#{game.rank} "
+                                                                    span { class: "muted", style: "font-size: .5625rem; font-weight: 400; text-transform: uppercase;", "of {game.total_participants}" }
                                                                 }
-                                                                div { style: "display: flex; flex-direction: column;",
-                                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Place" }
-                                                                    span { style: "font-size: .75rem; font-weight: 700; color: var(--text-primary);",
-                                                                        "#{game.rank} "
-                                                                        span { class: "muted", style: "font-size: .5625rem; font-weight: 400; text-transform: uppercase;", "of {game.total_participants}" }
-                                                                    }
-                                                                }
-                                                                div { style: "display: flex; flex-direction: column; border-left: 1px solid var(--border-app); padding-left: 1rem; min-width: 3.125rem;",
-                                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Score" }
-                                                                    span { style: "font-size: .875rem; font-weight: 900; color: var(--pastel-yellow);", "{game.score}" }
-                                                                }
-                                                                Link {
-                                                                    to: Route::GameCompleted { id: game.id.clone() },
-                                                                    class: "app-btn",
-                                                                    style: "font-size: .625rem; padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
-                                                                    "Review"
-                                                                }
+                                                            }
+                                                            div { style: "display: flex; flex-direction: column; border-left: 1px solid var(--border-app); padding-left: 1rem; min-width: 3.125rem;",
+                                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Score" }
+                                                                span { style: "font-size: .875rem; font-weight: 900; color: var(--pastel-yellow);", "{game.score}" }
+                                                            }
+                                                            Link {
+                                                                to: Route::GameCompleted { id: game.id.clone() },
+                                                                class: "app-btn",
+                                                                style: "font-size: .625rem; padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
+                                                                "Review"
                                                             }
                                                         }
                                                     }
@@ -427,183 +421,183 @@ pub fn Stats() -> Element {
                             }
                         }
                     }
-                },
-                Tab::H2H => rsx! {
-                    div { style: "display: flex; flex-direction: column; gap: 1.5rem;",
+                }
+            },
+            Panel::Compare => rsx! {
+                div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
 
-                        // Selector
-                        div { class: "app-card", style: "padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;",
-                            div { style: "display: flex; flex-direction: column;",
-                                span { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-family: monospace;", "Select Opponent" }
-                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; margin-top: .125rem;", "Compare your career performance side-by-side" }
-                            }
-                            select {
-                                class: "app-input",
-                                style: "padding: .5rem .75rem; font-size: .75rem; font-family: monospace; text-transform: uppercase; font-weight: 700; max-width: 20rem;",
-                                value: "{selected_opponent_id}",
-                                onchange: move |e| selected_opponent_id.clone().set(e.value()),
-                                option { value: "", disabled: true, "-- CHOOSE PLAYER --" }
-                                match &*players_res.read_unchecked() {
-                                    Some(Ok(players)) => rsx! {
-                                        for p in players {
-                                            {
-                                                let label = p.name.as_deref().or(p.email.as_deref()).unwrap_or("?");
-                                                let pid = p.id.clone();
-                                                rsx! {
-                                                    option { value: "{pid}", "{label}" }
-                                                }
+                    // Selector
+                    div { class: "app-card", style: "padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;",
+                        div { style: "display: flex; flex-direction: column;",
+                            span { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-family: monospace;", "Select Opponent" }
+                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; margin-top: .125rem;", "Compare your career performance side-by-side" }
+                        }
+                        select {
+                            class: "app-input",
+                            style: "padding: .5rem .75rem; font-size: .75rem; font-family: monospace; text-transform: uppercase; font-weight: 700; max-width: 20rem;",
+                            value: "{selected_opponent_id}",
+                            onchange: move |e| selected_opponent_id.clone().set(e.value()),
+                            option { value: "", disabled: true, "-- CHOOSE PLAYER --" }
+                            match &*players_res.read_unchecked() {
+                                Some(Ok(players)) => rsx! {
+                                    for p in players {
+                                        {
+                                            let label = p.name.as_deref().or(p.email.as_deref()).unwrap_or("?");
+                                            let pid = p.id.clone();
+                                            rsx! {
+                                                option { value: "{pid}", "{label}" }
                                             }
                                         }
-                                    },
-                                    _ => rsx! {}
-                                }
+                                    }
+                                },
+                                _ => rsx! {}
                             }
                         }
+                    }
 
-                        if selected_opponent_id.read().is_empty() {
-                            div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: .75rem; color: var(--text-secondary);",
-                                "Select another player from the dropdown to unlock head-to-head comparison records."
-                            }
-                        } else {
-                            match &*h2h_res.read_unchecked() {
-                                None => rsx! { div { class: "muted st-loading", "Computing combat records..." } },
-                                Some(None) => rsx! {},
-                                Some(Some(Err(e))) => rsx! {
-                                    div { class: "error", style: "padding: 1rem; font-size: .75rem; font-family: monospace;", "{e}" }
-                                },
-                                Some(Some(Ok(h2h))) => rsx! {
-                                    div { style: "display: flex; flex-direction: column; gap: 2rem;",
+                    if selected_opponent_id.read().is_empty() {
+                        div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: .75rem; color: var(--text-secondary);",
+                            "Select another player from the dropdown to unlock head-to-head comparison records."
+                        }
+                    } else {
+                        match &*h2h_res.read_unchecked() {
+                            None => rsx! { div { class: "muted st-loading", "Computing combat records..." } },
+                            Some(None) => rsx! {},
+                            Some(Some(Err(e))) => rsx! {
+                                div { class: "error", style: "padding: 1rem; font-size: .75rem; font-family: monospace;", "{e}" }
+                            },
+                            Some(Some(Ok(h2h))) => rsx! {
+                                div { style: "display: flex; flex-direction: column; gap: 2rem;",
 
-                                        // Record banner
-                                        div { class: "app-card", style: "padding: 1.5rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: .75rem; border-color: rgba(254,234,153,0.2);",
-                                            h3 { class: "muted", style: "font-size: .625rem; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; margin: 0;", "CO-OP MATCH RECORD" }
-                                            div { style: "display: flex; align-items: center; gap: 1rem; font-size: 1.5rem; font-weight: 900;",
-                                                span { style: "color: var(--pastel-green);", "{h2h.record.wins} W" }
-                                                span { class: "muted", style: "font-size: 1rem; font-weight: 400; opacity: .3;", "—" }
-                                                span { style: "color: var(--pastel-red);", "{h2h.record.losses} L" }
-                                                span { class: "muted", style: "font-size: 1rem; font-weight: 400; opacity: .3;", "—" }
-                                                span { class: "muted", "{h2h.record.ties} T" }
+                                    // Record banner
+                                    div { class: "app-card", style: "padding: 1.5rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: .75rem; border-color: rgba(254,234,153,0.2);",
+                                        h3 { class: "muted", style: "font-size: .625rem; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; margin: 0;", "CO-OP MATCH RECORD" }
+                                        div { style: "display: flex; align-items: center; gap: 1rem; font-size: 1.5rem; font-weight: 900;",
+                                            span { style: "color: var(--pastel-green);", "{h2h.record.wins} W" }
+                                            span { class: "muted", style: "font-size: 1rem; font-weight: 400; opacity: .3;", "—" }
+                                            span { style: "color: var(--pastel-red);", "{h2h.record.losses} L" }
+                                            span { class: "muted", style: "font-size: 1rem; font-weight: 400; opacity: .3;", "—" }
+                                            span { class: "muted", "{h2h.record.ties} T" }
+                                        }
+                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; border-top: 1px solid var(--border-app); padding-top: .625rem; width: 100%; max-width: 20rem;",
+                                            "Total Shared Matches: "
+                                            span { style: "color: var(--text-primary); font-weight: 700;", "{h2h.games_played}" }
+                                        }
+                                    }
+
+                                    // Stat comparison
+                                    div { style: "display: flex; flex-direction: column; gap: 1rem;",
+                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Stat Comparison" }
+                                        div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; font-family: monospace; font-size: .75rem;",
+
+                                            // Total score
+                                            div { class: "st-stat-row",
+                                                div { style: "display: flex; justify-content: space-between; font-weight: 700;",
+                                                    span { style: "text-transform: uppercase;", "Total Shared Score" }
+                                                    span { style: "display: flex; gap: 1rem;",
+                                                        span { style: "color: var(--text-primary);", "You: {h2h.scores.user_total}" }
+                                                        span { class: "muted", "Them: {h2h.scores.opponent_total}" }
+                                                    }
+                                                }
+                                                div { class: "st-bar-track",
+                                                    {
+                                                        let pct = bar_pct(h2h.scores.user_total, h2h.scores.opponent_total);
+                                                        rsx! {
+                                                            div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-yellow);" }
+                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: #64748b;" }
+                                                        }
+                                                    }
+                                                }
+                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;",
+                                                    "Yellow: You ({h2h.scores.user_total}) · Grey: Opponent ({h2h.scores.opponent_total})"
+                                                }
                                             }
-                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; border-top: 1px solid var(--border-app); padding-top: .625rem; width: 100%; max-width: 20rem;",
-                                                "Total Shared Matches: "
-                                                span { style: "color: var(--text-primary); font-weight: 700;", "{h2h.games_played}" }
+
+                                            // Avg score
+                                            div { class: "st-stat-row",
+                                                div { style: "display: flex; justify-content: space-between; font-weight: 700;",
+                                                    span { style: "text-transform: uppercase;", "Average Match Score" }
+                                                    span { style: "display: flex; gap: 1rem;",
+                                                        span { style: "color: var(--text-primary);", "You: {h2h.scores.user_avg}" }
+                                                        span { class: "muted", "Them: {h2h.scores.opponent_avg}" }
+                                                    }
+                                                }
+                                                div { class: "st-bar-track",
+                                                    {
+                                                        let pct = bar_pct(h2h.scores.user_avg, h2h.scores.opponent_avg);
+                                                        rsx! {
+                                                            div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-yellow);" }
+                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: #64748b;" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Accuracy
+                                            div { class: "st-stat-row",
+                                                div { style: "display: flex; justify-content: space-between; font-weight: 700;",
+                                                    span { style: "text-transform: uppercase;", "Shared Guess Accuracy" }
+                                                    span { style: "display: flex; gap: 1rem;",
+                                                        span { style: "color: var(--pastel-green);", "You: {h2h.accuracy.user}%" }
+                                                        span { class: "muted", "Them: {h2h.accuracy.opponent}%" }
+                                                    }
+                                                }
+                                                div { class: "st-bar-track",
+                                                    {
+                                                        let pct = bar_pct(h2h.accuracy.user, h2h.accuracy.opponent);
+                                                        rsx! {
+                                                            div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-green);" }
+                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: #64748b;" }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
+                                    }
 
-                                        // Stat comparison
-                                        div { style: "display: flex; flex-direction: column; gap: 1rem;",
-                                            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Stat Comparison" }
-                                            div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; font-family: monospace; font-size: .75rem;",
+                                    // Match log
+                                    div { style: "display: flex; flex-direction: column; gap: 1rem;",
+                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Combat Match Log" }
 
-                                                // Total score
-                                                div { class: "st-stat-row",
-                                                    div { style: "display: flex; justify-content: space-between; font-weight: 700;",
-                                                        span { style: "text-transform: uppercase;", "Total Shared Score" }
-                                                        span { style: "display: flex; gap: 1rem;",
-                                                            span { style: "color: var(--text-primary);", "You: {h2h.scores.user_total}" }
-                                                            span { class: "muted", "Them: {h2h.scores.opponent_total}" }
-                                                        }
-                                                    }
-                                                    div { class: "st-bar-track",
-                                                        {
-                                                            let pct = bar_pct(h2h.scores.user_total, h2h.scores.opponent_total);
-                                                            rsx! {
-                                                                div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-yellow);" }
-                                                                div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: #64748b;" }
-                                                            }
-                                                        }
-                                                    }
-                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;",
-                                                        "Yellow: You ({h2h.scores.user_total}) · Grey: Opponent ({h2h.scores.opponent_total})"
-                                                    }
-                                                }
-
-                                                // Avg score
-                                                div { class: "st-stat-row",
-                                                    div { style: "display: flex; justify-content: space-between; font-weight: 700;",
-                                                        span { style: "text-transform: uppercase;", "Average Match Score" }
-                                                        span { style: "display: flex; gap: 1rem;",
-                                                            span { style: "color: var(--text-primary);", "You: {h2h.scores.user_avg}" }
-                                                            span { class: "muted", "Them: {h2h.scores.opponent_avg}" }
-                                                        }
-                                                    }
-                                                    div { class: "st-bar-track",
-                                                        {
-                                                            let pct = bar_pct(h2h.scores.user_avg, h2h.scores.opponent_avg);
-                                                            rsx! {
-                                                                div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-yellow);" }
-                                                                div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: #64748b;" }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                // Accuracy
-                                                div { class: "st-stat-row",
-                                                    div { style: "display: flex; justify-content: space-between; font-weight: 700;",
-                                                        span { style: "text-transform: uppercase;", "Shared Guess Accuracy" }
-                                                        span { style: "display: flex; gap: 1rem;",
-                                                            span { style: "color: var(--pastel-green);", "You: {h2h.accuracy.user}%" }
-                                                            span { class: "muted", "Them: {h2h.accuracy.opponent}%" }
-                                                        }
-                                                    }
-                                                    div { class: "st-bar-track",
-                                                        {
-                                                            let pct = bar_pct(h2h.accuracy.user, h2h.accuracy.opponent);
-                                                            rsx! {
-                                                                div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-green);" }
-                                                                div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: #64748b;" }
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                                        if h2h.matches.is_empty() {
+                                            div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: .75rem; color: var(--text-secondary);",
+                                                "You haven't played any co-op crossword games with this player yet."
                                             }
-                                        }
-
-                                        // Match log
-                                        div { style: "display: flex; flex-direction: column; gap: 1rem;",
-                                            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Combat Match Log" }
-
-                                            if h2h.matches.is_empty() {
-                                                div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: .75rem; color: var(--text-secondary);",
-                                                    "You haven't played any co-op crossword games with this player yet."
-                                                }
-                                            } else {
-                                                div { style: "display: flex; flex-direction: column; gap: .75rem;",
-                                                    for m in h2h.matches.iter() {
-                                                        {
-                                                            let outcome_color = match m.result.as_str() {
-                                                                "WIN" => "color: var(--pastel-green);",
-                                                                "LOSS" => "color: var(--pastel-red);",
-                                                                _ => "color: var(--text-secondary);",
-                                                            };
-                                                            rsx! {
-                                                                div { class: "app-card", style: "padding: 1rem 1.25rem; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-family: monospace;",
-                                                                    div { style: "display: flex; flex-direction: column; min-width: 0;",
-                                                                        span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{m.title}" }
-                                                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {date_short(&m.created_at)}" }
+                                        } else {
+                                            div { style: "display: flex; flex-direction: column; gap: .75rem;",
+                                                for m in h2h.matches.iter() {
+                                                    {
+                                                        let outcome_color = match m.result.as_str() {
+                                                            "WIN" => "color: var(--pastel-green);",
+                                                            "LOSS" => "color: var(--pastel-red);",
+                                                            _ => "color: var(--text-secondary);",
+                                                        };
+                                                        rsx! {
+                                                            div { class: "app-card", style: "padding: 1rem 1.25rem; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-family: monospace;",
+                                                                div { style: "display: flex; flex-direction: column; min-width: 0;",
+                                                                    span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{m.title}" }
+                                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {date_short(&m.created_at)}" }
+                                                                }
+                                                                div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0;",
+                                                                    div { style: "display: flex; flex-direction: column;",
+                                                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Match Scores" }
+                                                                        span { style: "font-size: .75rem; font-weight: 700; color: var(--text-primary);",
+                                                                            "You "
+                                                                            span { style: "color: var(--pastel-yellow);", "{m.user_score}" }
+                                                                            " — "
+                                                                            span { class: "muted", "{m.opponent_score}" }
+                                                                            " Them"
+                                                                        }
                                                                     }
-                                                                    div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0;",
-                                                                        div { style: "display: flex; flex-direction: column;",
-                                                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Match Scores" }
-                                                                            span { style: "font-size: .75rem; font-weight: 700; color: var(--text-primary);",
-                                                                                "You "
-                                                                                span { style: "color: var(--pastel-yellow);", "{m.user_score}" }
-                                                                                " — "
-                                                                                span { class: "muted", "{m.opponent_score}" }
-                                                                                " Them"
-                                                                            }
-                                                                        }
-                                                                        div { style: "display: flex; flex-direction: column; min-width: 4.375rem;",
-                                                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Outcome" }
-                                                                            span { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; {outcome_color}", "{m.result}" }
-                                                                        }
-                                                                        Link {
-                                                                            to: Route::GameCompleted { id: m.game_id.clone() },
-                                                                            class: "app-btn",
-                                                                            style: "font-size: .625rem; padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
-                                                                            "Stats"
-                                                                        }
+                                                                    div { style: "display: flex; flex-direction: column; min-width: 4.375rem;",
+                                                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Outcome" }
+                                                                        span { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; {outcome_color}", "{m.result}" }
+                                                                    }
+                                                                    Link {
+                                                                        to: Route::GameCompleted { id: m.game_id.clone() },
+                                                                        class: "app-btn",
+                                                                        style: "font-size: .625rem; padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
+                                                                        "Stats"
                                                                     }
                                                                 }
                                                             }
@@ -618,7 +612,19 @@ pub fn Stats() -> Element {
                         }
                     }
                 }
-            }
+            },
+        }
+    };
+
+    rsx! {
+        style { {STATS_CSS} }
+        div {
+            class: ws.root_class(),
+            tabindex: "0",
+            onmousemove: move |e| ws.handle_mouse_move(&e),
+            onmouseup: move |_| ws.handle_mouse_up(),
+            {ws.render(body)}
+            {ws.dock()}
         }
     }
 }

@@ -74,9 +74,9 @@ impl panel_kit::PanelKind for PanelId {
 fn default_layout() -> Vec<panel_kit::PanelWin<PanelId>> {
     let mut b = panel_kit::LayoutBuilder::new();
     vec![
-        b.at(PanelId::Board, 16.0, 16.0, 520.0, 540.0),
-        b.at(PanelId::Clue, 552.0, 16.0, 420.0, 300.0),
-        b.at(PanelId::Clues, 552.0, 332.0, 420.0, 360.0),
+        b.at(PanelId::Board, 16.0, 16.0, 640.0, 640.0),
+        b.at(PanelId::Clue, 16.0, 672.0, 640.0, 292.0),
+        b.at(PanelId::Clues, 672.0, 16.0, 1232.0, 948.0),
     ]
 }
 

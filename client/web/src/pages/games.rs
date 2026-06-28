@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
-use serde::Deserialize;
+use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::net;
@@ -38,6 +39,32 @@ struct CompletedGameItem {
     game: NestedGame,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+enum Panel {
+    Available,
+    Active,
+    Completed,
+}
+
+impl PanelKind for Panel {
+    fn title(self) -> &'static str {
+        match self {
+            Panel::Available => "Available",
+            Panel::Active => "Active",
+            Panel::Completed => "Completed",
+        }
+    }
+}
+
+fn default_layout() -> Vec<PanelWin<Panel>> {
+    let mut b = LayoutBuilder::new();
+    vec![
+        b.at(Panel::Available, 16.0, 16.0, 620.0, 948.0),
+        b.at(Panel::Active, 652.0, 16.0, 620.0, 948.0),
+        b.at(Panel::Completed, 1288.0, 16.0, 616.0, 948.0),
+    ]
+}
+
 #[component]
 pub fn Games() -> Element {
     let state = use_app_state();
@@ -66,77 +93,84 @@ pub fn Games() -> Element {
         }
     };
 
-    rsx! {
-        div {
-            style: "flex: 1; padding: 1.5rem; display: flex; flex-direction: column; max-width: 36rem; margin: 0 auto; width: 100%;",
+    let ws = use_workspace("games_layout", default_layout);
 
-            div { class: "app-card", style: "overflow: hidden;",
-                div {
-                    style: "padding: 1rem; border-bottom: 1px solid var(--border-app);",
-                    h1 {
-                        style: "font-size: 1.125rem; font-weight: 700; font-family: monospace; letter-spacing: .1em; margin: 0;",
-                        "AVAILABLE GAMES"
-                    }
+    let body = move |kind: Panel, _max: bool| -> Element {
+        // Parse items once; early-return for loading / error / not-signed-in states
+        // so all three panels show a consistent status.
+        let all_items: Vec<GameListItem> = {
+            let res = games_res.read_unchecked();
+            match &*res {
+                None => {
+                    return rsx! {
+                        div {
+                            class: "muted",
+                            style: "padding: 2rem; text-align: center; font-size: .75rem; font-family: monospace;",
+                            "Loading..."
+                        }
+                    };
                 }
+                Some(None) => {
+                    return rsx! {
+                        div {
+                            class: "muted",
+                            style: "padding: 2rem; text-align: center; font-size: .75rem; font-family: monospace;",
+                            "Sign in to see your games."
+                        }
+                    };
+                }
+                Some(Some(Err(e))) => {
+                    return rsx! {
+                        div {
+                            class: "error",
+                            style: "padding: 1rem; font-size: .75rem; font-family: monospace;",
+                            "Error: {e}"
+                        }
+                    };
+                }
+                Some(Some(Ok(raw_items))) => raw_items
+                    .iter()
+                    .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                    .collect(),
+            }
+        };
 
-                match &*games_res.read_unchecked() {
-                    None => rsx! {
-                        div { class: "muted", style: "padding: 2rem; text-align: center; font-size: .75rem; font-family: monospace;", "Loading..." }
-                    },
-                    Some(None) => rsx! {
-                        div { class: "muted", style: "padding: 2rem; text-align: center; font-size: .75rem; font-family: monospace;", "Sign in to see your games." }
-                    },
-                    Some(Some(Err(e))) => rsx! {
-                        div { class: "error", style: "padding: 1rem; font-size: .75rem; font-family: monospace;", "Error: {e}" }
-                    },
-                    Some(Some(Ok(raw_items))) => {
-                        let items: Vec<GameListItem> = raw_items
-                            .iter()
-                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
-                            .collect();
-                        if items.is_empty() {
-                            rsx! {
-                                div {
-                                    class: "muted",
-                                    style: "padding: 3rem; text-align: center; font-size: .75rem; font-family: monospace;",
-                                    "No games available yet."
-                                }
-                            }
-                        } else {
-                            rsx! {
-                                div { style: "divide-y: 1px solid var(--border-app);",
-                                    for item in items {
-                                        {
-                                            let (title, badge_text, badge_style) = match &item {
-                                                GameListItem::Game(g) => (
-                                                    g.title.clone(),
-                                                    "UNSTARTED",
-                                                    "padding: .25rem .625rem; font-size: .75rem; font-family: monospace; font-weight: 700; border-radius: .25rem; text-transform: uppercase; border: 1px solid var(--border-app); color: var(--text-secondary);",
-                                                ),
-                                                GameListItem::ActiveGame(g) => (
-                                                    g.game.title.clone(),
-                                                    "ACTIVE",
-                                                    "padding: .25rem .625rem; font-size: .75rem; font-family: monospace; font-weight: 700; border-radius: .25rem; text-transform: uppercase; background: var(--pastel-yellow); color: #0f172a;",
-                                                ),
-                                                GameListItem::CompletedGame(g) => (
-                                                    g.game.title.clone(),
-                                                    "COMPLETED",
-                                                    "padding: .25rem .625rem; font-size: .75rem; font-family: monospace; font-weight: 700; border-radius: .25rem; text-transform: uppercase; background: var(--pastel-green); color: #0f172a;",
-                                                ),
-                                            };
-                                            let item_clone = item.clone();
-                                            let hc = handle_click.clone();
-                                            rsx! {
-                                                div {
-                                                    style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 1rem; border-bottom: 1px solid var(--border-app); cursor: pointer;",
-                                                    onclick: move |_| hc(item_clone.clone()),
-                                                    span {
-                                                        style: "font-weight: 700; font-size: .875rem; color: var(--text-primary);",
-                                                        "{title}"
-                                                    }
-                                                    span { style: "{badge_style}", "{badge_text}" }
-                                                }
-                                            }
+        match kind {
+            Panel::Available => {
+                let items: Vec<_> = all_items
+                    .into_iter()
+                    .filter(|i| matches!(i, GameListItem::Game(_)))
+                    .collect();
+                if items.is_empty() {
+                    return rsx! {
+                        div {
+                            class: "muted",
+                            style: "padding: 3rem; text-align: center; font-size: .75rem; font-family: monospace;",
+                            "No games available yet."
+                        }
+                    };
+                }
+                rsx! {
+                    div { style: "divide-y: 1px solid var(--border-app);",
+                        for item in items {
+                            {
+                                let title = match &item {
+                                    GameListItem::Game(g) => g.title.clone(),
+                                    _ => String::new(),
+                                };
+                                let item_clone = item.clone();
+                                let hc = handle_click.clone();
+                                rsx! {
+                                    div {
+                                        style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 1rem; border-bottom: 1px solid var(--border-app); cursor: pointer;",
+                                        onclick: move |_| hc(item_clone.clone()),
+                                        span {
+                                            style: "font-weight: 700; font-size: .875rem; color: var(--text-primary);",
+                                            "{title}"
+                                        }
+                                        span {
+                                            style: "padding: .25rem .625rem; font-size: .75rem; font-family: monospace; font-weight: 700; border-radius: .25rem; text-transform: uppercase; border: 1px solid var(--border-app); color: var(--text-secondary);",
+                                            "UNSTARTED"
                                         }
                                     }
                                 }
@@ -145,6 +179,103 @@ pub fn Games() -> Element {
                     }
                 }
             }
+            Panel::Active => {
+                let items: Vec<_> = all_items
+                    .into_iter()
+                    .filter(|i| matches!(i, GameListItem::ActiveGame(_)))
+                    .collect();
+                if items.is_empty() {
+                    return rsx! {
+                        div {
+                            class: "muted",
+                            style: "padding: 3rem; text-align: center; font-size: .75rem; font-family: monospace;",
+                            "No active games."
+                        }
+                    };
+                }
+                rsx! {
+                    div { style: "divide-y: 1px solid var(--border-app);",
+                        for item in items {
+                            {
+                                let title = match &item {
+                                    GameListItem::ActiveGame(g) => g.game.title.clone(),
+                                    _ => String::new(),
+                                };
+                                let item_clone = item.clone();
+                                let hc = handle_click.clone();
+                                rsx! {
+                                    div {
+                                        style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 1rem; border-bottom: 1px solid var(--border-app); cursor: pointer;",
+                                        onclick: move |_| hc(item_clone.clone()),
+                                        span {
+                                            style: "font-weight: 700; font-size: .875rem; color: var(--text-primary);",
+                                            "{title}"
+                                        }
+                                        span {
+                                            style: "padding: .25rem .625rem; font-size: .75rem; font-family: monospace; font-weight: 700; border-radius: .25rem; text-transform: uppercase; background: var(--pastel-yellow); color: #0f172a;",
+                                            "ACTIVE"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Panel::Completed => {
+                let items: Vec<_> = all_items
+                    .into_iter()
+                    .filter(|i| matches!(i, GameListItem::CompletedGame(_)))
+                    .collect();
+                if items.is_empty() {
+                    return rsx! {
+                        div {
+                            class: "muted",
+                            style: "padding: 3rem; text-align: center; font-size: .75rem; font-family: monospace;",
+                            "No completed games."
+                        }
+                    };
+                }
+                rsx! {
+                    div { style: "divide-y: 1px solid var(--border-app);",
+                        for item in items {
+                            {
+                                let title = match &item {
+                                    GameListItem::CompletedGame(g) => g.game.title.clone(),
+                                    _ => String::new(),
+                                };
+                                let item_clone = item.clone();
+                                let hc = handle_click.clone();
+                                rsx! {
+                                    div {
+                                        style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 1rem; border-bottom: 1px solid var(--border-app); cursor: pointer;",
+                                        onclick: move |_| hc(item_clone.clone()),
+                                        span {
+                                            style: "font-weight: 700; font-size: .875rem; color: var(--text-primary);",
+                                            "{title}"
+                                        }
+                                        span {
+                                            style: "padding: .25rem .625rem; font-size: .75rem; font-family: monospace; font-weight: 700; border-radius: .25rem; text-transform: uppercase; background: var(--pastel-green); color: #0f172a;",
+                                            "COMPLETED"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    rsx! {
+        div {
+            class: ws.root_class(),
+            tabindex: "0",
+            onmousemove: move |e| ws.handle_mouse_move(&e),
+            onmouseup: move |_| ws.handle_mouse_up(),
+            {ws.render(body)}
+            {ws.dock()}
         }
     }
 }

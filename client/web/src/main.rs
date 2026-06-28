@@ -97,9 +97,11 @@ fn App() -> Element {
 #[component]
 fn Shell() -> Element {
     rsx! {
-        AppHeader {}
-        main { Outlet::<Route> {} }
-        AppFooter {}
+        div { class: "app-shell",
+            AppHeader {}
+            main { class: "app-main", Outlet::<Route> {} }
+            AppFooter {}
+        }
     }
 }
 

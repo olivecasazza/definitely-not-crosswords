@@ -181,58 +181,52 @@ pub fn GenerationProgress(
     let progress_msg = progress.as_ref().and_then(|p| p.message.clone());
 
     rsx! {
-        div { class: "app-card col", style: "padding:1rem;gap:0.75rem",
-            // header row
-            div { class: "row", style: "justify-content:space-between;border-bottom:1px solid var(--border-app);padding-bottom:0.5rem",
-                h2 {
-                    style: "font-family:monospace;font-size:0.875rem;font-weight:bold;letter-spacing:0.05em",
-                    if status == "succeeded" {
-                        span { class: "success", {header_text} }
-                    } else if status == "failed" {
-                        span { class: "error", {header_text} }
-                    } else {
-                        span { {header_text} }
-                    }
+        style { {PROGRESS_CSS} }
+        div { class: "gp-root",
+            // status + elapsed row
+            div { class: "gp-header",
+                if status == "succeeded" {
+                    span { class: "gp-title success", {header_text} }
+                } else if status == "failed" {
+                    span { class: "gp-title error", {header_text} }
+                } else {
+                    span { class: "gp-title", {header_text} }
                 }
                 if (running || status == "succeeded" || status == "failed") && elapsed_secs > 0 {
-                    span { class: "muted", style: "font-family:monospace;font-size:0.75rem",
-                        {elapsed_label}
-                    }
+                    span { class: "gp-elapsed muted", {elapsed_label} }
                 }
             }
 
-            // progress bar
-            div { class: "col", style: "gap:0.375rem",
-                div { class: "row", style: "justify-content:space-between;font-family:monospace;font-size:0.75rem",
-                    span { class: "muted", style: "text-transform:uppercase;letter-spacing:0.05em",
-                        {stage_label_text}
-                    }
+            // progress bar + stage label
+            div { class: "gp-bar-section",
+                div { class: "gp-bar-meta",
+                    span { class: "gp-stage muted", {stage_label_text} }
                     if let Some(p) = &progress {
-                        span { class: "muted",
-                            {format!("{} / {} ({pct}%)", p.current, p.total)}
+                        span { class: "gp-counts muted",
+                            {format!("{}/{} ({pct}%)", p.current, p.total)}
                         }
                     }
                 }
-                div { style: "height:0.5rem;width:100%;overflow:hidden;border-radius:9999px;background:var(--bg-cell-empty)",
+                div { class: "gp-bar-track",
                     div {
-                        style: "height:100%;border-radius:9999px;transition:width 0.2s ease-out;{bar_color};{bar_anim};width:{bar_width}",
+                        class: "gp-bar-fill",
+                        style: "{bar_color};{bar_anim};width:{bar_width}",
                     }
                 }
                 if let Some(msg) = progress_msg {
-                    p { class: "muted", style: "font-size:0.75rem", {msg} }
+                    p { class: "gp-prog-msg muted", {msg} }
                 }
             }
 
-            // event feed
-            div {
-                style: "display:flex;flex-direction:column;gap:0.125rem;max-height:14rem;overflow-y:auto;border-radius:0.25rem;background:var(--bg-cell-empty);padding:0.5rem;font-family:monospace;font-size:0.6875rem;line-height:1.6",
+            // event feed — fills remaining panel height
+            div { class: "gp-feed",
                 if lines.is_empty() {
                     span { class: "muted", "Waiting for events…" }
                 } else {
                     for line in lines {
-                        div { class: "row", style: "gap:0.5rem",
-                            span { class: "muted", style: "flex-shrink:0", {line.time} }
-                            span { class: "{line.class}", style: "word-break:break-all", {line.text} }
+                        div { class: "gp-line",
+                            span { class: "gp-ts muted", {line.time} }
+                            span { class: "{line.class} gp-msg", {line.text} }
                         }
                     }
                 }
@@ -240,3 +234,85 @@ pub fn GenerationProgress(
         }
     }
 }
+
+const PROGRESS_CSS: &str = r#"
+.gp-root {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    height: 100%;
+    padding: 0.5rem 0.625rem;
+    box-sizing: border-box;
+    font-family: monospace;
+}
+.gp-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border-app);
+    padding-bottom: 0.375rem;
+    flex-shrink: 0;
+}
+.gp-title {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+.gp-elapsed {
+    font-size: 0.6875rem;
+}
+.gp-bar-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+.gp-bar-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.gp-stage {}
+.gp-counts {}
+.gp-bar-track {
+    height: 3px;
+    width: 100%;
+    overflow: hidden;
+    background: var(--bg-cell-empty);
+}
+.gp-bar-fill {
+    height: 100%;
+    transition: width 0.2s ease-out;
+}
+.gp-prog-msg {
+    font-size: 0.625rem;
+    margin: 0;
+}
+.gp-feed {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.0625rem;
+    background: var(--bg-cell-empty);
+    padding: 0.375rem 0.5rem;
+    font-size: 0.625rem;
+    line-height: 1.65;
+}
+.gp-line {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+}
+.gp-ts {
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+.gp-msg {
+    word-break: break-all;
+}
+"#;

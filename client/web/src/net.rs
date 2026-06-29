@@ -13,11 +13,21 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;
 
-const HTTP_BASE: &str = "/api/trpc";
+/// Absolute backend origin baked at build time for non-browser (Tauri) bundles,
+/// e.g. `CROSSWORD_API_BASE=https://crosswords.example.com`. When unset (the web
+/// build) we stay same-origin: a relative HTTP path + page-derived WS origin.
+const API_ORIGIN: Option<&str> = option_env!("CROSSWORD_API_BASE");
+
+fn http_base() -> String {
+    match API_ORIGIN {
+        Some(o) => format!("{}/api/trpc", o.trim_end_matches('/')),
+        None => "/api/trpc".to_string(),
+    }
+}
 
 /// A tRPC query. `input` is the raw procedure input (None for no-arg procs).
 pub async fn query(proc: &str, input: Option<Value>) -> Result<Value, String> {
-    let url = rpc::query_url(HTTP_BASE, proc, input.as_ref());
+    let url = rpc::query_url(&http_base(), proc, input.as_ref());
     let resp = Request::get(&url).send().await.map_err(|e| e.to_string())?;
     let text = resp.text().await.map_err(|e| e.to_string())?;
     rpc::parse_batch_single(&text)
@@ -25,7 +35,7 @@ pub async fn query(proc: &str, input: Option<Value>) -> Result<Value, String> {
 
 /// A tRPC mutation (POST).
 pub async fn mutation(proc: &str, input: Option<Value>) -> Result<Value, String> {
-    let (url, body) = rpc::mutation_request(HTTP_BASE, proc, input.as_ref());
+    let (url, body) = rpc::mutation_request(&http_base(), proc, input.as_ref());
     let resp = Request::post(&url)
         .header("content-type", "application/json")
         .body(body)
@@ -52,8 +62,16 @@ pub async fn mutation_as<T: DeserializeOwned>(
     serde_json::from_value(data).map_err(|e| e.to_string())
 }
 
-/// WebSocket origin for subscriptions, derived from the page origin.
+/// WebSocket URL for subscriptions. For a baked absolute origin (Tauri) derive
+/// ws(s) from it; otherwise use the page origin (web, same-origin).
 fn ws_url() -> String {
+    if let Some(o) = API_ORIGIN {
+        let o = o.trim_end_matches('/');
+        let ws = o
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
+        return format!("{ws}/api/trpc-ws");
+    }
     let loc = web_sys::window().unwrap().location();
     let proto = if loc.protocol().unwrap_or_default() == "https:" {
         "wss"

@@ -207,16 +207,18 @@ async fn handle_ws(socket: WebSocket, st: AppState, auth: AuthContext) {
                         Ok(user) => {
                             let input = v["params"]["input"].clone();
                             let txc = tx.clone();
-                            let emit_ws: Arc<dyn Fn(Value) + Send + Sync> =
-                                Arc::new(move |ev: Value| {
+                            let emit_ws: Arc<dyn Fn(Value) + Send + Sync> = Arc::new(
+                                move |ev: Value| {
                                     let _ = txc.send(
                                         json!({ "id": id, "result": { "type": "data", "data": ev } })
                                             .to_string(),
                                     );
-                                });
+                                },
+                            );
                             let pool = st.pool.clone();
                             let handle = tokio::spawn(async move {
-                                routers::generator::run_generation(pool, user, input, emit_ws).await;
+                                routers::generator::run_generation(pool, user, input, emit_ws)
+                                    .await;
                             });
                             subs.insert(id, handle);
                         }

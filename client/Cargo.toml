@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "web", "backend/db", "backend/auth", "backend/events", "backend/server"]
+members = ["core", "web", "desktop", "backend/db", "backend/auth", "backend/events", "backend/server"]
 
 [workspace.package]
 edition = "2021"

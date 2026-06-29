@@ -1,0 +1,15 @@
+[package]
+name = "crossword-desktop"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+description = "definitely-not-crosswords desktop client — Tauri shell around the Dioxus wasm frontend."
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Thin native shell: bundle the wasm frontend (frontendDist) and open a window.
+# The app talks to the remote backend over the network like the web build; the
+# absolute API origin is baked into the wasm via CROSSWORD_API_BASE (see net.rs).
+tauri = { version = "2", features = [] }

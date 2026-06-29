@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "web", "backend/db", "backend/auth", "backend/server"]
+members = ["core", "web", "backend/db", "backend/auth", "backend/events", "backend/server"]
 
 [workspace.package]
 edition = "2021"
@@ -11,6 +11,7 @@ version = "0.1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread"] }
 
 [profile]
 

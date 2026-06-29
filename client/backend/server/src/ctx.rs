@@ -2,11 +2,14 @@
 
 use crossword_auth::AuthContext;
 use crossword_db::AuthUser;
+use crossword_events::EventBus;
 use sqlx::PgPool;
 
 pub struct Ctx {
     pub pool: PgPool,
     pub auth: AuthContext,
+    /// Publish AppEvents for live subscriptions (onAddActions/onGameCompleted).
+    pub events: EventBus,
 }
 
 impl Ctx {

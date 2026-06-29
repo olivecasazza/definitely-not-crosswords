@@ -413,9 +413,16 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             "actionType":    action_type,
             "previousState": previous_state,
             "state":         state,
+            "submittedAt":   chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
         }));
     }
 
+    // Broadcast for activeGame.onAddActions (live multiplayer).
+    ctx.events
+        .publish(crossword_db::AppEvent::GameActionsAdded {
+            active_game_id: id.to_string(),
+            actions: created.clone(),
+        });
     Ok(json!(created))
 }
 
@@ -582,5 +589,10 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     tx.commit().await.map_err(|e| e.to_string())?;
 
+    // Broadcast for activeGame.onGameCompleted (navigate players to results).
+    ctx.events.publish(crossword_db::AppEvent::GameCompleted {
+        active_game_id: active_game_id.to_string(),
+        completed_game_id: completed_id.clone(),
+    });
     Ok(json!({ "id": completed_id }))
 }

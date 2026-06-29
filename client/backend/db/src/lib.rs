@@ -105,7 +105,9 @@ pub enum AppEvent {
     },
     GameActionsAdded {
         active_game_id: String,
-        actions: Vec<GameActionDto>,
+        // Raw camelCase action objects (as the client consumes them), so the WS
+        // forwards exactly what `activeGame.addActions` produced.
+        actions: Vec<serde_json::Value>,
     },
     GameCompleted {
         active_game_id: String,

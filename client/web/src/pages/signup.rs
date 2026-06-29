@@ -28,29 +28,7 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
     ]
 }
 
-fn dimmed(x: i32, y: i32) -> bool {
-    (x == 14 && (2..=18).contains(&y)) || (y == 10 && (6..=22).contains(&x))
-}
-
-fn brand_panel(subtitle: &str) -> Element {
-    rsx! {
-        div { style: "display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; gap:1rem; padding:1.5rem;",
-            svg {
-                width: "72", height: "72", view_box: "0 0 24 24", fill: "none",
-                xmlns: "http://www.w3.org/2000/svg", style: "color: var(--pastel-yellow);",
-                for y in [2, 6, 10, 14, 18, 22] {
-                    for x in [2, 6, 10, 14, 18, 22] {
-                        circle { cx: "{x}", cy: "{y}", r: "1.2", fill: "currentColor",
-                            opacity: if dimmed(x, y) { "0.3" } else { "1" } }
-                    }
-                }
-            }
-            h1 { style: "font-family: var(--mono, monospace); font-size: 1.3rem; font-weight: 800; margin: 0;",
-                "definitely-not-crosswords" }
-            p { class: "muted", style: "font-size: .8rem; line-height: 1.6; max-width: 16rem;", "{subtitle}" }
-        }
-    }
-}
+use crate::components::brand::brand_panel;
 
 #[component]
 pub fn Signup() -> Element {

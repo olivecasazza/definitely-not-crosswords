@@ -49,6 +49,7 @@ model User {
   password      String?
   emailVerified DateTime?
   role          UserRole     @default(USER)
+  vipPass       Boolean      @default(false)
   accounts      Account[]
   sessions      Session[]
   gameMember    GameMember[]
@@ -59,6 +60,31 @@ model User {
 
   subscription    Subscription?
   generationQuota GenerationQuota?
+
+  ownedTeams      Team[]       @relation("TeamOwner")
+  teamMemberships TeamMember[]
+}
+
+/// A persistent, named team. Creating a team is a Pro feature; joining is free.
+/// The team leaderboard aggregates members' completed-game scores.
+model Team {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  ownerId   String
+  owner     User         @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members   TeamMember[]
+  createdAt DateTime     @default(now())
+}
+
+model TeamMember {
+  id       String   @id @default(cuid())
+  teamId   String
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt DateTime @default(now())
+
+  @@unique([teamId, userId])
 }
 
 model UserSprite {
@@ -227,6 +253,42 @@ model GenerationQuota {
   updatedAt     DateTime @updatedAt
 }
 
+enum DiscountAmountType {
+  PERCENT
+  FIXED
+}
+
+enum DiscountDuration {
+  ONCE
+  FOREVER
+  REPEATING
+}
+
+// Mirror of a Lemon Squeezy discount. Lemon Squeezy is the source of truth for
+// redemption/validation at checkout; this row lets admins manage codes from our UI
+// and lets us validate codes before opening a checkout.
+model Discount {
+  id             String             @id @default(uuid())
+  code           String             @unique
+  name           String
+  // Lemon Squeezy discount id (null only briefly if remote creation failed).
+  lemonSqueezyId String?            @unique
+  amountType     DiscountAmountType @default(PERCENT)
+  // PERCENT: whole percent 1-100. FIXED: amount in cents (USD).
+  amount         Int
+  // ONCE = applies to the first subscription payment only.
+  duration       DiscountDuration   @default(ONCE)
+  maxRedemptions Int?
+  timesRedeemed  Int                @default(0)
+  expiresAt      DateTime?
+  isActive       Boolean            @default(true)
+  testMode       Boolean            @default(false)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([isActive])
+}
+
 model ActiveGame {
   id          String       @id @default(uuid())
   type        String       @default("ActiveGame")
@@ -308,4 +370,3 @@ model MemberScore {
   correctGuesses   Int        @default(0)
   incorrectGuesses Int        @default(0)
 }
-

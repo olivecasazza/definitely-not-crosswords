@@ -3,6 +3,8 @@ use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use wasm_bindgen_futures::spawn_local;
+
 use crate::net;
 use crate::store::use_app_state;
 use crate::Route;
@@ -133,11 +135,40 @@ fn bar_pct(a: i64, b: i64) -> f64 {
 // Panel kind
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TeamBoardEntry {
+    id: String,
+    name: String,
+    member_count: i64,
+    total_score: i64,
+    games_played: i64,
+    accuracy: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MyTeam {
+    id: String,
+    name: String,
+    member_count: i64,
+    is_owner: bool,
+}
+
+/// Pull a human-readable message out of a tRPC error string (JSON), else raw.
+fn trpc_err(e: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(e)
+        .ok()
+        .and_then(|v| v["message"].as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| e.to_string())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum Panel {
     Leaderboard,
     Career,
     Compare,
+    Teams,
 }
 
 impl PanelKind for Panel {
@@ -146,6 +177,7 @@ impl PanelKind for Panel {
             Panel::Leaderboard => "Leaderboard",
             Panel::Career => "Career",
             Panel::Compare => "Compare",
+            Panel::Teams => "Teams",
         }
     }
 }
@@ -153,9 +185,10 @@ impl PanelKind for Panel {
 fn default_layout() -> Vec<PanelWin<Panel>> {
     let mut b = LayoutBuilder::new();
     vec![
-        b.at(Panel::Leaderboard, 16.0, 16.0, 936.0, 948.0),
-        b.at(Panel::Career, 968.0, 16.0, 936.0, 466.0),
-        b.at(Panel::Compare, 968.0, 498.0, 936.0, 466.0),
+        b.at(Panel::Leaderboard, 16.0, 16.0, 620.0, 948.0),
+        b.at(Panel::Career, 652.0, 16.0, 620.0, 466.0),
+        b.at(Panel::Compare, 652.0, 498.0, 620.0, 466.0),
+        b.at(Panel::Teams, 1288.0, 16.0, 616.0, 948.0),
     ]
 }
 
@@ -203,6 +236,22 @@ pub fn Stats() -> Element {
             net::query_as::<H2HData>("stats.getHeadToHead", Some(json!({ "opponentId": opp })))
                 .await,
         )
+    });
+
+    // Teams (creating a team is a Pro feature; joining is free)
+    let team_name = use_signal(String::new);
+    let team_msg = use_signal(String::new);
+    let team_refresh = use_signal(|| 0u32);
+    let teams_board_res = use_resource(move || async move {
+        let _ = team_refresh.read();
+        net::query_as::<Vec<TeamBoardEntry>>("team.getTeamLeaderboard", None).await
+    });
+    let my_teams_res = use_resource(move || async move {
+        let _ = team_refresh.read();
+        if state.user().is_none() {
+            return None;
+        }
+        Some(net::query_as::<Vec<MyTeam>>("team.myTeams", None).await)
     });
 
     let ws = use_workspace("stats_layout", default_layout);
@@ -614,6 +663,145 @@ pub fn Stats() -> Element {
                     }
                 }
             },
+            Panel::Teams => {
+                let is_pro = state.sub.read().as_ref().map(|s| s.is_pro).unwrap_or(false);
+                let signed_in = state.user().is_some();
+                let mut team_name = team_name;
+                let mut team_msg = team_msg;
+                let mut team_refresh = team_refresh;
+                rsx! {
+                    div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
+
+                        // Create a team (Pro-gated)
+                        div { style: "display: flex; flex-direction: column; gap: .6rem;",
+                            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Create a Team" }
+                            if !signed_in {
+                                p { class: "muted", style: "font-size: .75rem; margin: 0;", "Sign in to create or join teams." }
+                            } else if is_pro {
+                                div { style: "display: flex; gap: .5rem;",
+                                    input {
+                                        class: "app-input", style: "flex: 1; padding: .5rem .75rem; font-size: .75rem;",
+                                        placeholder: "Team name", value: "{team_name}",
+                                        oninput: move |e| team_name.set(e.value()),
+                                    }
+                                    button {
+                                        class: "app-btn app-btn-active", style: "font-size: .75rem;",
+                                        onclick: move |_| {
+                                            let name = team_name.peek().clone();
+                                            if name.trim().len() < 2 {
+                                                team_msg.set("Team name must be at least 2 characters.".into());
+                                                return;
+                                            }
+                                            spawn_local(async move {
+                                                match net::mutation("team.create", Some(json!({ "name": name }))).await {
+                                                    Ok(_) => {
+                                                        team_name.set(String::new());
+                                                        team_msg.set("Team created!".into());
+                                                        let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                    }
+                                                    Err(e) => team_msg.set(trpc_err(&e)),
+                                                }
+                                            });
+                                        },
+                                        "Create"
+                                    }
+                                }
+                            } else {
+                                p { class: "muted", style: "font-size: .75rem; margin: 0;", "Creating a team is a Pro feature." }
+                                Link { to: Route::Profile {}, class: "app-btn app-btn-active", style: "font-size: .75rem; align-self: flex-start;", "Upgrade to Pro" }
+                            }
+                            if !team_msg.read().is_empty() {
+                                span { class: "muted", style: "font-size: .6875rem; font-family: monospace;", "{team_msg}" }
+                            }
+                        }
+
+                        // My teams (with leave)
+                        if signed_in {
+                            if let Some(Some(Ok(teams))) = &*my_teams_res.read_unchecked() {
+                                if !teams.is_empty() {
+                                    div { style: "display: flex; flex-direction: column; gap: .5rem;",
+                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "My Teams" }
+                                        for t in teams.clone() {
+                                            {
+                                                let owner_tag = if t.is_owner { " · owner" } else { "" };
+                                                let tid = t.id.clone();
+                                                rsx! {
+                                                    div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem;",
+                                                        div { style: "display: flex; flex-direction: column;",
+                                                            span { style: "font-weight: 700; font-size: .8rem;", "{t.name}" }
+                                                            span { class: "muted", style: "font-size: .625rem; text-transform: uppercase;", "{t.member_count} members{owner_tag}" }
+                                                        }
+                                                        button {
+                                                            class: "app-btn", style: "font-size: .6875rem;",
+                                                            onclick: move |_| {
+                                                                let id = tid.clone();
+                                                                spawn_local(async move {
+                                                                    let _ = net::mutation("team.leave", Some(json!({ "teamId": id }))).await;
+                                                                    let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                                });
+                                                            },
+                                                            "Leave"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Team leaderboard
+                        div { style: "display: flex; flex-direction: column; gap: .5rem;",
+                            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Team Leaderboard" }
+                            match &*teams_board_res.read_unchecked() {
+                                None => rsx! { div { class: "muted st-loading", "Loading teams..." } },
+                                Some(Err(e)) => rsx! { div { class: "error", style: "font-size: .75rem;", "{e}" } },
+                                Some(Ok(teams)) if teams.is_empty() => rsx! {
+                                    div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: .75rem; color: var(--text-secondary);", "No teams yet — create the first one!" }
+                                },
+                                Some(Ok(teams)) => rsx! {
+                                    for (i, t) in teams.iter().enumerate() {
+                                        {
+                                            let t = t.clone();
+                                            let badge = rank_badge_style(i);
+                                            rsx! {
+                                                div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; gap: .75rem;",
+                                                    span { style: "{badge} display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; font-size: .7rem; font-weight: 700; font-family: monospace; border: 1px solid;", "{i + 1}" }
+                                                    div { style: "flex: 1; display: flex; flex-direction: column; min-width: 0;",
+                                                        span { style: "font-weight: 700; font-size: .8rem;", "{t.name}" }
+                                                        span { class: "muted", style: "font-size: .625rem; text-transform: uppercase;", "{t.member_count} members · {t.games_played} games · {t.accuracy}% acc" }
+                                                    }
+                                                    span { style: "font-weight: 700; font-family: monospace; color: var(--pastel-yellow);", "{t.total_score}" }
+                                                    if signed_in {
+                                                        button {
+                                                            class: "app-btn", style: "font-size: .6875rem;",
+                                                            onclick: move |_| {
+                                                                let id = t.id.clone();
+                                                                let nm = t.name.clone();
+                                                                spawn_local(async move {
+                                                                    match net::mutation("team.join", Some(json!({ "teamId": id }))).await {
+                                                                        Ok(_) => {
+                                                                            team_msg.set(format!("Joined {nm}!"));
+                                                                            let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                                        }
+                                                                        Err(e) => team_msg.set(trpc_err(&e)),
+                                                                    }
+                                                                });
+                                                            },
+                                                            "Join"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    }
+                }
+            }
         }
     };
 

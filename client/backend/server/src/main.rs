@@ -72,6 +72,20 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/trpc/:proc", get(trpc_get).post(trpc_post))
         .with_state(AppState { pool, auth, events });
 
+    // Optionally serve the built wasm frontend on the same origin, so the
+    // relative `/api` paths + page-derived WS origin "just work" with no proxy.
+    // SPA fallback: unknown paths return index.html for client-side routing.
+    let app = match std::env::var("WEB_DIST") {
+        Ok(dir) if !dir.is_empty() => {
+            let index = format!("{dir}/index.html");
+            let serve = tower_http::services::ServeDir::new(&dir)
+                .fallback(tower_http::services::ServeFile::new(index));
+            tracing::info!("serving frontend bundle from {dir}");
+            app.fallback_service(serve)
+        }
+        _ => app,
+    };
+
     let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;

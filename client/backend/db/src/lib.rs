@@ -157,12 +157,6 @@ impl AppError {
     }
 }
 
-#[allow(warnings)]
-#[path = "db.rs"]
-pub mod prisma;
-
-pub use prisma as db;
-
 #[derive(Debug, Clone, Default)]
 pub struct DbConfig {
     /// Base database URL (e.g. from `DATABASE_URL` environment variable)
@@ -209,14 +203,6 @@ impl DbConfig {
 
         url
     }
-}
-
-/// Initializes the Prisma database client using the provided database configuration.
-pub async fn init_db_client(
-    config: &DbConfig,
-) -> Result<db::PrismaClient, ::prisma_client_rust::NewClientError> {
-    let url = config.build_url();
-    db::new_client_with_url(&url).await
 }
 
 #[cfg(test)]

@@ -292,6 +292,58 @@ pub fn decrypt_session_token(token: &str, secret: &str) -> Result<serde_json::Va
     Ok(json)
 }
 
+/// Inverse of `decrypt_session_token`: encrypt `claims` into a next-auth-format
+/// JWE (`dir` / A256GCM, key = HKDF-SHA256 of the secret). Lets the Rust server
+/// ISSUE session cookies on login. Round-trips with `decrypt_session_token`.
+pub fn encode_session_token(claims: &serde_json::Value, secret: &str) -> Result<String, AuthError> {
+    let header = br#"{"alg":"dir","enc":"A256GCM"}"#;
+    let encoded_header = URL_SAFE_NO_PAD.encode(header);
+
+    let hk = Hkdf::<Sha256>::new(None, secret.as_bytes());
+    let mut okm = [0u8; 32];
+    hk.expand(b"NextAuth.js Generated Encryption Key", &mut okm)
+        .map_err(|_| AuthError::CryptoError)?;
+    let cipher = Aes256Gcm::new_from_slice(&okm).map_err(|_| AuthError::CryptoError)?;
+
+    let iv: [u8; 12] = thread_rng().gen();
+    let nonce = Nonce::from_slice(&iv);
+    let plaintext = serde_json::to_vec(claims).map_err(|_| AuthError::CryptoError)?;
+
+    // AES-GCM returns ciphertext || tag(16); split for the compact form.
+    let mut ct = cipher
+        .encrypt(
+            nonce,
+            Payload {
+                msg: &plaintext,
+                aad: encoded_header.as_bytes(),
+            },
+        )
+        .map_err(|_| AuthError::CryptoError)?;
+    let tag = ct.split_off(ct.len() - 16);
+
+    // header . (empty key) . iv . ciphertext . tag
+    Ok(format!(
+        "{}..{}.{}.{}",
+        encoded_header,
+        URL_SAFE_NO_PAD.encode(iv),
+        URL_SAFE_NO_PAD.encode(&ct),
+        URL_SAFE_NO_PAD.encode(&tag),
+    ))
+}
+
+#[cfg(test)]
+mod token_roundtrip {
+    use super::*;
+    #[test]
+    fn encode_then_decrypt() {
+        let claims = serde_json::json!({ "email": "a@b.c", "sub": "u1", "role": "ADMIN" });
+        let tok = encode_session_token(&claims, "secret").unwrap();
+        let back = decrypt_session_token(&tok, "secret").unwrap();
+        assert_eq!(back["email"], "a@b.c");
+        assert_eq!(back["role"], "ADMIN");
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeycloakClaims {
     pub sub: String,

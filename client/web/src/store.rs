@@ -17,14 +17,13 @@ use wasm_bindgen_futures::spawn_local;
 /// Call once per page, right after `use_workspace`, passing `ws.mode`.
 pub fn sync_panel_mode(mut mode: Signal<Mode>) {
     // On mount, adopt the shared mode (overriding this workspace's own).
+    // Default is Tiling; only an explicit prior "floating" choice opts out.
     use_hook(move || {
-        if let Ok(s) = LocalStorage::get::<String>("panel_mode") {
-            mode.set(if s == "tiling" {
-                Mode::Tiling
-            } else {
-                Mode::Floating
-            });
-        }
+        let m = match LocalStorage::get::<String>("panel_mode").as_deref() {
+            Ok("floating") => Mode::Floating,
+            _ => Mode::Tiling,
+        };
+        mode.set(m);
     });
     // Persist any change to the shared key so other views pick it up.
     use_effect(move || {

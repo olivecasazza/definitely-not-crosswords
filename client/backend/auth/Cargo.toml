@@ -1,0 +1,18 @@
+[package]
+name = "crossword-auth"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+crossword-db = { path = "../db" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+jsonwebtoken = "9"
+rand = "0.8"
+base64 = "0.22"
+

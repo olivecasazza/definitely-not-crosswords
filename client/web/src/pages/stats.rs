@@ -141,6 +141,8 @@ struct TeamBoardEntry {
     id: String,
     name: String,
     member_count: i64,
+    max_size: i64,
+    visibility: String,
     total_score: i64,
     games_played: i64,
     accuracy: i64,
@@ -152,7 +154,17 @@ struct MyTeam {
     id: String,
     name: String,
     member_count: i64,
+    max_size: i64,
+    visibility: String,
     is_owner: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MyInvite {
+    id: String,
+    team_name: String,
+    invited_by: String,
 }
 
 /// Pull a human-readable message out of a tRPC error string (JSON), else raw.
@@ -238,10 +250,14 @@ pub fn Stats() -> Element {
         )
     });
 
-    // Teams (creating a team is a Pro feature; joining is free)
+    // Teams: anyone can create; max size is Pro-tiered. Public teams self-join,
+    // private teams are invite-only.
     let team_name = use_signal(String::new);
+    let team_private = use_signal(|| false);
     let team_msg = use_signal(String::new);
     let team_refresh = use_signal(|| 0u32);
+    // Per-team invite input text, keyed by team id.
+    let invite_inputs = use_signal(std::collections::HashMap::<String, String>::new);
     let teams_board_res = use_resource(move || async move {
         let _ = team_refresh.read();
         net::query_as::<Vec<TeamBoardEntry>>("team.getTeamLeaderboard", None).await
@@ -252,6 +268,13 @@ pub fn Stats() -> Element {
             return None;
         }
         Some(net::query_as::<Vec<MyTeam>>("team.myTeams", None).await)
+    });
+    let my_invites_res = use_resource(move || async move {
+        let _ = team_refresh.read();
+        if state.user().is_none() {
+            return None;
+        }
+        Some(net::query_as::<Vec<MyInvite>>("team.myInvites", None).await)
     });
 
     let ws = use_workspace("stats_layout", default_layout);
@@ -664,25 +687,30 @@ pub fn Stats() -> Element {
                 }
             },
             Panel::Teams => {
-                let is_pro = state.sub.read().as_ref().map(|s| s.is_pro).unwrap_or(false);
                 let signed_in = state.user().is_some();
                 let mut team_name = team_name;
+                let mut team_private = team_private;
                 let mut team_msg = team_msg;
                 let mut team_refresh = team_refresh;
+                let mut invite_inputs = invite_inputs;
                 rsx! {
                     div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
 
-                        // Create a team (Pro-gated)
+                        // Create a team (anyone; size is Pro-tiered)
                         div { style: "display: flex; flex-direction: column; gap: .6rem;",
                             span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Create a Team" }
                             if !signed_in {
                                 p { class: "muted", style: "font-size: .75rem; margin: 0;", "Sign in to create or join teams." }
-                            } else if is_pro {
-                                div { style: "display: flex; gap: .5rem;",
+                            } else {
+                                div { style: "display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;",
                                     input {
-                                        class: "app-input", style: "flex: 1; padding: .5rem .75rem; font-size: .75rem;",
+                                        class: "app-input", style: "flex: 1; min-width: 8rem; padding: .5rem .75rem; font-size: .75rem;",
                                         placeholder: "Team name", value: "{team_name}",
                                         oninput: move |e| team_name.set(e.value()),
+                                    }
+                                    label { class: "muted", style: "font-size: .65rem; display: flex; align-items: center; gap: .3rem; text-transform: uppercase; white-space: nowrap;",
+                                        input { r#type: "checkbox", checked: "{team_private}", onchange: move |e| team_private.set(e.checked()) }
+                                        "Private"
                                     }
                                     button {
                                         class: "app-btn app-btn-active", style: "font-size: .75rem;",
@@ -692,8 +720,9 @@ pub fn Stats() -> Element {
                                                 team_msg.set("Team name must be at least 2 characters.".into());
                                                 return;
                                             }
+                                            let visibility = if *team_private.peek() { "PRIVATE" } else { "PUBLIC" };
                                             spawn_local(async move {
-                                                match net::mutation("team.create", Some(json!({ "name": name }))).await {
+                                                match net::mutation("team.create", Some(json!({ "name": name, "visibility": visibility }))).await {
                                                     Ok(_) => {
                                                         team_name.set(String::new());
                                                         team_msg.set("Team created!".into());
@@ -706,16 +735,65 @@ pub fn Stats() -> Element {
                                         "Create"
                                     }
                                 }
-                            } else {
-                                p { class: "muted", style: "font-size: .75rem; margin: 0;", "Creating a team is a Pro feature." }
-                                Link { to: Route::Profile {}, class: "app-btn app-btn-active", style: "font-size: .75rem; align-self: flex-start;", "Upgrade to Pro" }
+                                p { class: "muted", style: "font-size: .625rem; margin: 0;", "Free teams hold 4 · Pro teams hold 10." }
                             }
                             if !team_msg.read().is_empty() {
                                 span { class: "muted", style: "font-size: .6875rem; font-family: monospace;", "{team_msg}" }
                             }
                         }
 
-                        // My teams (with leave)
+                        // Pending invitations
+                        if signed_in {
+                            if let Some(Some(Ok(invites))) = &*my_invites_res.read_unchecked() {
+                                if !invites.is_empty() {
+                                    div { style: "display: flex; flex-direction: column; gap: .5rem;",
+                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Invitations" }
+                                        for inv in invites.clone() {
+                                            {
+                                                let iid_a = inv.id.clone();
+                                                let iid_d = inv.id.clone();
+                                                rsx! {
+                                                    div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem;",
+                                                        div { style: "display: flex; flex-direction: column;",
+                                                            span { style: "font-weight: 700; font-size: .8rem;", "{inv.team_name}" }
+                                                            span { class: "muted", style: "font-size: .6rem;", "invited by {inv.invited_by}" }
+                                                        }
+                                                        div { style: "display: flex; gap: .4rem;",
+                                                            button {
+                                                                class: "app-btn app-btn-active", style: "font-size: .65rem;",
+                                                                onclick: move |_| {
+                                                                    let id = iid_a.clone();
+                                                                    spawn_local(async move {
+                                                                        match net::mutation("team.respondToInvite", Some(json!({ "inviteId": id, "accept": true }))).await {
+                                                                            Ok(_) => { team_msg.set("Joined!".into()); let n = *team_refresh.peek(); team_refresh.set(n + 1); }
+                                                                            Err(e) => team_msg.set(trpc_err(&e)),
+                                                                        }
+                                                                    });
+                                                                },
+                                                                "Accept"
+                                                            }
+                                                            button {
+                                                                class: "app-btn", style: "font-size: .65rem;",
+                                                                onclick: move |_| {
+                                                                    let id = iid_d.clone();
+                                                                    spawn_local(async move {
+                                                                        let _ = net::mutation("team.respondToInvite", Some(json!({ "inviteId": id, "accept": false }))).await;
+                                                                        let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                                    });
+                                                                },
+                                                                "Decline"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // My teams (invite, toggle visibility, leave)
                         if signed_in {
                             if let Some(Some(Ok(teams))) = &*my_teams_res.read_unchecked() {
                                 if !teams.is_empty() {
@@ -725,22 +803,70 @@ pub fn Stats() -> Element {
                                             {
                                                 let owner_tag = if t.is_owner { " · owner" } else { "" };
                                                 let tid = t.id.clone();
+                                                let tid_inv = t.id.clone();
+                                                let tid_vis = t.id.clone();
+                                                let tid_input = t.id.clone();
+                                                let vis = t.visibility.clone();
+                                                let next_vis = if vis == "PRIVATE" { "PUBLIC" } else { "PRIVATE" };
+                                                let full = t.member_count >= t.max_size;
+                                                let cur_input = invite_inputs.read().get(&t.id).cloned().unwrap_or_default();
                                                 rsx! {
-                                                    div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem;",
-                                                        div { style: "display: flex; flex-direction: column;",
-                                                            span { style: "font-weight: 700; font-size: .8rem;", "{t.name}" }
-                                                            span { class: "muted", style: "font-size: .625rem; text-transform: uppercase;", "{t.member_count} members{owner_tag}" }
+                                                    div { class: "app-card", style: "padding: .6rem .9rem; display: flex; flex-direction: column; gap: .5rem;",
+                                                        div { style: "display: flex; align-items: center; justify-content: space-between; gap: .5rem;",
+                                                            div { style: "display: flex; flex-direction: column;",
+                                                                span { style: "font-weight: 700; font-size: .8rem;", "{t.name}" }
+                                                                span { class: "muted", style: "font-size: .6rem; text-transform: uppercase;", "{t.member_count}/{t.max_size} · {vis}{owner_tag}" }
+                                                            }
+                                                            div { style: "display: flex; gap: .4rem;",
+                                                                if t.is_owner {
+                                                                    button {
+                                                                        class: "app-btn", style: "font-size: .6rem;",
+                                                                        onclick: move |_| {
+                                                                            let id = tid_vis.clone();
+                                                                            spawn_local(async move {
+                                                                                let _ = net::mutation("team.setVisibility", Some(json!({ "teamId": id, "visibility": next_vis }))).await;
+                                                                                let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                                            });
+                                                                        },
+                                                                        "Make {next_vis}"
+                                                                    }
+                                                                }
+                                                                button {
+                                                                    class: "app-btn", style: "font-size: .65rem;",
+                                                                    onclick: move |_| {
+                                                                        let id = tid.clone();
+                                                                        spawn_local(async move {
+                                                                            let _ = net::mutation("team.leave", Some(json!({ "teamId": id }))).await;
+                                                                            let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                                        });
+                                                                    },
+                                                                    "Leave"
+                                                                }
+                                                            }
                                                         }
-                                                        button {
-                                                            class: "app-btn", style: "font-size: .6875rem;",
-                                                            onclick: move |_| {
-                                                                let id = tid.clone();
-                                                                spawn_local(async move {
-                                                                    let _ = net::mutation("team.leave", Some(json!({ "teamId": id }))).await;
-                                                                    let n = *team_refresh.peek(); team_refresh.set(n + 1);
-                                                                });
-                                                            },
-                                                            "Leave"
+                                                        if !full {
+                                                            div { style: "display: flex; gap: .4rem;",
+                                                                input {
+                                                                    class: "app-input", style: "flex: 1; padding: .35rem .6rem; font-size: .7rem;",
+                                                                    placeholder: "invite by username or email", value: "{cur_input}",
+                                                                    oninput: move |e| { invite_inputs.write().insert(tid_input.clone(), e.value()); },
+                                                                }
+                                                                button {
+                                                                    class: "app-btn", style: "font-size: .65rem;",
+                                                                    onclick: move |_| {
+                                                                        let id = tid_inv.clone();
+                                                                        let who = invite_inputs.peek().get(&id).cloned().unwrap_or_default();
+                                                                        if who.trim().is_empty() { return; }
+                                                                        spawn_local(async move {
+                                                                            match net::mutation("team.invite", Some(json!({ "teamId": id, "identifier": who }))).await {
+                                                                                Ok(_) => { team_msg.set("Invite sent.".into()); invite_inputs.write().remove(&id); let n = *team_refresh.peek(); team_refresh.set(n + 1); }
+                                                                                Err(e) => team_msg.set(trpc_err(&e)),
+                                                                            }
+                                                                        });
+                                                                    },
+                                                                    "Invite"
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -765,15 +891,17 @@ pub fn Stats() -> Element {
                                         {
                                             let t = t.clone();
                                             let badge = rank_badge_style(i);
+                                            let joinable = signed_in && t.visibility == "PUBLIC" && t.member_count < t.max_size;
+                                            let is_private = t.visibility == "PRIVATE";
                                             rsx! {
                                                 div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; gap: .75rem;",
                                                     span { style: "{badge} display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; font-size: .7rem; font-weight: 700; font-family: monospace; border: 1px solid;", "{i + 1}" }
                                                     div { style: "flex: 1; display: flex; flex-direction: column; min-width: 0;",
                                                         span { style: "font-weight: 700; font-size: .8rem;", "{t.name}" }
-                                                        span { class: "muted", style: "font-size: .625rem; text-transform: uppercase;", "{t.member_count} members · {t.games_played} games · {t.accuracy}% acc" }
+                                                        span { class: "muted", style: "font-size: .6rem; text-transform: uppercase;", "{t.member_count}/{t.max_size} · {t.games_played} games · {t.accuracy}% acc" }
                                                     }
                                                     span { style: "font-weight: 700; font-family: monospace; color: var(--pastel-yellow);", "{t.total_score}" }
-                                                    if signed_in {
+                                                    if joinable {
                                                         button {
                                                             class: "app-btn", style: "font-size: .6875rem;",
                                                             onclick: move |_| {
@@ -791,6 +919,8 @@ pub fn Stats() -> Element {
                                                             },
                                                             "Join"
                                                         }
+                                                    } else if is_private {
+                                                        span { class: "muted", style: "font-size: .58rem; text-transform: uppercase;", "private" }
                                                     }
                                                 }
                                             }

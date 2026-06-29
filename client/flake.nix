@@ -64,6 +64,10 @@
           # then rewrite the dep to point there. A relative path keeps the
           # Cargo.toml free of store-path string references (which crane rejects).
           # No working-tree edit — the committed Cargo.toml keeps the absolute path.
+          # Ship every workspace member so cargo can resolve the workspace, even
+          # though most nix builds compile just one crate (-p ...). `backend` and
+          # `desktop` are needed for resolution; only `desktop` is actually built
+          # here (the server's onnxruntime packaging lands in Phase F).
           rawSrc = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
@@ -71,6 +75,11 @@
               ./Cargo.lock
               ./core
               ./web
+              # desktop crate source. Its frontend bundle (desktop/dist) is
+              # gitignored — absent from the flake source — and the flake
+              # repopulates it from the crossword-web derivation at build time.
+              ./desktop
+              ./backend
             ];
           };
           src = pkgs.runCommand "crossword-client-src" { } ''
@@ -97,8 +106,11 @@
             pname = "crossword-client";
             version = "0.1.0";
             strictDeps = true;
-            # Build the workspace; the wasm crate is handled separately.
-            cargoExtraArgs = "--workspace --exclude crossword-web";
+            # Pure native crates that build in a bare sandbox (no onnxruntime, no
+            # GTK). crossword-web is wasm (separate), crossword-server needs
+            # onnxruntime (Phase F), crossword-desktop needs WebKit (its own pkg).
+            cargoExtraArgs =
+              "-p crossword-core -p crossword-db -p crossword-auth -p crossword-events";
           };
 
           # Native deps + the wasm crate's deps are vendored from one Cargo.lock.
@@ -152,11 +164,47 @@
             '';
             dontInstall = true;
           };
+
+          # Desktop client: a Tauri v2 shell that loads the wasm bundle into a
+          # native WebKit webview. Scoped to `-p crossword-desktop` so it never
+          # compiles the onnxruntime/Postgres server. The GTK/WebKit stack is the
+          # only extra over a plain Rust build.
+          desktopNativeDeps = [ pkgs.pkg-config ];
+          desktopBuildInputs = with pkgs; [
+            webkitgtk_4_1
+            libsoup_3
+            gtk3
+            glib
+            cairo
+            pango
+            atk
+            gdk-pixbuf
+          ];
+          desktopArgs = commonArgs // {
+            pname = "crossword-desktop";
+            cargoExtraArgs = "-p crossword-desktop";
+            nativeBuildInputs = desktopNativeDeps;
+            buildInputs = desktopBuildInputs;
+          };
+          desktopCargoArtifacts = craneLib.buildDepsOnly (desktopArgs // {
+            pname = "crossword-desktop-deps";
+          });
+          crossword-desktop = craneLib.buildPackage (desktopArgs // {
+            cargoArtifacts = desktopCargoArtifacts;
+            doInstallCargoArtifacts = false;
+            # tauri-build embeds frontendDist (gitignored) — fill it from the bundle.
+            # NOTE: this reuses the web bundle (relative API base); a functional
+            # desktop build must rebuild the wasm with CROSSWORD_API_BASE set.
+            preConfigure = ''
+              mkdir -p desktop/dist
+              cp -r ${crossword-web}/. desktop/dist/
+            '';
+          });
         in
         {
           packages = {
             default = crossword-web;
-            inherit crossword-web;
+            inherit crossword-web crossword-desktop;
           };
 
           checks = {
@@ -181,8 +229,9 @@
               cargoClippyExtraArgs = "--all-targets";
             });
             # The bundle build doubles as a check so `nix flake check` / `om ci`
-            # exercise the wasm path end to end.
-            inherit crossword-web;
+            # exercise the wasm path end to end; the desktop build exercises the
+            # Tauri/WebKit path.
+            inherit crossword-web crossword-desktop;
           };
 
           devShells.default = craneLib.devShell {
@@ -195,6 +244,13 @@
               wasm-bindgen-cli
               lld
               inputs.omnix.packages.${system}.default
+              # Desktop (Tauri) toolchain — `cargo-tauri` for `tauri dev/build`
+              # plus the GTK/WebKit libs the native crate links against.
+              cargo-tauri
+              pkg-config
+              webkitgtk_4_1
+              libsoup_3
+              gtk3
             ];
           };
         };

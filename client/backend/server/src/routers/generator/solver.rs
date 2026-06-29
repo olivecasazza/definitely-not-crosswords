@@ -263,8 +263,16 @@ fn find_best_placements(
                     let candidate = Placed {
                         word: word.clone(),
                         dir,
-                        x: if dir == Direction::Across { acx - wi } else { acx },
-                        y: if dir == Direction::Down { acy - wi } else { acy },
+                        x: if dir == Direction::Across {
+                            acx - wi
+                        } else {
+                            acx
+                        },
+                        y: if dir == Direction::Down {
+                            acy - wi
+                        } else {
+                            acy
+                        },
                     };
                     if !can_place(grid, placed, &candidate, p) {
                         continue;
@@ -272,7 +280,11 @@ fn find_best_placements(
                     let topic = d.topic_scores.get(word).copied().unwrap_or(0.0);
                     let quality = d.quality_scores.get(word).copied().unwrap_or(0) as f64;
                     let freq = d.frequency_scores.get(word).copied().unwrap_or(0.0);
-                    let len_score = if word.len() >= 4 && word.len() <= 7 { 8.0 } else { 0.0 };
+                    let len_score = if word.len() >= 4 && word.len() <= 7 {
+                        8.0
+                    } else {
+                        0.0
+                    };
                     let score = crossing_count(grid, &candidate, p) as f64 * 50.0
                         + topic * 100.0
                         + quality * 5.0
@@ -495,10 +507,7 @@ pub fn number_words(placed: &[Placed]) -> Vec<(Placed, i32)> {
             (w.clone(), n)
         })
         .collect();
-    out.sort_by(|a, b| {
-        a.1.cmp(&b.1)
-            .then(a.0.dir.as_str().cmp(b.0.dir.as_str()))
-    });
+    out.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.dir.as_str().cmp(b.0.dir.as_str())));
     out
 }
 
@@ -539,7 +548,10 @@ mod tests {
             topic_scores: HashMap::new(),
             quality_scores: words.iter().map(|w| (w.to_string(), 5)).collect(),
             frequency_scores: words.iter().map(|w| (w.to_string(), 10.0)).collect(),
-            clue_by_word: words.iter().map(|w| (w.to_string(), w.to_lowercase())).collect(),
+            clue_by_word: words
+                .iter()
+                .map(|w| (w.to_string(), w.to_lowercase()))
+                .collect(),
             by_letter,
             by_length,
         }
@@ -560,7 +572,11 @@ mod tests {
         let mut noop = |_: Value| {};
         let best = generate_best(&d, &p, &mut noop).expect("a valid grid");
         // at least two crossing words and the winning grid validates
-        assert!(best.placed.len() >= 2, "expected crossings, got {}", best.placed.len());
+        assert!(
+            best.placed.len() >= 2,
+            "expected crossings, got {}",
+            best.placed.len()
+        );
         validate_grid(&best.grid, &best.placed, &d.dictionary_set, &p).unwrap();
         // numbering is 1-based and contiguous start cells
         let numbered = number_words(&best.placed);
@@ -571,7 +587,8 @@ mod tests {
     fn rng_matches_lcg() {
         // first draw of seed=1: (1*1664525+1013904223) mod 2^32 / 2^32
         let mut rng = Rng::new(1);
-        let expected = (1u32.wrapping_mul(1664525).wrapping_add(1013904223)) as f64 / 4_294_967_296.0;
+        let expected =
+            (1u32.wrapping_mul(1664525).wrapping_add(1013904223)) as f64 / 4_294_967_296.0;
         assert!((rng.next() - expected).abs() < 1e-12);
     }
 }

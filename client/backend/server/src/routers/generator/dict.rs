@@ -101,11 +101,7 @@ fn load_frequency_scores() -> HashMap<String, f64> {
             continue;
         };
         let lemma = sense_key.split('%').next().unwrap_or("");
-        if lemma.is_empty()
-            || lemma.contains('_')
-            || lemma.contains('-')
-            || lemma.contains('\'')
-        {
+        if lemma.is_empty() || lemma.contains('_') || lemma.contains('-') || lemma.contains('\'') {
             continue;
         }
         let word = lemma.to_uppercase();
@@ -197,7 +193,10 @@ fn score_word_quality(word: &str, defs: &[Def], frequency_score: f64) -> i32 {
     if defs.len() > 1 {
         score += 1;
     }
-    if bad_gloss_patterns().iter().any(|re| re.is_match(&gloss_text)) {
+    if bad_gloss_patterns()
+        .iter()
+        .any(|re| re.is_match(&gloss_text))
+    {
         score -= 6;
     }
     if word.len() <= 3 && word.bytes().all(|b| b.is_ascii_uppercase()) {
@@ -210,7 +209,9 @@ fn score_word_quality(word: &str, defs: &[Def], frequency_score: f64) -> i32 {
 }
 
 fn has_triple_letter(word: &str) -> bool {
-    word.as_bytes().windows(3).any(|w| w[0] == w[1] && w[1] == w[2])
+    word.as_bytes()
+        .windows(3)
+        .any(|w| w[0] == w[1] && w[1] == w[2])
 }
 
 fn candidate_embed_text(word: &str, defs: &[Def]) -> String {
@@ -284,8 +285,10 @@ pub fn build_dictionary(
 
     let quality_scores: HashMap<String, i32> =
         scored.iter().map(|s| (s.word.clone(), s.quality)).collect();
-    let frequency_scores: HashMap<String, f64> =
-        scored.iter().map(|s| (s.word.clone(), s.frequency)).collect();
+    let frequency_scores: HashMap<String, f64> = scored
+        .iter()
+        .map(|s| (s.word.clone(), s.frequency))
+        .collect();
     let clue_by_word: HashMap<String, String> = scored
         .iter()
         .map(|s| {
@@ -298,7 +301,10 @@ pub fn build_dictionary(
     let mut by_letter: HashMap<u8, Vec<String>> = HashMap::new();
     let mut by_length: HashMap<usize, Vec<String>> = HashMap::new();
     for s in &scored {
-        by_length.entry(s.word.len()).or_default().push(s.word.clone());
+        by_length
+            .entry(s.word.len())
+            .or_default()
+            .push(s.word.clone());
         for b in s.word.bytes().collect::<HashSet<_>>() {
             by_letter.entry(b).or_default().push(s.word.clone());
         }

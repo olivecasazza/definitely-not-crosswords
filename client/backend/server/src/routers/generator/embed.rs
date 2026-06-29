@@ -119,7 +119,9 @@ pub fn score_candidates(
     mut candidates: Vec<Candidate>,
     emit: &mut dyn FnMut(Value),
 ) -> Result<std::collections::HashMap<String, f64>, String> {
-    emit(json!({ "type": "stage", "stage": "embedding-model", "message": "Loading embedding model" }));
+    emit(
+        json!({ "type": "stage", "stage": "embedding-model", "message": "Loading embedding model" }),
+    );
     let m = model()?;
 
     let topic_emb = embed_one(m, topic)?;

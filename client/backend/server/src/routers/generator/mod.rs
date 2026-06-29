@@ -46,7 +46,11 @@ async fn list_jobs(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     ctx.auth
         .require_capability(Capability::AdminAccess)
         .map_err(|e| e.to_string())?;
-    let take = input.get("take").and_then(|v| v.as_i64()).unwrap_or(25).clamp(1, 100);
+    let take = input
+        .get("take")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(25)
+        .clamp(1, 100);
 
     let rows = sqlx::query(
         r#"
@@ -93,7 +97,10 @@ async fn publish_generated_game(input: &Value, ctx: &Ctx) -> Result<Value, Strin
     ctx.auth
         .require_capability(Capability::AdminAccess)
         .map_err(|e| e.to_string())?;
-    let game_id = input.get("gameId").and_then(|v| v.as_str()).ok_or("missing gameId")?;
+    let game_id = input
+        .get("gameId")
+        .and_then(|v| v.as_str())
+        .ok_or("missing gameId")?;
 
     let source: Option<String> =
         sqlx::query(r#"SELECT source::text AS source FROM "Game" WHERE id = $1"#)
@@ -106,7 +113,9 @@ async fn publish_generated_game(input: &Value, ctx: &Ctx) -> Result<Value, Strin
     match source.as_deref() {
         None => return Err("Game was not found.".to_string()),
         Some("GENERATED") => {}
-        Some(_) => return Err("Only generated games can be published through this route.".to_string()),
+        Some(_) => {
+            return Err("Only generated games can be published through this route.".to_string())
+        }
     }
 
     sqlx::query(r#"UPDATE "Game" SET published = true, "updatedAt" = now() WHERE id = $1"#)
@@ -211,7 +220,8 @@ async fn check_quota(pool: &PgPool, user: &AuthUser) -> Result<bool, String> {
         }
         if used >= 5 {
             return Err(
-                "Monthly generation limit reached. Upgrade to Pro for unlimited generations.".to_string(),
+                "Monthly generation limit reached. Upgrade to Pro for unlimited generations."
+                    .to_string(),
             );
         }
     }
@@ -337,7 +347,8 @@ pub async fn run_generation(
     match result {
         Ok(gen) => {
             let title = title.unwrap_or_else(|| gen.title.clone());
-            match finalize_success(&pool, &job_id, &title, &gen, &raw_params, &log, started_at).await
+            match finalize_success(&pool, &job_id, &title, &gen, &raw_params, &log, started_at)
+                .await
             {
                 Ok(game_id) => {
                     if !is_unlimited {
@@ -397,7 +408,12 @@ async fn create_job(
     )
     .bind(&id)
     .bind(title)
-    .bind(raw_params.get("topic").and_then(|v| v.as_str()).unwrap_or(""))
+    .bind(
+        raw_params
+            .get("topic")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    )
     .bind(p.width)
     .bind(p.height)
     .bind(p.min_len)
@@ -517,7 +533,8 @@ async fn finalize_failed(
     let completed_at = now_ms();
     let duration = (completed_at - started_at) as i32;
     let mut event_log = log.lock().unwrap().clone();
-    event_log.push(json!({ "type": "failed", "jobId": job_id, "error": error, "at": completed_at }));
+    event_log
+        .push(json!({ "type": "failed", "jobId": job_id, "error": error, "at": completed_at }));
     let _ = sqlx::query(
         r#"UPDATE "CrosswordGenerationJob"
            SET status = 'FAILED'::"GenerationStatus", error = $2, "eventLog" = $3::jsonb,

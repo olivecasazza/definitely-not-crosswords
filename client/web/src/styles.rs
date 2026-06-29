@@ -56,7 +56,16 @@ pub const DESIGN: &str = r#"
   --badge-c: var(--text-secondary);
   --badge-info: var(--color-primary);
   --mono: 'Inconsolata', ui-monospace, monospace;
+  /* Min panel size so tiling never squeezes a panel small enough to clip its
+     content (panel-kit reads these for both floating and tiling). */
+  --panel-min-w: 340px;
+  --panel-min-h: 240px;
 }
+
+/* In tiling mode, cap panel height to the workspace so long content (e.g. the
+   leaderboard) scrolls inside the panel body instead of growing the panel and
+   pushing the page. (Mobile keeps its stacked, page-scrolling behavior.) */
+.ws-root:not(.mobile) .ws.tiling .panel { max-height: 100%; }
 
 * { box-sizing: border-box; }
 body {

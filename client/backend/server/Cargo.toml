@@ -29,3 +29,10 @@ rand = "0.8"
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 chrono = { version = "0.4", features = ["serde"] }
+# ONNX crossword generator (port of services/crossword + @xenova/transformers):
+# ort runs the quantized MiniLM model, tokenizers does the BERT wordpiece, regex
+# backs the gloss-quality filters. download-binaries fetches onnxruntime at build
+# time (dev); the sandboxed nix build will switch to a vendored/load-dynamic lib.
+ort = { version = "=2.0.0-rc.12", features = ["download-binaries"] }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+regex = "1"

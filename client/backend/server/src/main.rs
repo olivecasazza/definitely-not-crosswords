@@ -23,7 +23,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use crossword_auth::{AuthService, RequestAuth};
+use crossword_auth::{AuthContext, AuthService, RequestAuth};
 use crossword_db::AppEvent;
 use crossword_events::EventBus;
 use ctx::Ctx;
@@ -31,6 +31,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Clone)]
 struct AppState {
@@ -163,11 +164,18 @@ fn envelope(res: Result<Value, String>) -> Json<Value> {
 // we reply {id, result:{type:"started"}} then {id, result:{type:"data", data}}
 // per matching AppEvent, and {id, result:{type:"stopped"}} on stop.
 
-async fn trpc_ws(ws: WebSocketUpgrade, State(st): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, st))
+async fn trpc_ws(
+    ws: WebSocketUpgrade,
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    // The next-auth cookie rides the upgrade request; authenticate once here so
+    // admin-only subscriptions (generator.runGeneration) can be gated.
+    let auth = st.auth.authenticate(&req_auth(&headers));
+    ws.on_upgrade(move |socket| handle_ws(socket, st, auth))
 }
 
-async fn handle_ws(socket: WebSocket, st: AppState) {
+async fn handle_ws(socket: WebSocket, st: AppState, auth: AuthContext) {
     let (mut sender, mut receiver) = socket.split();
     // Single writer task drains an mpsc so multiple subscription forwarders can
     // share the one socket.
@@ -191,6 +199,38 @@ async fn handle_ws(socket: WebSocket, st: AppState) {
             Some("subscription") => {
                 let path = v["params"]["path"].as_str().unwrap_or("").to_string();
                 let _ = tx.send(json!({ "id": id, "result": { "type": "started" } }).to_string());
+
+                if path == "generator.runGeneration" {
+                    // Per-client streaming job (not an EventBus broadcast): authorize,
+                    // then run the generation pushing data frames to this socket.
+                    match routers::generator::authorize(&auth) {
+                        Ok(user) => {
+                            let input = v["params"]["input"].clone();
+                            let txc = tx.clone();
+                            let emit_ws: Arc<dyn Fn(Value) + Send + Sync> =
+                                Arc::new(move |ev: Value| {
+                                    let _ = txc.send(
+                                        json!({ "id": id, "result": { "type": "data", "data": ev } })
+                                            .to_string(),
+                                    );
+                                });
+                            let pool = st.pool.clone();
+                            let handle = tokio::spawn(async move {
+                                routers::generator::run_generation(pool, user, input, emit_ws).await;
+                            });
+                            subs.insert(id, handle);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(
+                                json!({ "id": id, "result": { "type": "data",
+                                    "data": { "type": "failed", "jobId": null, "error": e } } })
+                                .to_string(),
+                            );
+                        }
+                    }
+                    continue;
+                }
+
                 let mut bus_rx = st.events.subscribe();
                 let txc = tx.clone();
                 let handle = tokio::spawn(async move {

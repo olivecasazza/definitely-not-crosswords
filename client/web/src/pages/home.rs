@@ -27,10 +27,6 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
     ]
 }
 
-fn dimmed(x: i32, y: i32) -> bool {
-    (x == 14 && (2..=18).contains(&y)) || (y == 10 && (6..=22).contains(&x))
-}
-
 #[component]
 pub fn Home() -> Element {
     let state = use_app_state();
@@ -41,23 +37,7 @@ pub fn Home() -> Element {
         match kind {
             Panel::Welcome => rsx! {
                 div { class: "home-welcome",
-                    svg {
-                        class: "home-logo",
-                        view_box: "0 0 24 24",
-                        fill: "none",
-                        xmlns: "http://www.w3.org/2000/svg",
-                        for y in [2, 6, 10, 14, 18, 22] {
-                            for x in [2, 6, 10, 14, 18, 22] {
-                                circle {
-                                    cx: "{x}",
-                                    cy: "{y}",
-                                    r: "1.2",
-                                    fill: "currentColor",
-                                    opacity: if dimmed(x, y) { "0.3" } else { "1" },
-                                }
-                            }
-                        }
-                    }
+                    crate::components::brand::BrandLogo { size: 80 }
                     h1 { class: "home-title", "definitely-not-crosswords" }
                     p { class: "home-tagline",
                         "Cooperative, real-time crosswords. Race the grid, fill the clues, and climb the leaderboard with friends."

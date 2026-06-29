@@ -11,7 +11,7 @@ use axum::{
 };
 use crossword_auth::encode_session_token;
 use rand::Rng;
-use serde_json::{json, Value};
+use serde_json::json;
 use sqlx::Row;
 use std::collections::HashMap;
 

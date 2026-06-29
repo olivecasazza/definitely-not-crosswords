@@ -61,19 +61,37 @@ model User {
   subscription    Subscription?
   generationQuota GenerationQuota?
 
-  ownedTeams      Team[]       @relation("TeamOwner")
-  teamMemberships TeamMember[]
+  ownedTeams          Team[]       @relation("TeamOwner")
+  teamMemberships     TeamMember[]
+  teamInvitesReceived TeamInvite[] @relation("TeamInvitee")
+  teamInvitesSent     TeamInvite[] @relation("TeamInviter")
 }
 
-/// A persistent, named team. Creating a team is a Pro feature; joining is free.
-/// The team leaderboard aggregates members' completed-game scores.
+enum TeamVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum TeamInviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+/// A persistent, named team. Anyone can create one; max size is Pro-tiered
+/// (free owner = 4, Pro owner = 10). Public teams allow self-join + invites;
+/// private teams are invite-only. The team leaderboard aggregates members'
+/// completed-game scores.
 model Team {
-  id        String       @id @default(cuid())
-  name      String       @unique
-  ownerId   String
-  owner     User         @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members   TeamMember[]
-  createdAt DateTime     @default(now())
+  id         String         @id @default(cuid())
+  name       String         @unique
+  ownerId    String
+  owner      User           @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  visibility TeamVisibility @default(PUBLIC)
+  maxSize    Int            @default(4)
+  members    TeamMember[]
+  invites    TeamInvite[]
+  createdAt  DateTime       @default(now())
 }
 
 model TeamMember {
@@ -85,6 +103,20 @@ model TeamMember {
   joinedAt DateTime @default(now())
 
   @@unique([teamId, userId])
+}
+
+model TeamInvite {
+  id          String           @id @default(cuid())
+  teamId      String
+  team        Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  inviteeId   String
+  invitee     User             @relation("TeamInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+  invitedById String
+  invitedBy   User             @relation("TeamInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+  status      TeamInviteStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+
+  @@unique([teamId, inviteeId])
 }
 
 model UserSprite {

@@ -9,6 +9,7 @@
 //! `routers/<name>.rs`, one module per tRPC router. WS subscriptions land with
 //! the events crate (Phase C).
 
+mod auth_routes;
 mod ctx;
 mod routers;
 
@@ -19,7 +20,7 @@ use axum::{
     },
     http::HeaderMap,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use crossword_auth::{AuthService, RequestAuth};
@@ -56,6 +57,16 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/api/healthz", get(|| async { "ok" }))
         .route("/api/auth/session", get(session))
+        .route("/api/auth/csrf", get(auth_routes::csrf))
+        .route(
+            "/api/auth/callback/credentials",
+            post(auth_routes::credentials),
+        )
+        .route("/api/auth/callback/local-dev", post(auth_routes::local_dev))
+        .route(
+            "/api/auth/signout",
+            get(auth_routes::signout).post(auth_routes::signout),
+        )
         .route("/api/trpc-ws", get(trpc_ws))
         .route("/api/trpc/:proc", get(trpc_get).post(trpc_post))
         .with_state(AppState { pool, auth, events });

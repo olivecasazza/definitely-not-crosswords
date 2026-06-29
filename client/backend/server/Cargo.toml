@@ -6,6 +6,9 @@ version.workspace = true
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
+# Serve the built wasm frontend (single origin: relative /api + native WS, no
+# node proxy) when WEB_DIST is set.
+tower-http = { version = "0.6", features = ["fs"] }
 futures-util = "0.3"
 crossword-events = { path = "../events" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }

@@ -10,8 +10,16 @@
     client.url = "path:./client";
   };
 
-  outputs = { self, nixpkgs, flake-utils, sops-nix, client }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      sops-nix,
+      client,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = import nixpkgs {
           inherit system;
@@ -27,7 +35,12 @@
         # scripts/prepare_crossword_assets.mjs — the files are gitignored, so they
         # can't be vendored from source. Hashes mirror data/crossword/manifest.json.
         modelBase = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main";
-        modelFile = path: hash: pkgs.fetchurl { url = "${modelBase}/${path}"; inherit hash; };
+        modelFile =
+          path: hash:
+          pkgs.fetchurl {
+            url = "${modelBase}/${path}";
+            inherit hash;
+          };
         wordnetTar = pkgs.fetchurl {
           url = "https://wordnetcode.princeton.edu/wn3.1.dict.tar.gz";
           hash = "sha256-P32L6O9uzHFn05sQ1mlU7HNCgLW9zVf32er+Qp0Rwio=";
@@ -54,7 +67,10 @@
           # cacert for outbound TLS; crossword-tools puts `migrate`/`seed` on PATH
           # for an init job (seed reads data/crossword/wordnet from WORDNET_DICT_DIR
           # / the bundled assets below).
-          contents = [ pkgs.cacert crossword-tools ];
+          contents = [
+            pkgs.cacert
+            crossword-tools
+          ];
           config = {
             Cmd = [ "${crossword-server}/bin/crossword-server" ];
             Env = [
@@ -102,5 +118,6 @@
             fi
           '';
         };
-      });
+      }
+    );
 }

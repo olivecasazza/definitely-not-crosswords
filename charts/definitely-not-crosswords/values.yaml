@@ -90,11 +90,11 @@ dictionarySeed:
 # Database Configuration (PostgreSQL)
 database:
   migrations:
-    # sqlx migrations (crossword-tools `migrate`). Keep DISABLED against the
-    # existing production DB — it was migrated by Prisma, so sqlx's
-    # _sqlx_migrations table is empty and a run would fail "relation already
-    # exists". Enable only for a fresh database (e.g. cnpg).
-    enabled: false
+    # sqlx migrations (crossword-tools `migrate`), run as an init container. Safe
+    # on every deploy: the migrate bin adopts a pre-existing (Prisma-created)
+    # schema once, then applies only new migrations — so schema changes ship
+    # automatically with the image.
+    enabled: true
   # CloudNative-PG Integration
   cnpg:
     enabled: false

@@ -1,0 +1,20 @@
+# release-plz: this is a deployable app (Axum server + wasm + desktop), not a
+# crates.io library — so no publish. The 8 workspace crates share one version
+# (`version.workspace = true`), and we want ONE app version, ONE tag, ONE
+# changelog and ONE GitHub release. Achieve that by disabling release artifacts
+# for every crate by default and enabling them only on the deployable
+# `crossword-server` crate (whose version is the app version).
+
+[workspace]
+publish = false
+git_release_enable = false
+git_tag_enable = false
+changelog_update = false
+
+[[package]]
+name = "crossword-server"
+git_release_enable = true
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+changelog_update = true
+changelog_path = "CHANGELOG.md"

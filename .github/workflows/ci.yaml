@@ -3,6 +3,7 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]   # release tags (from release-plz) → push the versioned image
   pull_request:
     types: [ opened, synchronize, reopened, edited ]
     branches: [ main ]
@@ -87,12 +88,24 @@ jobs:
           docker load < "$IMAGE_TAR"
 
       - name: Tag and push
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push'
         run: |
           BASE="${GAR_REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE}"
-          docker tag "${BASE}:latest" "${BASE}:${GITHUB_SHA}"
-          docker push "${BASE}:${GITHUB_SHA}"
-          docker push "${BASE}:latest"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            # Release tag (from release-plz) → publish the versioned image. Flux's
+            # semver ImagePolicy promotes this to the cluster.
+            VERSION="${GITHUB_REF#refs/tags/}"
+            docker tag "${BASE}:latest" "${BASE}:${VERSION}"
+            docker push "${BASE}:${VERSION}"
+            echo "pushed ${BASE}:${VERSION}"
+          elif [[ "${GITHUB_REF}" == refs/heads/main ]]; then
+            # Continuous build on main: keep :latest + :sha (current deploy tracks
+            # :latest until the ImagePolicy is flipped to semver).
+            docker tag "${BASE}:latest" "${BASE}:${GITHUB_SHA}"
+            docker push "${BASE}:${GITHUB_SHA}"
+            docker push "${BASE}:latest"
+            echo "pushed ${BASE}:latest + :${GITHUB_SHA}"
+          fi
 
   conventional-commits-check:
     name: Conventional Commits Check

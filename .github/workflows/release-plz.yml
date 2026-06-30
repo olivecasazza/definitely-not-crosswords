@@ -1,0 +1,67 @@
+name: release-plz
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # manual trigger — e.g. to cut the first release after adding the PAT
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Only one release-plz run at a time (it commits to main / opens the release PR).
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # `secrets` can't be referenced in a job-level `if`, so a tiny guard job turns
+  # the PAT's presence into a `needs` output. release-plz is INERT until a PAT is
+  # provisioned: tags created with the default GITHUB_TOKEN don't trigger the
+  # image-build workflow (GitHub anti-recursion), which would yield a tag with no
+  # image. Provision `RELEASE_PLZ_TOKEN` (contents + pull-requests write) to
+  # activate — or install the release-plz GitHub App and remove this gate.
+  guard:
+    name: Check release token
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"; else echo "enabled=false" >> "$GITHUB_OUTPUT"; fi
+
+  release-plz:
+    name: Release-plz
+    needs: guard
+    if: needs.guard.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      # web/Cargo.toml pins panel-kit by absolute host path (the flake rewrites it
+      # at build time; release-plz runs plain `cargo metadata`, which needs the
+      # path to exist). Clone it there — outside the repo tree, so release-plz's
+      # clean-tree check is unaffected.
+      - name: Vendor panel-kit at its pinned path
+        run: |
+          sudo mkdir -p /home/olive/Repositories
+          sudo chown -R "$(id -un)" /home/olive
+          git clone https://github.com/olivecasazza/panel-kit /home/olive/Repositories/panel-kit
+          git -C /home/olive/Repositories/panel-kit checkout dac9f0061b73fa8fdb554a9575985a413facaebb
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: release-plz/action@v0.5
+        with:
+          manifest_path: client/Cargo.toml
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}

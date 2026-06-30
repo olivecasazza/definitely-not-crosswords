@@ -1,0 +1,25 @@
+[package]
+name = "crossword-tools"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "macros",
+  "migrate",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+anyhow = "1"
+serde_json = "1"
+
+[[bin]]
+name = "migrate"
+path = "src/bin/migrate.rs"
+
+[[bin]]
+name = "seed"
+path = "src/bin/seed.rs"

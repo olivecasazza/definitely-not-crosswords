@@ -33,7 +33,7 @@ spec:
         - name: migrate-db
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["node_modules/.bin/prisma", "migrate", "deploy"]
+          command: ["migrate"]
           env:
             - name: DATABASE_URL
               valueFrom:
@@ -53,7 +53,7 @@ spec:
         - name: seed-admin-users
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["node", "/app/scripts/seed_admin_users.mjs"]
+          command: ["seed_admin"]
           env:
             - name: ADMIN_USERS_JSON
               value: {{ toJson .Values.adminUsers | quote }}
@@ -75,7 +75,7 @@ spec:
         - name: seed-dictionary
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["node", "/app/scripts/seed_wordnet_dictionary.mjs", "--skip-if-present"]
+          command: ["seed", "--skip-if-present"]
           env:
             - name: DATABASE_URL
               valueFrom:
@@ -102,9 +102,6 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
-            - name: ws
-              containerPort: {{ .Values.service.wsPort }}
-              protocol: TCP
             {{- if .Values.observability.otel.enabled }}
             - name: otel-metrics
               containerPort: {{ .Values.observability.otel.port | default 9464 }}
@@ -123,25 +120,8 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           env:
-            - name: PORT
-              value: "{{ .Values.service.port }}"
-            - name: NUXT_PORT
-              value: "{{ .Values.service.port }}"
-            - name: KEYCLOAK_CLIENT_ID
-              value: {{ .Values.auth.clientId | quote }}
-            - name: KEYCLOAK_ISSUER
-              value: {{ .Values.auth.issuer | quote }}
-            - name: NUXT_AUTH_ORIGIN
-              value: {{ .Values.auth.origin | trimSuffix "/api/auth/" | trimSuffix "/api/auth" | quote }}
-            - name: KEYCLOAK_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  {{- if .Values.auth.existingSecret }}
-                  name: {{ .Values.auth.existingSecret }}
-                  {{- else }}
-                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
-                  {{- end }}
-                  key: KEYCLOAK_CLIENT_SECRET
+            # PORT and WEB_DIST (the bundled wasm frontend, served single-origin
+            # with /api) are baked into the image; only secrets are injected here.
             - name: NEXTAUTH_SECRET
               valueFrom:
                 secretKeyRef:
@@ -164,12 +144,6 @@ spec:
                   name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
                   key: DATABASE_URL
                   {{- end }}
-            {{- if .Values.observability.otel.enabled }}
-            - name: NODE_OPTIONS
-              value: "--require ./otel.cjs"
-            - name: OTEL_METRICS_PORT
-              value: "{{ .Values.observability.otel.port | default 9464 }}"
-            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}

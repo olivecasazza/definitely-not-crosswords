@@ -1,6 +1,6 @@
 apiVersion: v2
 name: definitely-not-crosswords
-description: A production-ready Helm chart for the definitely-not-crosswords Nuxt/Prisma fullstack application.
+description: A production-ready Helm chart for the definitely-not-crosswords Rust (Axum + Dioxus) application.
 type: application
 version: 0.1.0
 appVersion: "0.0.1"

@@ -11,9 +11,5 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
-    - port: {{ .Values.service.wsPort }}
-      targetPort: ws
-      protocol: TCP
-      name: ws
   selector:
     {{- include "definitely-not-crosswords.selectorLabels" . | nindent 4 }}

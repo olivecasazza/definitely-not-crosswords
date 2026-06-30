@@ -5,10 +5,10 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/olivecasazza/definitely-not-crosswords
-  pullPolicy: IfNotPresent
-  # Overrides the image tag whose default is the chart appVersion.
-  tag: ""
+  # The nix-built Rust server image (pushed by CI to GAR as :latest and :<sha>).
+  repository: us-central1-docker.pkg.dev/casazza-identity/nixlab/definitely-not-crosswords
+  pullPolicy: Always
+  tag: "latest"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -38,8 +38,8 @@ securityContext: {}
 
 service:
   type: ClusterIP
+  # The Rust server serves HTTP, /api, and the tRPC WebSocket all on one port.
   port: 3000
-  wsPort: 3002
 
 ingress:
   enabled: false
@@ -90,7 +90,11 @@ dictionarySeed:
 # Database Configuration (PostgreSQL)
 database:
   migrations:
-    enabled: true
+    # sqlx migrations (crossword-tools `migrate`). Keep DISABLED against the
+    # existing production DB — it was migrated by Prisma, so sqlx's
+    # _sqlx_migrations table is empty and a run would fail "relation already
+    # exists". Enable only for a fresh database (e.g. cnpg).
+    enabled: false
   # CloudNative-PG Integration
   cnpg:
     enabled: false
@@ -107,7 +111,8 @@ database:
 # Observability Configuration
 observability:
   otel:
-    enabled: true
+    # The Rust server does not expose OTEL/Prometheus metrics yet (follow-up).
+    enabled: false
     port: 9464
   serviceMonitor:
     enabled: false

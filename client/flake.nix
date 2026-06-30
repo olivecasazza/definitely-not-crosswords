@@ -39,11 +39,13 @@
     panel-kit.flake = false;
   };
 
-  outputs = inputs:
+  outputs =
+    inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = import inputs.systems;
 
-      perSystem = { system, self', ... }:
+      perSystem =
+        { system, self', ... }:
         let
           pkgs = import inputs.nixpkgs {
             inherit system;
@@ -52,7 +54,11 @@
           inherit (pkgs) lib;
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-            extensions = [ "rust-src" "clippy" "rustfmt" ];
+            extensions = [
+              "rust-src"
+              "clippy"
+              "rustfmt"
+            ];
             targets = [ "wasm32-unknown-unknown" ];
           };
           craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rustToolchain;
@@ -64,10 +70,10 @@
           # then rewrite the dep to point there. A relative path keeps the
           # Cargo.toml free of store-path string references (which crane rejects).
           # No working-tree edit — the committed Cargo.toml keeps the absolute path.
-          # Ship every workspace member so cargo can resolve the workspace, even
-          # though most nix builds compile just one crate (-p ...). `backend` and
-          # `desktop` are needed for resolution; only `desktop` is actually built
-          # here (the server's onnxruntime packaging lands in Phase F).
+          # Ship every workspace member so cargo can resolve the workspace; each
+          # nix build below compiles just one crate (-p ...). All of web, desktop,
+          # server, and tools are built as packages; backend/desktop must be
+          # present for workspace resolution regardless.
           rawSrc = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
@@ -134,14 +140,16 @@
             # Pure native crates that build in a bare sandbox (no onnxruntime, no
             # GTK). crossword-web is wasm (separate), crossword-server needs
             # onnxruntime (Phase F), crossword-desktop needs WebKit (its own pkg).
-            cargoExtraArgs =
-              "-p crossword-core -p crossword-db -p crossword-auth -p crossword-events";
+            cargoExtraArgs = "-p crossword-core -p crossword-db -p crossword-auth -p crossword-events";
           };
 
           # Native deps + the wasm crate's deps are vendored from one Cargo.lock.
-          cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
-            pname = "crossword-client-deps";
-          });
+          cargoArtifacts = craneLib.buildDepsOnly (
+            commonArgs
+            // {
+              pname = "crossword-client-deps";
+            }
+          );
 
           wasmArgs = {
             inherit src cargoVendorDir;
@@ -152,16 +160,22 @@
             doCheck = false; # no test runner on bare wasm32
             cargoExtraArgs = "-p crossword-web";
           };
-          webCargoArtifacts = craneLib.buildDepsOnly (wasmArgs // {
-            pname = "crossword-web-deps";
-          });
+          webCargoArtifacts = craneLib.buildDepsOnly (
+            wasmArgs
+            // {
+              pname = "crossword-web-deps";
+            }
+          );
 
           # Compiled wasm (pre-bindgen).
-          crossword-web-wasm = craneLib.buildPackage (wasmArgs // {
-            cargoArtifacts = webCargoArtifacts;
-            pname = "crossword-web-wasm";
-            doInstallCargoArtifacts = false;
-          });
+          crossword-web-wasm = craneLib.buildPackage (
+            wasmArgs
+            // {
+              cargoArtifacts = webCargoArtifacts;
+              pname = "crossword-web-wasm";
+              doInstallCargoArtifacts = false;
+            }
+          );
 
           # Deployable static bundle: wasm-bindgen glue + size-opt wasm + a
           # bootstrap index.html. dx is intentionally NOT used in-derivation
@@ -170,7 +184,10 @@
             pname = "crossword-web";
             version = "0.1.0";
             dontUnpack = true;
-            nativeBuildInputs = [ pkgs.wasm-bindgen-cli pkgs.binaryen ];
+            nativeBuildInputs = [
+              pkgs.wasm-bindgen-cli
+              pkgs.binaryen
+            ];
             buildPhase = ''
               mkdir -p $out
               wasm=$(find ${crossword-web-wasm} -name '*.wasm' | head -n1)
@@ -211,40 +228,81 @@
             nativeBuildInputs = desktopNativeDeps;
             buildInputs = desktopBuildInputs;
           };
-          desktopCargoArtifacts = craneLib.buildDepsOnly (desktopArgs // {
-            pname = "crossword-desktop-deps";
-          });
-          crossword-desktop = craneLib.buildPackage (desktopArgs // {
-            cargoArtifacts = desktopCargoArtifacts;
-            doInstallCargoArtifacts = false;
-            # tauri-build embeds frontendDist (gitignored) — fill it from the bundle.
-            # NOTE: this reuses the web bundle (relative API base); a functional
-            # desktop build must rebuild the wasm with CROSSWORD_API_BASE set.
-            preConfigure = ''
-              mkdir -p desktop/dist
-              cp -r ${crossword-web}/. desktop/dist/
-            '';
-          });
+          desktopCargoArtifacts = craneLib.buildDepsOnly (
+            desktopArgs
+            // {
+              pname = "crossword-desktop-deps";
+            }
+          );
+          crossword-desktop = craneLib.buildPackage (
+            desktopArgs
+            // {
+              cargoArtifacts = desktopCargoArtifacts;
+              doInstallCargoArtifacts = false;
+              # tauri-build embeds frontendDist (gitignored) — fill it from the bundle.
+              # NOTE: this reuses the web bundle (relative API base); a functional
+              # desktop build must rebuild the wasm with CROSSWORD_API_BASE set.
+              preConfigure = ''
+                mkdir -p desktop/dist
+                cp -r ${crossword-web}/. desktop/dist/
+              '';
+            }
+          );
 
           # The Axum backend (tRPC + auth + ONNX generator). Static-links the
           # vendored onnxruntime via ortEnv; the model/WordNet assets in `data/`
           # are provided at runtime (mounted), not baked into the binary.
-          serverArgs = commonArgs // ortEnv // {
-            pname = "crossword-server";
-            cargoExtraArgs = "-p crossword-server";
+          serverArgs =
+            commonArgs
+            // ortEnv
+            // {
+              pname = "crossword-server";
+              cargoExtraArgs = "-p crossword-server";
+            };
+          serverCargoArtifacts = craneLib.buildDepsOnly (
+            serverArgs
+            // {
+              pname = "crossword-server-deps";
+            }
+          );
+          crossword-server = craneLib.buildPackage (
+            serverArgs
+            // {
+              cargoArtifacts = serverCargoArtifacts;
+              doInstallCargoArtifacts = false;
+            }
+          );
+
+          # DB tooling (migrate + seed bins) — the Rust replacement for the Prisma
+          # migrate + WordNet seed scripts. Pure sqlx/tokio, builds in a bare
+          # sandbox. The migrate bin embeds backend/tools/migrations.
+          toolsArgs = commonArgs // {
+            pname = "crossword-tools";
+            cargoExtraArgs = "-p crossword-tools";
           };
-          serverCargoArtifacts = craneLib.buildDepsOnly (serverArgs // {
-            pname = "crossword-server-deps";
-          });
-          crossword-server = craneLib.buildPackage (serverArgs // {
-            cargoArtifacts = serverCargoArtifacts;
-            doInstallCargoArtifacts = false;
-          });
+          toolsCargoArtifacts = craneLib.buildDepsOnly (
+            toolsArgs
+            // {
+              pname = "crossword-tools-deps";
+            }
+          );
+          crossword-tools = craneLib.buildPackage (
+            toolsArgs
+            // {
+              cargoArtifacts = toolsCargoArtifacts;
+              doInstallCargoArtifacts = false;
+            }
+          );
         in
         {
           packages = {
             default = crossword-web;
-            inherit crossword-web crossword-desktop crossword-server;
+            inherit
+              crossword-web
+              crossword-desktop
+              crossword-server
+              crossword-tools
+              ;
           };
 
           checks = {
@@ -253,48 +311,65 @@
               pname = "crossword-client";
               version = "0.1.0";
             };
-            cargo-clippy = craneLib.cargoClippy (commonArgs // {
-              inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--all-targets -- -D warnings";
-            });
-            cargo-test = craneLib.cargoTest (commonArgs // {
-              inherit cargoArtifacts;
-            });
+            cargo-clippy = craneLib.cargoClippy (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- -D warnings";
+              }
+            );
+            cargo-test = craneLib.cargoTest (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+              }
+            );
             # Web crate: clippy runs but warnings don't fail the build yet — the
             # UI was scaffolded fast and still carries ~90 style lints (manual
             # split_once, needless clones, …). ponytail: gate on real errors now,
             # tighten to `-D warnings` once the lint debt is paid down.
-            cargo-clippy-web = craneLib.cargoClippy (wasmArgs // {
-              cargoArtifacts = webCargoArtifacts;
-              cargoClippyExtraArgs = "--all-targets";
-            });
+            cargo-clippy-web = craneLib.cargoClippy (
+              wasmArgs
+              // {
+                cargoArtifacts = webCargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets";
+              }
+            );
             # The bundle build doubles as a check so `nix flake check` / `om ci`
             # exercise the wasm path end to end; the desktop build exercises the
             # Tauri/WebKit path; the server build exercises the ONNX/onnxruntime path.
-            inherit crossword-web crossword-desktop crossword-server;
+            inherit
+              crossword-web
+              crossword-desktop
+              crossword-server
+              crossword-tools
+              ;
           };
 
-          devShells.default = craneLib.devShell ({
-            checks = self'.checks;
-            packages = with pkgs; [
-              rustToolchain
-              cargo-watch
-              rust-analyzer
-              dioxus-cli
-              wasm-bindgen-cli
-              lld
-              inputs.omnix.packages.${system}.default
-              # Desktop (Tauri) toolchain — `cargo-tauri` for `tauri dev/build`
-              # plus the GTK/WebKit libs the native crate links against.
-              cargo-tauri
-              pkg-config
-              webkitgtk_4_1
-              libsoup_3
-              gtk3
-            ];
-            # So `cargo build -p crossword-server` finds the vendored onnxruntime
-            # (no download-binaries, no network) inside `nix develop`.
-          } // ortEnv);
+          devShells.default = craneLib.devShell (
+            {
+              checks = self'.checks;
+              packages = with pkgs; [
+                rustToolchain
+                cargo-watch
+                rust-analyzer
+                dioxus-cli
+                wasm-bindgen-cli
+                lld
+                inputs.omnix.packages.${system}.default
+                # Desktop (Tauri) toolchain — `cargo-tauri` for `tauri dev/build`
+                # plus the GTK/WebKit libs the native crate links against.
+                cargo-tauri
+                pkg-config
+                webkitgtk_4_1
+                libsoup_3
+                gtk3
+              ];
+              # So `cargo build -p crossword-server` finds the vendored onnxruntime
+              # (no download-binaries, no network) inside `nix develop`.
+            }
+            // ortEnv
+          );
         };
 
       # Hydra builds the `hydraJobs` output (NOT `checks`/`packages`), so the

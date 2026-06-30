@@ -24,8 +24,8 @@ env:
   WIF_SERVICE_ACCOUNT: crosswords-ci@casazza-identity.iam.gserviceaccount.com
 
 jobs:
-  e2e-tests:
-    name: E2E Regression Tests
+  checks:
+    name: Nix Build & Checks
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,200 +33,35 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install PNPM
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Install Dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright Browser
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Run E2E test suite
-        id: e2e
-        continue-on-error: true
-        env:
-          PW_REPORT_FORMAT: "ci"
+      # Build every deliverable from the Rust workspace. IFD is needed because the
+      # client flake vendors panel-kit into a derivation it reads manifests from.
+      - name: Build server, web, desktop, tools
         run: |
-          set -o pipefail
-          START_TS=$EPOCHSECONDS
-          pnpm run test:e2e
-          TEST_EXIT=$?
-          END_TS=$EPOCHSECONDS
-          echo "exit_code=${TEST_EXIT}" >> "$GITHUB_OUTPUT"
-          echo "run_seconds=$((END_TS - START_TS))" >> "$GITHUB_OUTPUT"
-          exit ${TEST_EXIT}
+          nix build --option allow-import-from-derivation true -L \
+            ./client#crossword-server \
+            ./client#crossword-web \
+            ./client#crossword-desktop \
+            ./client#crossword-tools
 
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-e2e-artifacts-${{ github.run_id }}
-          path: |
-            playwright-report
-            test-results/junit-results.xml
-
-      - name: Resolve test metrics secrets
-        id: test-metrics-secrets
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-        run: |
-          if [ -z "${SOPS_AGE_KEY:-}" ]; then
-            echo "SOPS_AGE_KEY is not set. Skipping secure pushgateway config."
-            echo "pushgateway_url=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if ! command -v sops >/dev/null 2>&1; then
-            echo "sops not installed; installing..."
-            curl -Lo /tmp/sops https://github.com/getsops/sops/releases/download/v3.9.0/sops-v3.9.0.linux.amd64
-            sudo install /tmp/sops /usr/local/bin/sops
-          fi
-
-          SECRET_FILE="secrets/ci-test-metrics.sops.yaml"
-          if [ ! -f "$SECRET_FILE" ]; then
-            echo "Missing $SECRET_FILE. Skipping secure pushgateway config."
-            echo "pushgateway_url=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          PUSHGATEWAY_URL=$(sops -d "$SECRET_FILE" | awk '/^[[:space:]]*TEST_REPORT_PUSHGATEWAY_URL[[:space:]]*:/ { sub(/^[[:space:]]*TEST_REPORT_PUSHGATEWAY_URL[[:space:]]*:[[:space:]]*/, ""); gsub(/"/, "", $0); print; exit }')
-          if [ -z "${PUSHGATEWAY_URL:-}" ]; then
-            echo "TEST_REPORT_PUSHGATEWAY_URL missing. Skipping secure pushgateway config."
-            echo "pushgateway_url=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "pushgateway_url=$PUSHGATEWAY_URL" >> "$GITHUB_OUTPUT"
-
-      - name: Export test metrics for regression tracking
-        if: always()
-        env:
-          PUSHGATEWAY_URL: ${{ steps.test-metrics-secrets.outputs.pushgateway_url }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${PUSHGATEWAY_URL:-}" ]; then
-            echo "PUSHGATEWAY_URL is not configured. Skipping metrics publish."
-            exit 0
-          fi
-
-          BRANCH_NAME=${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}
-          BRANCH_SLUG=$(printf '%s' "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '_' | sed 's/^_\+\|_\+$//g' | tr -s '_')
-          BRANCH_SLUG=${BRANCH_SLUG:-main}
-          REPORT_FILE="test-results/junit-results.xml"
-          RUN_START_TS="${START_TS}"
-
-          PASSED=0
-          FAILED=0
-          SKIPPED=0
-
-          if [ -f "$REPORT_FILE" ]; then
-            read -r PASSED FAILED SKIPPED < <(
-              REPORT_FILE="$REPORT_FILE" node - <<'NODE'
-              const fs = require('fs')
-
-              const reportFile = process.env.REPORT_FILE || 'test-results/junit-results.xml'
-              const xml = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : ''
-
-              function pick(pattern, fallback = 0) {
-                const match = xml.match(pattern)
-                if (!match) return fallback
-                return Number(match[1] ?? fallback)
-              }
-
-              let tests = 0
-              let failures = 0
-              let skipped = 0
-              let errors = 0
-
-              for (const m of xml.matchAll(/<testsuite[^>]*>/g)) {
-                const suite = m[0]
-                tests += Number((suite.match(/tests="(\d+)"/) || [0, 0])[1])
-                failures += Number((suite.match(/failures="(\d+)"/) || [0, 0])[1])
-                skipped += Number((suite.match(/skipped="(\d+)"/) || [0, 0])[1])
-                errors += Number((suite.match(/errors="(\d+)"/) || [0, 0])[1])
-              }
-
-              if (tests === 0) {
-                tests = pick(/tests="(\d+)"/)
-                failures = pick(/failures="(\d+)"/)
-                skipped = pick(/skipped="(\d+)"/)
-                errors = pick(/errors="(\d+)"/)
-              }
-
-              const totalFailed = failures + errors
-              const totalPassed = Math.max(0, tests - totalFailed - skipped)
-              process.stdout.write([totalPassed, totalFailed, skipped].join(' '))
-              NODE
-            )
-          fi
-
-          if [[ "${{ steps.e2e.outputs.exit_code }}" == "0" ]]; then
-            PASS_STATE=1
-            FAIL_STATE=0
-            SKIP_STATE=0
-          else
-            PASS_STATE=0
-            FAIL_STATE=1
-            SKIP_STATE=0
-          fi
-
-          PASSED_INT=${PASSED:-0}
-          FAILED_INT=${FAILED:-0}
-          SKIPPED_INT=${SKIPPED:-0}
-
-          SUITE="e2e"
-          PROJECT="definitely-not-crosswords"
-          DURATION=${{ steps.e2e.outputs.run_seconds || 0 }}
-
-          METRICS_FILE="/tmp/testing-regression.prom"
-          cat > "$METRICS_FILE" <<EOF_METRICS
-          # HELP definitely_not_crosswords_ci_test_state CI test suite outcome (1 when state is true).
-          # TYPE definitely_not_crosswords_ci_test_state gauge
-          definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="passed"} ${PASS_STATE}
-          definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="failed"} ${FAIL_STATE}
-          definitely_not_crosswords_ci_test_state{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="skipped"} ${SKIP_STATE}
-
-          # HELP definitely_not_crosswords_ci_test_case_count CI test case counts from the latest run.
-          # TYPE definitely_not_crosswords_ci_test_case_count gauge
-          definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="passed"} ${PASSED_INT}
-          definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="failed"} ${FAILED_INT}
-          definitely_not_crosswords_ci_test_case_count{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",state="skipped"} ${SKIPPED_INT}
-
-          # HELP definitely_not_crosswords_ci_test_duration_seconds Duration in seconds for the latest run.
-          # TYPE definitely_not_crosswords_ci_test_duration_seconds gauge
-          definitely_not_crosswords_ci_test_duration_seconds{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}"} ${DURATION}
-
-          # HELP definitely_not_crosswords_ci_test_run_timestamp Unix timestamp of last completed run.
-          # TYPE definitely_not_crosswords_ci_test_run_timestamp gauge
-          definitely_not_crosswords_ci_test_run_timestamp{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}"} ${RUN_START_TS}
-
-          # HELP definitely_not_crosswords_ci_test_suite_cases_total Total test cases by suite outcome for the latest run.
-          # TYPE definitely_not_crosswords_ci_test_suite_cases_total gauge
-          definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="passed"} ${PASSED_INT}
-          definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="failed"} ${FAILED_INT}
-          definitely_not_crosswords_ci_test_suite_cases_total{project="${PROJECT}",suite="${SUITE}",branch="${BRANCH_SLUG}",outcome="skipped"} ${SKIPPED_INT}
-          EOF_METRICS
-
-          PUSH_URL="${PUSHGATEWAY_URL}/metrics/job/definitely-not-crosswords-ci-tests/branch/${BRANCH_SLUG}/suite/${SUITE}"
-          echo "Pushing test metrics to ${PUSH_URL}"
-          curl --fail-with-body --show-error --silent --data-binary @"$METRICS_FILE" "${PUSH_URL}"
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
+    needs: checks
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@main
 
       # Authenticate to Google Cloud via OIDC Workload Identity Federation
       - name: Authenticate to Google Cloud
@@ -238,7 +73,6 @@ jobs:
           service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
           create_credentials_file: true
 
-      # Login to Google Artifact Registry
       - name: Login to Artifact Registry
         uses: docker/login-action@v3
         with:
@@ -246,21 +80,19 @@ jobs:
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
-      # Set up Docker Buildx for premium layering and caching
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # Build the layered image with nix and load it into the local docker daemon.
+      - name: Build image (nix)
+        run: |
+          IMAGE_TAR=$(nix build --option allow-import-from-derivation true --no-link --print-out-paths .#dockerImage)
+          docker load < "$IMAGE_TAR"
 
-      # Build and push the image tagged with git commit SHA and latest
-      - name: Build and Push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: |
-            ${{ env.GAR_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
-            ${{ env.GAR_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Tag and push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          BASE="${GAR_REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE}"
+          docker tag "${BASE}:latest" "${BASE}:${GITHUB_SHA}"
+          docker push "${BASE}:${GITHUB_SHA}"
+          docker push "${BASE}:latest"
 
   conventional-commits-check:
     name: Conventional Commits Check
@@ -278,22 +110,17 @@ jobs:
           if [ -z "$PR_NUMBER" ]; then
             PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --json number --jq '.[0].number')
           fi
-          
+
           echo "PR Number: $PR_NUMBER"
-          
-          # Get PR commits and check for breaking changes in conventional format
-          # Breaking change:
-          #   - commit starts with type followed by !: e.g. "feat!: add new feature"
-          #   - OR commit body contains "BREAKING CHANGE" or "BREAKING CHANGES"
+
+          # Breaking change: "type!:" prefix or "BREAKING CHANGE(S)" in the body.
           has_breaking=$(gh pr view $PR_NUMBER --json commits --jq '[.commits[].message | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
-          
+
           if [ "$has_breaking" = "true" ]; then
             echo "is_major=true" >> $GITHUB_OUTPUT
-            echo "is_major=true"
             echo "🚨 BREAKING CHANGE (Major Version Change) detected in PR commits!"
           else
             echo "is_major=false" >> $GITHUB_OUTPUT
-            echo "is_major=false"
             echo "✅ Only Minor/Patch commits detected."
           fi
 
@@ -312,15 +139,14 @@ jobs:
           if [ -z "$PR_NUMBER" ]; then
             PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --json number --jq '.[0].number')
           fi
-          
+
           if [ "$IS_MAJOR" = "true" ]; then
-            # Major version: Require at least one APPROVED review
             approvals=$(gh pr view $PR_NUMBER --json reviews --jq '[.reviews[] | select(.state == "APPROVED")] | length')
             if [ "$approvals" -eq 0 ]; then
-              echo "❌ Major version change (breaking changes) requires at least one APPROVED pull request review to merge!"
+              echo "❌ Major version change requires at least one APPROVED review to merge!"
               exit 1
             else
-              echo "✅ Major version change has $approvals approved reviews. Approval check passed."
+              echo "✅ Major version change has $approvals approved reviews."
             fi
           else
             echo "✅ Minor/Patch version change. Approved review is not required."
@@ -329,7 +155,7 @@ jobs:
   auto-merge:
     name: Auto-Merge Minor/Patch PR
     runs-on: ubuntu-latest
-    needs: [ build-and-push, conventional-commits-check, approval-check ]
+    needs: [ checks, build-and-push, conventional-commits-check, approval-check ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
       - name: Enable Auto-Merge
@@ -340,8 +166,5 @@ jobs:
           if [ -z "$PR_NUMBER" ]; then
             PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --json number --jq '.[0].number')
           fi
-          
-          # Enable GitHub auto-merge (squash and merge) for this minor/patch PR.
-          # This tells GitHub to merge it as soon as all status checks pass.
           gh pr merge $PR_NUMBER --auto --squash
           echo "✅ Dynamic auto-merge enabled for this PR (squash method)."

@@ -101,6 +101,31 @@
           # keep crane from import-from-deriving the crate name out of `src` too.
           cargoVendorDir = craneLib.vendorCargoDeps { src = ./.; };
 
+          # onnxruntime for the generator's `ort` crate. ort rc.12's pregenerated
+          # bindings target onnxruntime 1.24.2; nixpkgs only has 1.22.2 (ABI
+          # mismatch), so we vendor the exact MS prebuilt `ort` would otherwise
+          # download — a raw-LZMA2 tarball of a static libonnxruntime.a. ort-sys
+          # then static-links it via ORT_LIB_LOCATION, with no network/openssl.
+          ortLib = pkgs.stdenvNoCC.mkDerivation {
+            pname = "onnxruntime-ort-prebuilt";
+            version = "1.24.2";
+            src = pkgs.fetchurl {
+              url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.24.2/x86_64-unknown-linux-gnu.tar.lzma2";
+              hash = "sha256-rMHLp5wzdZTq0diMpyUWFHqmAFTIQhe1M5mjHKpbpnE=";
+            };
+            nativeBuildInputs = [ pkgs.python3 ];
+            dontUnpack = true;
+            buildPhase = ''
+              mkdir -p $out/lib
+              python3 -c "import lzma,tarfile,io; raw=lzma.decompress(open('$src','rb').read(), format=lzma.FORMAT_RAW, filters=[{'id':lzma.FILTER_LZMA2,'dict_size':1<<26}]); tarfile.open(fileobj=io.BytesIO(raw)).extractall('$out/lib')"
+            '';
+            dontInstall = true;
+          };
+          ortEnv = {
+            ORT_LIB_LOCATION = "${ortLib}/lib";
+            ORT_SKIP_DOWNLOAD = "1";
+          };
+
           commonArgs = {
             inherit src cargoVendorDir;
             pname = "crossword-client";
@@ -200,11 +225,26 @@
               cp -r ${crossword-web}/. desktop/dist/
             '';
           });
+
+          # The Axum backend (tRPC + auth + ONNX generator). Static-links the
+          # vendored onnxruntime via ortEnv; the model/WordNet assets in `data/`
+          # are provided at runtime (mounted), not baked into the binary.
+          serverArgs = commonArgs // ortEnv // {
+            pname = "crossword-server";
+            cargoExtraArgs = "-p crossword-server";
+          };
+          serverCargoArtifacts = craneLib.buildDepsOnly (serverArgs // {
+            pname = "crossword-server-deps";
+          });
+          crossword-server = craneLib.buildPackage (serverArgs // {
+            cargoArtifacts = serverCargoArtifacts;
+            doInstallCargoArtifacts = false;
+          });
         in
         {
           packages = {
             default = crossword-web;
-            inherit crossword-web crossword-desktop;
+            inherit crossword-web crossword-desktop crossword-server;
           };
 
           checks = {
@@ -230,11 +270,11 @@
             });
             # The bundle build doubles as a check so `nix flake check` / `om ci`
             # exercise the wasm path end to end; the desktop build exercises the
-            # Tauri/WebKit path.
-            inherit crossword-web crossword-desktop;
+            # Tauri/WebKit path; the server build exercises the ONNX/onnxruntime path.
+            inherit crossword-web crossword-desktop crossword-server;
           };
 
-          devShells.default = craneLib.devShell {
+          devShells.default = craneLib.devShell ({
             checks = self'.checks;
             packages = with pkgs; [
               rustToolchain
@@ -252,7 +292,9 @@
               libsoup_3
               gtk3
             ];
-          };
+            # So `cargo build -p crossword-server` finds the vendored onnxruntime
+            # (no download-binaries, no network) inside `nix develop`.
+          } // ortEnv);
         };
 
       # Hydra builds the `hydraJobs` output (NOT `checks`/`packages`), so the

@@ -59,9 +59,57 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run release-plz
-        uses: release-plz/action@v0.5
-        with:
-          manifest_path: client/Cargo.toml
+      # We run the release-plz CLI directly instead of release-plz/action, because
+      # the action can't pass `--registry-manifest-path`. These crates are
+      # publish=false, so release-plz's default baseline (the crates.io package)
+      # doesn't exist — it finds nothing to diff against and never bumps the
+      # version. We hand it the last released version instead, via a worktree
+      # checked out at the last tag: release-plz's supported "the released version
+      # is already available locally" path. Everything downstream (bump PR,
+      # Cargo.lock, changelog, tag, GitHub release) is release-plz as designed.
+      - name: Install release-plz
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://github.com/release-plz/release-plz/releases/download/release-plz-v0.3.159/release-plz-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C "$HOME/.local/bin" release-plz
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/release-plz" --version
+
+      - name: Configure git identity for release commits
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Check out the last release as the version baseline
+        id: baseline
+        run: |
+          last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -n "$last_tag" ]; then
+            echo "Baselining version detection against $last_tag"
+            git worktree add --detach /tmp/release-baseline "$last_tag"
+            echo "flag=--registry-manifest-path /tmp/release-baseline/client/Cargo.toml" >> "$GITHUB_OUTPUT"
+          else
+            echo "No prior v* tag — first release, no baseline needed"
+            echo "flag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: release-plz release-pr (open/update the version-bump PR)
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          GIT_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          release-plz release-pr \
+            --manifest-path client/Cargo.toml \
+            ${{ steps.baseline.outputs.flag }} \
+            --git-token "$GIT_TOKEN"
+
+      # Cuts the tag + GitHub release when Cargo.toml is ahead of the tags (i.e.
+      # right after a release PR merges). No baseline needed — it only compares the
+      # manifest version against existing tags. The PAT (not GITHUB_TOKEN) is what
+      # lets the new tag trigger the image-build workflow.
+      - name: release-plz release (tag + GitHub release)
+        env:
+          GIT_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          release-plz release \
+            --manifest-path client/Cargo.toml \
+            --git-token "$GIT_TOKEN"

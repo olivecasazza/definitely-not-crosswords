@@ -7,12 +7,6 @@
 
 [workspace]
 publish = false
-# Baseline the version off git tags, not crates.io. `publish = false` only skips
-# `cargo publish` — release-plz still queries the registry for the previous
-# version, finds nothing (unpublished), and so never detects changes. git_only
-# makes it read the last `git_tag_name` tag instead, so commits since v<x> drive
-# the bump. (Mutually exclusive with publish = true; fine here.)
-git_only = true
 git_release_enable = false
 git_tag_enable = false
 changelog_update = false

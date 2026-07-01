@@ -4,9 +4,15 @@ use dioxus::prelude::*;
 
 #[component]
 pub fn AppFooter() -> Element {
+    // Baked at build time (the workspace version release-plz bumps), so the
+    // footer shows which release is deployed.
+    let version = env!("CARGO_PKG_VERSION");
     rsx! {
         footer { class: "site-footer",
-            span { class: "muted", "© definitely-not-crosswords" }
+            span { class: "muted",
+                "© definitely-not-crosswords "
+                span { class: "app-version", "v{version}" }
+            }
             nav { class: "site-footer-nav",
                 a { class: "muted", href: "https://github.com/ocasazza", "GitHub" }
                 a { class: "muted", href: "#", "Privacy" }

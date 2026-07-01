@@ -6,3 +6,4 @@ pub mod footer;
 pub mod generation_progress;
 pub mod header;
 pub mod pro_upgrade;
+pub mod staging_banner;

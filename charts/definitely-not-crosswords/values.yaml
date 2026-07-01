@@ -68,6 +68,18 @@ auth:
   origin: "https://definitely-not-crosswords.local"
   nextAuthSecret: "supersecretsecret"
 
+# Billing (Lemon Squeezy Pro checkout).
+billing:
+  lemonSqueezy:
+    # Off until credentials exist. When enabled, the deployment injects
+    # LEMONSQUEEZY_API_KEY / LEMONSQUEEZY_STORE_ID / LEMONSQUEEZY_VARIANT_ID from
+    # the named secret (defaults to the app secret).
+    enabled: false
+    existingSecret: ""
+  # A discount code auto-applied to every Pro checkout. Staging sets this to a
+  # ~90%-off code so Pro is $1; empty on prod (users can still enter codes).
+  proDiscountCode: ""
+
 # Admin users are reconciled before the app starts. Existing users are updated
 # to the configured role and marked verified when emailVerified is true.
 adminUsers:

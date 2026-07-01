@@ -10,6 +10,7 @@
 //! the events crate (Phase C).
 
 mod auth_routes;
+mod checkout;
 mod ctx;
 mod routers;
 
@@ -68,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/auth/signout",
             get(auth_routes::signout).post(auth_routes::signout),
         )
+        .route("/api/checkout", post(checkout::checkout))
         .route("/api/trpc-ws", get(trpc_ws))
         .route("/api/trpc/:proc", get(trpc_get).post(trpc_post))
         .with_state(AppState { pool, auth, events });
@@ -95,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Build the auth request from headers (next-auth cookie + optional bearer).
-fn req_auth(headers: &HeaderMap) -> RequestAuth {
+pub(crate) fn req_auth(headers: &HeaderMap) -> RequestAuth {
     RequestAuth {
         cookie_header: headers
             .get("cookie")

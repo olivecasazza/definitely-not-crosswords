@@ -144,6 +144,29 @@ spec:
                   name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
                   key: DATABASE_URL
                   {{- end }}
+            {{- if .Values.billing.proDiscountCode }}
+            # Auto-applied to Pro checkouts (staging sets this so Pro is $1).
+            - name: PRO_CHECKOUT_DISCOUNT_CODE
+              value: {{ .Values.billing.proDiscountCode | quote }}
+            {{- end }}
+            {{- if .Values.billing.lemonSqueezy.enabled }}
+            {{- $ls := .Values.billing.lemonSqueezy.existingSecret | default (printf "%s-secrets" (include "definitely-not-crosswords.fullname" .)) }}
+            - name: LEMONSQUEEZY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ls }}
+                  key: LEMONSQUEEZY_API_KEY
+            - name: LEMONSQUEEZY_STORE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ls }}
+                  key: LEMONSQUEEZY_STORE_ID
+            - name: LEMONSQUEEZY_VARIANT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ls }}
+                  key: LEMONSQUEEZY_VARIANT_ID
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}

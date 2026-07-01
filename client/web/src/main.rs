@@ -11,7 +11,7 @@ mod pages;
 mod store;
 mod styles;
 
-use components::{footer::AppFooter, header::AppHeader};
+use components::{footer::AppFooter, header::AppHeader, staging_banner::StagingBanner};
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, Storage};
 use panel_kit::CSS as PANEL_CSS;
@@ -98,6 +98,7 @@ fn App() -> Element {
 fn Shell() -> Element {
     rsx! {
         div { class: "app-shell",
+            StagingBanner {}
             AppHeader {}
             main { class: "app-main", Outlet::<Route> {} }
             AppFooter {}

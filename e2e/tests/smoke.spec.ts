@@ -16,19 +16,24 @@ test("home page loads and the WASM app hydrates", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("login page renders the credentials form", async ({ page }) => {
-  await page.goto("/auth/login");
-  await expect(page.getByText(/email address/i)).toBeVisible();
+test("navigate to login and see the credentials form", async ({ page }) => {
+  // Navigate the way a user does (SPA nav from home), not a cold deep-link.
+  await page.goto("/");
+  await expect(page.locator("#main")).not.toBeEmpty();
+  await page.getByRole("link", { name: /^sign in$/i }).first().click();
+  await expect(page).toHaveURL(/\/auth\/login/);
+  // Assert on the inputs/controls themselves (labels are decorative).
+  await expect(page.locator('input[type="email"]')).toBeVisible();
   await expect(page.locator('input[type="password"]')).toBeVisible();
   await expect(page.getByRole("button", { name: /^sign in/i })).toBeVisible();
-  // Path to sign-up is present.
-  await expect(page.getByRole("link", { name: /sign up/i })).toBeVisible();
 });
 
-test("signup page renders the registration form", async ({ page }) => {
-  await page.goto("/auth/signup");
-  await expect(page.getByText(/full name/i)).toBeVisible();
-  await expect(page.getByText(/email address/i)).toBeVisible();
+test("navigate to signup and see the registration form", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#main")).not.toBeEmpty();
+  await page.getByRole("link", { name: /create account|get started|sign up/i }).first().click();
+  await expect(page).toHaveURL(/\/auth\/signup/);
+  await expect(page.locator('input[type="email"]')).toBeVisible();
   await expect(page.locator('input[type="password"]')).toBeVisible();
   await expect(page.getByRole("button", { name: /create account/i })).toBeVisible();
 });

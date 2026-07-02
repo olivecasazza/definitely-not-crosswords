@@ -1,0 +1,86 @@
+name: e2e-canary
+
+# Deterministic Playwright e2e against staging. One spec set, two purposes:
+#   • smoke.spec.ts — the always-on canary (unauthenticated; no creds)
+#   • demo.spec.ts  — authenticated golden path; its 1080p recording is published
+#                     to the GitHub release as the demo video (needs E2E creds)
+# Semantic locators keep it low-maintenance: a styling/layout refactor won't break
+# it, only a real user-facing flow change will (which should page you).
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # nightly ~00:00 PT — canary against staging
+  release:
+    types: [published] # cut a release -> record + publish the demo video
+  workflow_dispatch: {}
+
+concurrency:
+  group: e2e-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Playwright canary + demo capture
+    runs-on: ubuntu-latest
+    # Official image ships the browsers + system libs — no install/caching step.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+    env:
+      E2E_BASE_URL: https://crosswords-staging.casazza.io
+      # Set these repo secrets to enable the authenticated demo (a staging test
+      # account). Absent -> demo.spec.ts self-skips; the canary still runs.
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        working-directory: e2e
+        run: npm ci
+      - name: Run e2e
+        working-directory: e2e
+        run: npx playwright test --reporter=list,html
+      - name: Upload report + video + trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 14
+      - name: Alert Discord on failure
+        if: failure()
+        env:
+          DISCORD: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          [ -z "$DISCORD" ] && { echo "DISCORD_WEBHOOK unset; skipping alert"; exit 0; }
+          curl -sf -H 'Content-Type: application/json' \
+            -d "{\"content\":\"🚨 crosswords staging e2e canary FAILED — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
+            "$DISCORD" || true
+
+  publish-demo:
+    name: Publish demo video to the release
+    needs: canary
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-results
+          path: results
+      - name: Convert demo recording to mp4
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          # Playwright writes one webm per test under test-results/<test>/.
+          v=$(find results -path '*demo*' -name '*.webm' | head -1)
+          if [ -z "$v" ]; then
+            echo "No demo video (E2E_EMAIL/E2E_PASSWORD unset -> demo skipped)."; exit 0
+          fi
+          # yuv420p is load-bearing for Safari/Discord/Slack playback.
+          ffmpeg -y -i "$v" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+          echo "MP4=1" >> "$GITHUB_ENV"
+      - name: Attach demo.mp4 to the release
+        if: env.MP4 == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" demo.mp4 --clobber -R "${{ github.repository }}"

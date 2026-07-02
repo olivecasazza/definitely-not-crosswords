@@ -65,6 +65,8 @@ jobs:
     # to the rolling `demo-latest` release for a stable view link).
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create/upload the demo-latest release asset
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

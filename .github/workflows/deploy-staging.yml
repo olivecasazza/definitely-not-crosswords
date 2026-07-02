@@ -3,15 +3,23 @@ name: deploy-staging
 # Continuous staging deploy. Flux's built-in image-automation can't drive this
 # repo's deploy: the cluster is one kubenix-generated manifests.yaml (single-line
 # JSON), and the `$imagepolicy` setter marker lives in a Nix comment that Flux's
-# YAML-only Setter strategy never sees. So instead, when release-plz cuts a tag we
-# bump the staging image tag in the git source of truth (nixlab crosswords.nix).
-# nixlab's rebuild-k8s-manifests workflow then regenerates manifests.yaml and Flux
-# applies it — staging rolls to the new version. Prod stays pinned (no marker).
+# YAML-only Setter strategy never sees. So instead we bump the staging image tag in
+# the git source of truth (nixlab crosswords.nix); nixlab's rebuild-k8s-manifests
+# workflow regenerates manifests.yaml and Flux applies it. Prod stays pinned.
+#
+# Triggered AFTER the image build (CI/CD Pipeline) succeeds for a tag — not on the
+# tag push itself — so staging is never pointed at an image not yet in the registry.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_run:
+    workflows: ["CI/CD Pipeline"]
+    types: [completed]
+  # Manual escape hatch: redeploy staging to an arbitrary already-built tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to deploy to staging (e.g. v0.1.1)"
+        required: true
 
 # Serialize: never race two tag bumps against nixlab main.
 concurrency:
@@ -22,17 +30,24 @@ jobs:
   bump-staging-tag:
     name: Bump nixlab staging image tag
     runs-on: ubuntu-latest
-    # Inert until the cross-repo token is provisioned (a PAT with contents:write on
-    # casazza-info/nixlab, stored as the NIXLAB_DEPLOY_TOKEN secret).
+    # Only for a successful image build of a tag (head_branch is the tag name,
+    # e.g. v0.1.2), or a manual dispatch. Skips main-branch pipeline runs.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    # Reuses RELEASE_PLZ_TOKEN — it must be a PAT with contents:write on
+    # casazza-info/nixlab (it already cuts crosswords tags; classic-PAT `repo`
+    # scope covers both repos). Inert if the secret is absent.
     steps:
       - name: Update the staging image tag in nixlab
         env:
-          TAG: ${{ github.ref_name }}
-          NIXLAB_TOKEN: ${{ secrets.NIXLAB_DEPLOY_TOKEN }}
+          # Manual dispatch supplies the tag; otherwise it's the built tag.
+          TAG: ${{ github.event.inputs.tag || github.event.workflow_run.head_branch }}
+          NIXLAB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
           if [ -z "$NIXLAB_TOKEN" ]; then
-            echo "NIXLAB_DEPLOY_TOKEN not set — skipping staging deploy."
-            echo "Provision a PAT (contents:write on casazza-info/nixlab) to enable."
+            echo "RELEASE_PLZ_TOKEN not set — skipping staging deploy."
             exit 0
           fi
           set -euo pipefail

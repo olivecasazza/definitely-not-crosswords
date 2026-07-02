@@ -166,6 +166,13 @@ spec:
                 secretKeyRef:
                   name: {{ $ls }}
                   key: LEMONSQUEEZY_VARIANT_ID
+            # Enables webhook signature verification (/api/webhooks/lemonsqueezy).
+            - name: LEMONSQUEEZY_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ls }}
+                  key: LEMONSQUEEZY_WEBHOOK_SECRET
+                  optional: true
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

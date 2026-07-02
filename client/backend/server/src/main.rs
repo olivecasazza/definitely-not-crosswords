@@ -13,6 +13,7 @@ mod auth_routes;
 mod checkout;
 mod ctx;
 mod routers;
+mod webhook;
 
 use axum::{
     extract::{
@@ -70,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
             get(auth_routes::signout).post(auth_routes::signout),
         )
         .route("/api/checkout", post(checkout::checkout))
+        .route("/api/webhooks/lemonsqueezy", post(webhook::lemonsqueezy))
         .route("/api/trpc-ws", get(trpc_ws))
         .route("/api/trpc/:proc", get(trpc_get).post(trpc_post))
         .with_state(AppState { pool, auth, events });

@@ -30,6 +30,9 @@ uuid = { version = "1", features = ["v4"] }
 scrypt = "0.11"
 rand = "0.8"
 hex = "0.4"
+# HMAC-SHA256 verification of Lemon Squeezy webhook signatures.
+hmac = "0.12"
+sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 chrono = { version = "0.4", features = ["serde"] }
 # ONNX crossword generator (port of services/crossword + @xenova/transformers):

@@ -1,0 +1,55 @@
+name: deploy-staging
+
+# Continuous staging deploy. Flux's built-in image-automation can't drive this
+# repo's deploy: the cluster is one kubenix-generated manifests.yaml (single-line
+# JSON), and the `$imagepolicy` setter marker lives in a Nix comment that Flux's
+# YAML-only Setter strategy never sees. So instead, when release-plz cuts a tag we
+# bump the staging image tag in the git source of truth (nixlab crosswords.nix).
+# nixlab's rebuild-k8s-manifests workflow then regenerates manifests.yaml and Flux
+# applies it — staging rolls to the new version. Prod stays pinned (no marker).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Serialize: never race two tag bumps against nixlab main.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  bump-staging-tag:
+    name: Bump nixlab staging image tag
+    runs-on: ubuntu-latest
+    # Inert until the cross-repo token is provisioned (a PAT with contents:write on
+    # casazza-info/nixlab, stored as the NIXLAB_DEPLOY_TOKEN secret).
+    steps:
+      - name: Update the staging image tag in nixlab
+        env:
+          TAG: ${{ github.ref_name }}
+          NIXLAB_TOKEN: ${{ secrets.NIXLAB_DEPLOY_TOKEN }}
+        run: |
+          if [ -z "$NIXLAB_TOKEN" ]; then
+            echo "NIXLAB_DEPLOY_TOKEN not set — skipping staging deploy."
+            echo "Provision a PAT (contents:write on casazza-info/nixlab) to enable."
+            exit 0
+          fi
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${NIXLAB_TOKEN}@github.com/casazza-info/nixlab.git" nixlab
+          cd nixlab
+          file=modules/k8s/apps/crosswords.nix
+          # Rewrite only the line carrying the crosswords-staging $imagepolicy marker,
+          # so the pinned prod tag (no marker) is never touched.
+          sed -i -E 's|tag = "v[0-9]+\.[0-9]+\.[0-9]+"; # \{"\$imagepolicy": "apps:crosswords-staging"\}|tag = "'"$TAG"'"; # {"$imagepolicy": "apps:crosswords-staging"}|' "$file"
+          if git diff --quiet; then
+            echo "Staging already at $TAG — nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -aqm "chore(k8s): deploy crosswords staging to $TAG"
+          # nixlab's rebuild-k8s-manifests workflow regenerates manifests.yaml from
+          # this .nix change and Flux applies it.
+          git push origin HEAD:main
+          echo "Bumped nixlab crosswords staging to $TAG"

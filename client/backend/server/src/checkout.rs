@@ -9,6 +9,7 @@
 use crate::AppState;
 use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 use serde_json::{json, Value};
+use sqlx::Row;
 
 pub async fn checkout(
     State(st): State<AppState>,
@@ -28,6 +29,15 @@ pub async fn checkout(
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_uppercase())
         .filter(|s| !s.is_empty());
+    // A client-supplied code must be validated against the local Discount table
+    // BEFORE we forward it to Lemon Squeezy — LS honors its own expiry/max_redemptions
+    // but not our `isActive` flag, so a DB-deactivated code would otherwise still
+    // apply. The env default is server-set and trusted, so it skips this check.
+    if let Some(code) = &user_code {
+        if let Err(reason) = validate_discount_code(&st.pool, code).await {
+            return err(400, &reason);
+        }
+    }
     let discount_code = user_code.or_else(|| {
         std::env::var("PRO_CHECKOUT_DISCOUNT_CODE")
             .ok()
@@ -90,6 +100,47 @@ pub async fn checkout(
 }
 
 type Response = axum::response::Response;
+
+/// Reject a client-supplied discount code that is unknown, inactive, expired, or
+/// past its redemption limit. Mirrors the checks in `routers::discount::validate`.
+/// `code` is expected already trimmed/upper-cased. Returns Err(reason) if invalid.
+async fn validate_discount_code(pool: &sqlx::PgPool, code: &str) -> Result<(), String> {
+    // expiresAt is TIMESTAMP(3) (no tz); compare against UTC wall time.
+    let row = sqlx::query(
+        r#"
+        SELECT "isActive",
+               "maxRedemptions", "timesRedeemed",
+               ("expiresAt" IS NOT NULL
+                AND "expiresAt" < (now() AT TIME ZONE 'UTC')) AS "isExpired"
+        FROM "Discount"
+        WHERE code = $1
+        "#,
+    )
+    .bind(code)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some(row) = row else {
+        return Err("This code is not valid.".to_string());
+    };
+
+    if !row.get::<bool, _>("isActive") {
+        return Err("This code is not valid.".to_string());
+    }
+    if row.get::<bool, _>("isExpired") {
+        return Err("This code has expired.".to_string());
+    }
+    let max_red: Option<i32> = row.get("maxRedemptions");
+    let redeemed: i32 = row.get("timesRedeemed");
+    if let Some(max) = max_red {
+        if redeemed >= max {
+            return Err("This code has reached its redemption limit.".to_string());
+        }
+    }
+
+    Ok(())
+}
 
 fn ls_config() -> Result<(String, String, String), String> {
     let get = |k: &str| std::env::var(k).map_err(|_| format!("{k} is not set"));

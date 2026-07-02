@@ -78,6 +78,20 @@ async fn main() -> anyhow::Result<()> {
     // enabled ONLY in local. Outside local it's off AND the route is unregistered,
     // so it can't mint an admin session on staging/prod.
     let auth = AuthService::new(is_local);
+
+    // Fail closed: refuse to serve PRODUCTION with an empty or the known-weak
+    // session-signing secret, since it makes admin session cookies forgeable
+    // offline. Staging/local tolerate the default to keep setup frictionless;
+    // secret rotation itself is an operator task.
+    if env == "production"
+        && (auth.nextauth_secret.is_empty() || auth.nextauth_secret == "supersecretsecret")
+    {
+        anyhow::bail!(
+            "refusing to start: NEXTAUTH_SECRET is empty or the known-weak default \
+             \"supersecretsecret\"; set a strong NEXTAUTH_SECRET"
+        );
+    }
+
     let events = EventBus::default();
 
     let mut app = Router::new()
@@ -97,6 +111,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/webhooks/lemonsqueezy", post(webhook::lemonsqueezy))
         .route("/api/trpc-ws", get(trpc_ws))
         .route("/api/trpc/:proc", get(trpc_get).post(trpc_post));
+    // The `local-dev` callback issues a valid session for any account with NO
+    // password check — a dev/E2E convenience. Only mount it in local so it can
+    // never be reached on staging/prod.
     if is_local {
         app = app.route("/api/auth/callback/local-dev", post(auth_routes::local_dev));
     }
@@ -254,16 +271,27 @@ async fn session(State(st): State<AppState>, headers: HeaderMap) -> Json<Value> 
     let Some(u) = auth.user else {
         return Json(json!({}));
     };
-    // Enrich with the display name from the DB (the cookie only carries id/email/role).
-    let name: Option<String> = sqlx::query(r#"SELECT name FROM "User" WHERE id = $1"#)
-        .bind(&u.id)
-        .fetch_optional(&st.pool)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|r| r.get::<Option<String>, _>("name"));
+    // Enrich with the display name + real verification status from the DB (the
+    // cookie only carries id/email/role).
+    let row = sqlx::query(
+        r#"SELECT name, ("emailVerified" IS NOT NULL) AS email_verified
+           FROM "User" WHERE id = $1"#,
+    )
+    .bind(&u.id)
+    .fetch_optional(&st.pool)
+    .await
+    .ok()
+    .flatten();
+    let name: Option<String> = row.as_ref().and_then(|r| r.get::<Option<String>, _>("name"));
+    let email_verified: bool = row
+        .as_ref()
+        .map(|r| r.get::<bool, _>("email_verified"))
+        .unwrap_or(false);
     Json(json!({
-        "user": { "id": u.id, "email": u.email, "name": name, "image": Value::Null, "role": u.role }
+        "user": {
+            "id": u.id, "email": u.email, "name": name, "image": Value::Null,
+            "role": u.role, "emailVerified": email_verified
+        }
     }))
 }
 

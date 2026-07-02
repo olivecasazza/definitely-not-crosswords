@@ -367,6 +367,21 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .and_then(|v| v.as_array())
         .ok_or_else(|| "missing actions".to_string())?;
 
+    // Membership check: the caller must belong to this active game before
+    // injecting actions into it (prevents IDOR into games they aren't part of).
+    let is_member = sqlx::query(
+        r#"SELECT 1 FROM "GameMember" WHERE "activeGameId" = $1 AND "userId" = $2 LIMIT 1"#,
+    )
+    .bind(id)
+    .bind(&user.id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .is_some();
+    if !is_member {
+        return Err("FORBIDDEN".to_string());
+    }
+
     let mut created: Vec<Value> = Vec::with_capacity(actions_arr.len());
 
     for action in actions_arr {
@@ -426,7 +441,7 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     Ok(json!(created))
 }
 
-/// activeGame.complete — public (matches TS `publicProcedure`).
+/// activeGame.complete — protected; caller must be a member of the active game.
 ///
 /// Scoring: +10 per correctGuess action, -2 per incorrectGuess action, floor 0.
 /// Returns `{ id }` of the created CompletedGame; the frontend navigates there.
@@ -440,10 +455,30 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 ///
 /// Step 4 must precede step 5 to avoid the cascade deleting the GameMembers.
 async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let user = match ctx.require_user() {
+        Ok(u) => u,
+        Err(e) => return Err(e),
+    };
+
     let active_game_id = input
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing id".to_string())?;
+
+    // Membership check: only a member of the active game may complete it
+    // (this is destructive — it deletes the ActiveGame and cascades GameActions).
+    let is_member = sqlx::query(
+        r#"SELECT 1 FROM "GameMember" WHERE "activeGameId" = $1 AND "userId" = $2 LIMIT 1"#,
+    )
+    .bind(active_game_id)
+    .bind(&user.id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .is_some();
+    if !is_member {
+        return Err("FORBIDDEN".to_string());
+    }
 
     // Load the active game.
     let ag = sqlx::query(r#"SELECT id, "gameId" FROM "ActiveGame" WHERE id = $1"#)

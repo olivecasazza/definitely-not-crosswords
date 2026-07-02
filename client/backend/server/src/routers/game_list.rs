@@ -13,10 +13,10 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
 /// gameList.get({ email }) — returns published unstarted Games, the caller's
 /// ActiveGames, and their CompletedGames, each tagged with a `type` discriminator
 /// matching the Prisma model name (Game / ActiveGame / CompletedGame).
-async fn get(input: &Value, ctx: &Ctx) -> Result<Value, String> {
-    let email = input["email"]
-        .as_str()
-        .ok_or_else(|| "missing email".to_string())?;
+async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    // Scope to the authenticated caller — ignore any client-supplied email to
+    // prevent enumerating another user's game activity (IDOR).
+    let email = ctx.require_user()?.email.as_str();
 
     // Active games the user is a member of, joined with their parent Game's title.
     // DISTINCT guards against multiple GameMember rows per (user, game).

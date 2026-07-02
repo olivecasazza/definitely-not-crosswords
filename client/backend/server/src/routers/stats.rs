@@ -1,7 +1,23 @@
 //! `stats` router — port of server/trpc/router/stats.ts
 use crate::ctx::Ctx;
+use crossword_db::Role;
 use serde_json::{json, Value};
 use sqlx::Row;
+
+/// Decide whether a row's email may be exposed to the current caller.
+///
+/// These endpoints are otherwise public, so returning every user's email would
+/// hand an unauthenticated caller the full email roster (phishing / credential
+/// stuffing fodder). We reveal an email only to admins, or to the caller for
+/// their *own* row — the latter keeps the "this is you" highlight working on
+/// the leaderboard / completed-game views without leaking anyone else's address.
+fn visible_email(row_email: Option<String>, ctx: &Ctx) -> Option<String> {
+    match ctx.auth.user.as_ref() {
+        Some(u) if u.role == Role::Admin => row_email,
+        Some(u) => row_email.filter(|e| e == &u.email),
+        None => None,
+    }
+}
 
 pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<Value, String>> {
     match proc {
@@ -19,7 +35,7 @@ async fn global_leaderboard(ctx: &Ctx) -> Result<Value, String> {
     let rows = sqlx::query(
         r#"
         SELECT u.id,
-               COALESCE(u.name, u.email, 'Anonymous Player') AS name,
+               COALESCE(u.name, 'Anonymous Player') AS name,
                u.email,
                COUNT(DISTINCT gm.id) AS games_played,
                COALESCE(SUM(ms.score), 0)              AS total_score,
@@ -51,7 +67,7 @@ async fn global_leaderboard(ctx: &Ctx) -> Result<Value, String> {
             json!({
                 "id": r.get::<String, _>("id"),
                 "name": r.get::<String, _>("name"),
-                "email": r.get::<Option<String>, _>("email"),
+                "email": visible_email(r.get::<Option<String>, _>("email"), ctx),
                 "gamesPlayed": r.get::<i64, _>("games_played"),
                 "totalScore": r.get::<i64, _>("total_score"),
                 "totalCorrect": total_correct,
@@ -201,7 +217,7 @@ async fn user_stats(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     };
 
     Ok(json!({
-        "profile": { "id": user_id, "name": user_name, "email": user_email },
+        "profile": { "id": user_id, "name": user_name, "email": visible_email(user_email, ctx) },
         "gamesPlayed":    games_played,
         "totalScore":     total_score,
         "totalCorrect":   total_correct,
@@ -240,7 +256,7 @@ async fn all_players(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             json!({
                 "id":    r.get::<String, _>("id"),
                 "name":  r.get::<Option<String>, _>("name"),
-                "email": r.get::<Option<String>, _>("email"),
+                "email": visible_email(r.get::<Option<String>, _>("email"), ctx),
             })
         })
         .collect();
@@ -266,12 +282,10 @@ async fn head_to_head(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .ok_or_else(|| "Opponent not found".to_string())?;
 
     let opp_name: Option<String> = opp_row.get("name");
-    let opp_email: Option<String> = opp_row.get("email");
-    let opponent_display = opp_name
-        .as_deref()
-        .or(opp_email.as_deref())
-        .unwrap_or("Opponent")
-        .to_string();
+    // Do NOT fall back to the opponent's email here: `opponentName` is returned
+    // to the caller, so an email fallback would let any authenticated user
+    // harvest a nameless opponent's address by enumerating opponentId.
+    let opponent_display = opp_name.as_deref().unwrap_or("Opponent").to_string();
 
     // Common completed games — use EXISTS to match TS Prisma `some` semantics,
     // avoiding row multiplication if a user has >1 GameMember entry per game.
@@ -515,7 +529,7 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
                     "isOwner": r.get::<bool, _>("is_owner"),
                     "user": {
                         "name":  r.get::<Option<String>, _>("user_name"),
-                        "email": r.get::<Option<String>, _>("user_email"),
+                        "email": visible_email(r.get::<Option<String>, _>("user_email"), ctx),
                     }
                 }
             })

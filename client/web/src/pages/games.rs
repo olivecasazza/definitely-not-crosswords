@@ -97,26 +97,46 @@ pub fn Games() -> Element {
     crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
-        // Parse items once; early-return for loading / error / not-signed-in states
+        // Distinguish session-loading from signed-out: while `session` is None the
+        // request is still in flight (show Loading), and only `Some(None)` is a
+        // genuine signed-out state. Collapsing both to None flashed a wrong
+        // "Sign in" message on every load.
+        match &*state.session.read() {
+            None => {
+                return rsx! {
+                    div {
+                        class: "muted",
+                        style: "padding: 2rem; text-align: center; font-size: .75rem; font-family: monospace;",
+                        "Loading..."
+                    }
+                };
+            }
+            Some(None) => {
+                return rsx! {
+                    div {
+                        class: "muted",
+                        style: "padding: 2rem; text-align: center; font-size: .75rem; font-family: monospace;",
+                        "Sign in to see your games."
+                    }
+                };
+            }
+            Some(Some(_)) => {}
+        }
+
+        // Parse items once; early-return for loading / error states
         // so all three panels show a consistent status.
         let all_items: Vec<GameListItem> = {
             let res = games_res.read_unchecked();
             match &*res {
-                None => {
+                // Signed in, but the game list is still being fetched (or the
+                // edge case of a session with no email) — keep showing Loading,
+                // never the sign-in prompt (handled above).
+                None | Some(None) => {
                     return rsx! {
                         div {
                             class: "muted",
                             style: "padding: 2rem; text-align: center; font-size: .75rem; font-family: monospace;",
                             "Loading..."
-                        }
-                    };
-                }
-                Some(None) => {
-                    return rsx! {
-                        div {
-                            class: "muted",
-                            style: "padding: 2rem; text-align: center; font-size: .75rem; font-family: monospace;",
-                            "Sign in to see your games."
                         }
                     };
                 }

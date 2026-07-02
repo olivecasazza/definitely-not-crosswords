@@ -554,9 +554,10 @@ async fn finalize_failed(
 }
 
 /// Authorize a `generator.runGeneration` subscription before it starts. Returns
-/// the authenticated admin user, or a tRPC-style error string.
+/// the authenticated user, or a tRPC-style error string. The free/Pro/admin
+/// distinction is enforced downstream by `check_quota`, so any signed-in user
+/// may reach generation here.
 pub fn authorize(auth: &AuthContext) -> Result<AuthUser, String> {
-    auth.require_capability(Capability::AdminAccess)
-        .map_err(|e| e.to_string())?;
-    Ok(auth.user.clone().expect("capability check implies a user"))
+    let user = auth.require_user().map_err(|e| e.to_string())?;
+    Ok(user.clone())
 }

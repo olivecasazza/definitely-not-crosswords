@@ -44,6 +44,9 @@ pub struct User {
     pub image: Option<String>,
     #[serde(default)]
     pub role: Role,
+    /// Real email-verification status from the session endpoint.
+    #[serde(default, rename = "emailVerified")]
+    pub email_verified: bool,
 }
 
 /// Shape of `GET /api/auth/session`: `{}` when signed out, `{user, expires}`
@@ -109,6 +112,11 @@ impl AppState {
             .as_ref()
             .map(|c| pick(&c.features))
             .unwrap_or(false)
+    }
+    /// True while the initial session fetch is still in flight (distinct from
+    /// signed-out). Used by route guards to avoid bouncing a real user mid-load.
+    pub fn is_loading(&self) -> bool {
+        self.session.read().is_none()
     }
 }
 

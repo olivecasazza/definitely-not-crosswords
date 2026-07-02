@@ -51,7 +51,12 @@ pub async fn lemonsqueezy(State(st): State<AppState>, headers: HeaderMap, body: 
         return ok();
     };
 
-    let status = resolve_status(event_name, attrs);
+    // Unrecognized event / status → leave the subscription untouched (never grant
+    // Pro by default). Ack with 200 so LS doesn't retry an event we intentionally skip.
+    let Some(status) = resolve_status(event_name, attrs) else {
+        tracing::info!("lemonsqueezy webhook: ignoring unmapped event {event_name} for user {user_id}");
+        return ok();
+    };
     // customer_id arrives as a JSON number; store as text (matches Prisma schema).
     let customer_id = attrs["customer_id"]
         .as_i64()
@@ -62,22 +67,33 @@ pub async fn lemonsqueezy(State(st): State<AppState>, headers: HeaderMap, body: 
         .as_str()
         .or_else(|| attrs["renews_at"].as_str())
         .map(str::to_string);
+    // Event timestamp used as a monotonic ordering key: a replayed or out-of-order
+    // event whose updated_at is older than what we last applied is dropped below.
+    let event_ts = attrs["updated_at"].as_str().map(str::to_string);
 
     // Upsert by userId (schema: one Subscription per user; userId is UNIQUE).
+    // The ON CONFLICT ... WHERE guard makes stale events a no-op: an update only
+    // lands when this event is newer-or-equal than the last one we recorded (or
+    // when either side lacks a timestamp, in which case we fall back to applying).
     let res = sqlx::query(
         r#"
         INSERT INTO "Subscription"
             (id, "userId", "lemonSqueezyId", "lemonSqueezyCustomerId",
-             status, "currentPeriodEnd", "updatedAt")
+             status, "currentPeriodEnd", "lastEventAt", "updatedAt")
         VALUES
             ($1, $2, $3, $4, $5::"SubscriptionStatus",
-             ($6::timestamptz AT TIME ZONE 'UTC'), NOW())
+             ($6::timestamptz AT TIME ZONE 'UTC'),
+             ($7::timestamptz AT TIME ZONE 'UTC'), NOW())
         ON CONFLICT ("userId") DO UPDATE SET
             "lemonSqueezyId"         = EXCLUDED."lemonSqueezyId",
             "lemonSqueezyCustomerId" = EXCLUDED."lemonSqueezyCustomerId",
             status                   = EXCLUDED.status,
             "currentPeriodEnd"       = EXCLUDED."currentPeriodEnd",
+            "lastEventAt"            = EXCLUDED."lastEventAt",
             "updatedAt"              = NOW()
+        WHERE "Subscription"."lastEventAt" IS NULL
+           OR EXCLUDED."lastEventAt" IS NULL
+           OR EXCLUDED."lastEventAt" >= "Subscription"."lastEventAt"
         "#,
     )
     .bind(uuid::Uuid::new_v4().to_string())
@@ -86,6 +102,7 @@ pub async fn lemonsqueezy(State(st): State<AppState>, headers: HeaderMap, body: 
     .bind(customer_id)
     .bind(status)
     .bind(period_end)
+    .bind(event_ts)
     .execute(&st.pool)
     .await;
 
@@ -99,23 +116,31 @@ pub async fn lemonsqueezy(State(st): State<AppState>, headers: HeaderMap, body: 
 }
 
 /// Map a webhook event (+ the attributes' own `status` for updates) to our enum.
-/// Mirrors the old resolveStatus/eventStatusMap in the Nuxt handler.
-fn resolve_status(event_name: &str, attrs: &Value) -> &'static str {
+///
+/// Returns `None` for any event/status we don't explicitly recognize so the caller
+/// leaves the row untouched — we must never grant Pro (`ACTIVE`) by default. Pause
+/// and refund events are handled explicitly and *revoke* Pro rather than retaining it.
+fn resolve_status(event_name: &str, attrs: &Value) -> Option<&'static str> {
     match event_name {
         "subscription_created"
         | "subscription_payment_success"
-        | "subscription_payment_recovered" => "ACTIVE",
-        "subscription_payment_failed" => "PAST_DUE",
-        "subscription_expired" => "EXPIRED",
-        "subscription_cancelled" => "CANCELLED",
+        | "subscription_payment_recovered" => Some("ACTIVE"),
+        "subscription_payment_failed" => Some("PAST_DUE"),
+        "subscription_expired" => Some("EXPIRED"),
+        "subscription_cancelled" => Some("CANCELLED"),
+        // Pause and refund must remove Pro access, not keep it.
+        "subscription_paused" | "subscription_payment_refunded" => Some("EXPIRED"),
         "subscription_updated" => match attrs["status"].as_str() {
-            Some("active") => "ACTIVE",
-            Some("past_due") => "PAST_DUE",
-            Some("cancelled") => "CANCELLED",
-            Some("expired") => "EXPIRED",
-            _ => "ACTIVE",
+            Some("active") | Some("on_trial") => Some("ACTIVE"),
+            Some("past_due") => Some("PAST_DUE"),
+            Some("cancelled") => Some("CANCELLED"),
+            Some("expired") => Some("EXPIRED"),
+            // paused / unpaid and any unknown status are non-Pro; drop, don't grant.
+            Some("paused") | Some("unpaid") => Some("EXPIRED"),
+            _ => None,
         },
-        _ => "ACTIVE",
+        // Unknown top-level event: leave the subscription untouched.
+        _ => None,
     }
 }
 

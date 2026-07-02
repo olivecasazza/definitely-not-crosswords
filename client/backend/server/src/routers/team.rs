@@ -170,18 +170,21 @@ async fn set_visibility(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
 /// `team.list` — publicProcedure
 async fn list(ctx: &Ctx) -> Result<Value, String> {
+    // Public listing: PRIVATE (invite-only) teams stay hidden, and the owner is
+    // never displayed by email (only a chosen display name, else 'Anonymous').
     let rows = sqlx::query(
         r#"
         SELECT t.id,
                t.name,
                t."maxSize",
                t.visibility::text        AS visibility,
-               COALESCE(u.name, u.email, 'Unknown') AS owner_display,
+               COALESCE(u.name, 'Anonymous') AS owner_display,
                COUNT(tm.id)              AS member_count
         FROM "Team" t
         JOIN  "User"       u  ON u.id       = t."ownerId"
         LEFT JOIN "TeamMember" tm ON tm."teamId" = t.id
-        GROUP BY t.id, t.name, t."maxSize", t.visibility, u.name, u.email
+        WHERE t.visibility = 'PUBLIC'::"TeamVisibility"
+        GROUP BY t.id, t.name, t."maxSize", t.visibility, u.name
         ORDER BY t."createdAt" DESC
         "#,
     )
@@ -260,33 +263,41 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     let team_id = input["teamId"].as_str().ok_or("missing teamId")?;
 
-    let row = sqlx::query(
-        r#"
-        SELECT t.id,
-               t.visibility::text AS visibility,
-               t."maxSize",
-               COUNT(tm.id)       AS member_count
-        FROM "Team" t
-        LEFT JOIN "TeamMember" tm ON tm."teamId" = t.id
-        WHERE t.id = $1
-        GROUP BY t.id, t.visibility, t."maxSize"
-        "#,
-    )
-    .bind(team_id)
-    .fetch_optional(&ctx.pool)
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "Team not found.".to_string())?;
+    // Lock the team row for the duration of the tx so concurrent joins can't each
+    // observe count < maxSize and all insert past capacity (TOCTOU).
+    let mut tx = ctx.pool.begin().await.map_err(|e| e.to_string())?;
+
+    let row = sqlx::query(r#"SELECT visibility::text AS visibility, "maxSize" FROM "Team" WHERE id = $1 FOR UPDATE"#)
+        .bind(team_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Team not found.".to_string())?;
 
     let visibility: String = row.get("visibility");
     let max_size: i32 = row.get("maxSize");
-    let member_count: i64 = row.get("member_count");
 
     if visibility == "PRIVATE" {
         return Err("This team is invite-only.".into());
     }
 
-    if is_member(team_id, &user.id, &ctx.pool).await? {
+    // Recount under the lock; already-a-member is idempotent.
+    let member_count: i64 =
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM "TeamMember" WHERE "teamId" = $1"#)
+            .bind(team_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    let already_member: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM "TeamMember" WHERE "teamId" = $1 AND "userId" = $2"#,
+    )
+    .bind(team_id)
+    .bind(&user.id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    if already_member > 0 {
         return Ok(json!({ "joined": true }));
     }
 
@@ -301,9 +312,11 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&member_id)
     .bind(team_id)
     .bind(&user.id)
-    .execute(&ctx.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
 
     Ok(json!({ "joined": true }))
 }
@@ -316,6 +329,19 @@ async fn leave(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     };
 
     let team_id = input["teamId"].as_str().ok_or("missing teamId")?;
+
+    // The owner leaving would strand the team: Team.ownerId would point at a
+    // non-member and owner-gated actions (setVisibility) become impossible. Block
+    // it until ownership is transferred / the team is deleted.
+    let owner_id: Option<String> =
+        sqlx::query_scalar(r#"SELECT "ownerId" FROM "Team" WHERE id = $1"#)
+            .bind(team_id)
+            .fetch_optional(&ctx.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    if owner_id.as_deref() == Some(user.id.as_str()) {
+        return Err("The team owner can't leave. Transfer ownership or delete the team first.".into());
+    }
 
     sqlx::query(r#"DELETE FROM "TeamMember" WHERE "teamId" = $1 AND "userId" = $2"#)
         .bind(team_id)
@@ -460,16 +486,9 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     let row = sqlx::query(
         r#"
-        SELECT ti.id,
-               ti."teamId",
-               ti."inviteeId",
-               t."maxSize",
-               COUNT(tm.id) AS member_count
+        SELECT ti."teamId", ti."inviteeId"
         FROM "TeamInvite" ti
-        JOIN  "Team"       t  ON t.id       = ti."teamId"
-        LEFT JOIN "TeamMember" tm ON tm."teamId" = t.id
         WHERE ti.id = $1
-        GROUP BY ti.id, ti."teamId", ti."inviteeId", t."maxSize"
         "#,
     )
     .bind(invite_id)
@@ -486,6 +505,7 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     if invitee_id != user.id {
         return Err("Invite not found.".into());
     }
+    let team_id: String = row.get("teamId");
 
     if !accept {
         sqlx::query(
@@ -498,15 +518,37 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         return Ok(json!({ "accepted": false }));
     }
 
-    let max_size: i32 = row.get("maxSize");
-    let member_count: i64 = row.get("member_count");
-    let team_id: String = row.get("teamId");
+    let mut tx = ctx.pool.begin().await.map_err(|e| e.to_string())?;
 
-    if member_count >= max_size as i64 {
+    // Lock the team row, then recount under the lock so concurrent accepts/joins
+    // can't push membership past maxSize (TOCTOU).
+    let max_size: i32 = sqlx::query_scalar(r#"SELECT "maxSize" FROM "Team" WHERE id = $1 FOR UPDATE"#)
+        .bind(&team_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Team not found.".to_string())?;
+
+    let member_count: i64 =
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM "TeamMember" WHERE "teamId" = $1"#)
+            .bind(&team_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    // Already a member? Accept idempotently without a capacity check.
+    let already_member: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM "TeamMember" WHERE "teamId" = $1 AND "userId" = $2"#,
+    )
+    .bind(&team_id)
+    .bind(&user.id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if already_member == 0 && member_count >= max_size as i64 {
         return Err("This team is now full.".into());
     }
-
-    let mut tx = ctx.pool.begin().await.map_err(|e| e.to_string())?;
 
     // Upsert member (update:{} in TS = DO NOTHING if already a member)
     let member_id = Uuid::new_v4().to_string();
@@ -554,6 +596,7 @@ async fn get_team_leaderboard(ctx: &Ctx) -> Result<Value, String> {
         LEFT JOIN "GameMember" gm ON gm."userId"  = tm."userId"
                                  AND gm."completedGameId" IS NOT NULL
         LEFT JOIN "MemberScore" ms ON ms."memberId" = gm.id
+        WHERE t.visibility = 'PUBLIC'::"TeamVisibility"
         GROUP BY t.id, t.name, t."maxSize", t.visibility
         ORDER BY total_score DESC, games_played DESC, t.name ASC
         "#,

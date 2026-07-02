@@ -1,5 +1,7 @@
 use crate::components::admin_nav::AdminNav;
 use crate::net::{mutation, query};
+use crate::store::use_app_state;
+use crate::Route;
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
@@ -50,6 +52,14 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
 
 #[component]
 pub fn AdminUsers() -> Element {
+    let state = use_app_state();
+    let nav = use_navigator();
+    // Client-side auth guard (backend still enforces admin capability).
+    use_effect(move || {
+        if !state.is_loading() && !state.is_admin() {
+            nav.push(Route::Login {});
+        }
+    });
     let mut users = use_signal(Vec::<AdminUser>::new);
     let mut role_options = use_signal(Vec::<RoleOption>::new);
     let mut loading = use_signal(|| true);
@@ -364,6 +374,14 @@ pub fn AdminUsers() -> Element {
             },
         }
     };
+
+    if !state.is_admin() {
+        return rsx! {
+            div { class: "muted", style: "padding:2rem;text-align:center;font-size:.75rem;font-family:monospace",
+                "Checking access…"
+            }
+        };
+    }
 
     rsx! {
         div {

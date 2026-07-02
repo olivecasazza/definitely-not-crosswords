@@ -49,6 +49,7 @@ pub fn Profile() -> Element {
         "{:?}",
         user.as_ref().map(|u| u.role.clone()).unwrap_or_default()
     );
+    let email_verified = user.as_ref().map(|u| u.email_verified).unwrap_or(false);
 
     let name_input = use_signal(|| user_name_init.clone());
     let updating = use_signal(|| false);
@@ -68,6 +69,7 @@ pub fn Profile() -> Element {
         let success_msg = success_msg.clone();
         let error_msg = error_msg.clone();
         let display_name = display_name.clone();
+        let mut session = state.session;
         move |evt: Event<FormData>| {
             evt.stop_propagation();
             let email = email.clone();
@@ -89,6 +91,12 @@ pub fn Profile() -> Element {
                     Ok(res) => {
                         if let Some(new_name) = res.get("name").and_then(|v| v.as_str()) {
                             display_name.set(new_name.to_string());
+                            // Keep the shared session in sync so the header (and any
+                            // other AppState consumer) reflects the new name without
+                            // a full reload.
+                            if let Some(Some(u)) = session.write().as_mut() {
+                                u.name = Some(new_name.to_string());
+                            }
                         }
                         success_msg.set("Profile updated successfully!".into());
                     }
@@ -165,10 +173,12 @@ pub fn Profile() -> Element {
                             div {
                                 style: "position: relative; display: inline-block;",
                                 div { class: "pf-avatar-circle", "{first_char}" }
-                                div {
-                                    class: "pf-verified-badge",
-                                    title: "Email Verified",
-                                    "✓"
+                                if email_verified {
+                                    div {
+                                        class: "pf-verified-badge",
+                                        title: "Email Verified",
+                                        "✓"
+                                    }
                                 }
                             }
                             div { style: "text-align: center;",
@@ -182,7 +192,14 @@ pub fn Profile() -> Element {
                                 }
                                 div { class: "pf-meta-row",
                                     span { class: "muted", style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em;", "Status:" }
-                                    span { style: "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-green);", "Verified" }
+                                    span {
+                                        style: if email_verified {
+                                            "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-green);"
+                                        } else {
+                                            "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--text-secondary);"
+                                        },
+                                        if email_verified { "Verified" } else { "Unverified" }
+                                    }
                                 }
                             }
                         }

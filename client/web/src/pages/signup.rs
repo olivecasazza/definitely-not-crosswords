@@ -45,7 +45,6 @@ pub fn Signup() -> Element {
     let loading = use_signal(|| false);
     let error = use_signal(|| String::new());
     let success = use_signal(|| false);
-    let verification_token = use_signal(|| String::new());
 
     // Uniqueness state (checked on blur — ponytail: skip debounce, blur is fine)
     let username_unique = use_signal(|| true);
@@ -85,8 +84,8 @@ pub fn Signup() -> Element {
 
     let password_error = if password_val.is_empty() {
         "Password is required.".to_string()
-    } else if password_val.len() < 6 {
-        "Password must be at least 6 characters.".to_string()
+    } else if password_val.len() < 8 {
+        "Password must be at least 8 characters.".to_string()
     } else {
         String::new()
     };
@@ -174,7 +173,6 @@ pub fn Signup() -> Element {
         let loading = loading.clone();
         let error = error.clone();
         let success = success.clone();
-        let verification_token = verification_token.clone();
         let name_val = name_val.clone();
         let username_val = username_val.clone();
         let email_val = email_val.clone();
@@ -202,7 +200,6 @@ pub fn Signup() -> Element {
             let mut loading = loading.clone();
             let mut error = error.clone();
             let mut success = success.clone();
-            let mut verification_token = verification_token.clone();
 
             spawn_local(async move {
                 loading.set(true);
@@ -221,8 +218,6 @@ pub fn Signup() -> Element {
                 {
                     Ok(res) => {
                         if res["success"].as_bool().unwrap_or(false) {
-                            verification_token
-                                .set(res["verificationToken"].as_str().unwrap_or("").to_string());
                             success.set(true);
                             name.set(String::new());
                             username.set(String::new());
@@ -280,33 +275,7 @@ pub fn Signup() -> Element {
                         div {
                             class: "success",
                             style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid rgba(168,230,207,0.2); border-radius: .5rem; background: rgba(168,230,207,0.06); display: flex; flex-direction: column; gap: .5rem;",
-                            p { style: "margin: 0;", "Registration successful! Please verify your email." }
-                            if !verification_token.read().is_empty() {
-                                div {
-                                    style: "padding-top: .5rem; border-top: 1px solid rgba(168,230,207,0.15);",
-                                    p {
-                                        class: "muted",
-                                        style: "font-size: .625rem; margin: 0 0 .25rem 0;",
-                                        "Testing verification link:"
-                                    }
-                                    Link {
-                                        to: crate::Route::VerifyEmail {},
-                                        // Note: ideally we'd append ?token=... but Route::VerifyEmail
-                                        // has no query param; using a raw href instead.
-                                        onclick: {
-                                            let tok = verification_token.read().clone();
-                                            move |_| {
-                                                if let Some(win) = web_sys::window() {
-                                                    let href = format!("/auth/verify-email?token={}", tok);
-                                                    let _ = win.location().set_href(&href);
-                                                }
-                                            }
-                                        },
-                                        style: "color: var(--pastel-yellow); font-weight: 600; font-size: .75rem;",
-                                        "Verify Email ({verification_token.read().chars().take(8).collect::<String>()}...)"
-                                    }
-                                }
-                            }
+                            p { style: "margin: 0;", "Registration successful! Please check your email for a verification link." }
                         }
                     }
 

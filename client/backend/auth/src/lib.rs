@@ -94,12 +94,6 @@ impl AuthService {
     }
 
     pub fn authenticate(&self, request: &RequestAuth) -> AuthContext {
-        if let Some(user) = self.authenticate_native_bearer(request) {
-            return AuthContext {
-                user: Some(user),
-                source: AuthSource::NativeSession,
-            };
-        }
         if let Ok(user) = LegacyNextAuthVerifier::new(self.nextauth_secret.clone()).verify(request)
         {
             return AuthContext {
@@ -132,22 +126,6 @@ impl AuthService {
         }
         AuthContext::default()
     }
-
-    fn authenticate_native_bearer(&self, request: &RequestAuth) -> Option<AuthUser> {
-        match request.bearer_token.as_deref() {
-            Some("native-admin") => Some(AuthUser {
-                id: "native-admin".into(),
-                email: "admin@example.invalid".into(),
-                role: Role::Admin,
-            }),
-            Some("native-user") => Some(AuthUser {
-                id: "native-user".into(),
-                email: "user@example.invalid".into(),
-                role: Role::User,
-            }),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -165,17 +143,6 @@ impl LegacyNextAuthVerifier {
             .cookie_header
             .as_deref()
             .ok_or(AuthError::Unrecognized)?;
-
-        // E2E test/stub bypass
-        if cookie_header.contains("next-auth.session-token=legacy-admin-stub")
-            || cookie_header.contains("__Secure-next-auth.session-token=legacy-admin-stub")
-        {
-            return Ok(AuthUser {
-                id: "legacy-admin".into(),
-                email: "legacy-admin@example.invalid".into(),
-                role: Role::Admin,
-            });
-        }
 
         let cookie_value = get_next_auth_cookie(cookie_header).ok_or(AuthError::Unrecognized)?;
         let claims = decrypt_session_token(&cookie_value, &self.secret)?;
@@ -258,6 +225,13 @@ pub fn decrypt_session_token(token: &str, secret: &str) -> Result<serde_json::Va
     let iv = URL_SAFE_NO_PAD
         .decode(encoded_iv)
         .map_err(|_| AuthError::CryptoError)?;
+    // AES-256-GCM uses a 96-bit (12-byte) nonce. `Nonce::from_slice` panics on
+    // any other length, and `iv` comes straight from an attacker-controlled
+    // cookie, so validate before constructing the nonce to avoid a request-path
+    // panic (unauthenticated DoS).
+    if iv.len() != 12 {
+        return Err(AuthError::CryptoError);
+    }
     let ciphertext = URL_SAFE_NO_PAD
         .decode(encoded_ciphertext)
         .map_err(|_| AuthError::CryptoError)?;
@@ -405,28 +379,19 @@ impl KeycloakVerifier {
 
     pub fn verify(&self, token: &str) -> Result<AuthUser, AuthError> {
         let claims = if self.allow_insecure {
+            // Dev-only: decode without verifying the signature. `allow_insecure`
+            // is derived from `allow_dev_admin`, which defaults to false in prod.
             let token_data = dangerous_insecure_decode::<KeycloakClaims>(token)
                 .map_err(|_| AuthError::Unrecognized)?;
             token_data.claims
         } else {
-            let mut validation = jsonwebtoken::Validation::default();
-            validation.insecure_disable_signature_validation();
-            validation.validate_aud = false;
-            validation.set_issuer(&[&self.issuer]);
-            validation.algorithms = vec![
-                jsonwebtoken::Algorithm::RS256,
-                jsonwebtoken::Algorithm::RS384,
-                jsonwebtoken::Algorithm::RS512,
-                jsonwebtoken::Algorithm::ES256,
-                jsonwebtoken::Algorithm::ES384,
-                jsonwebtoken::Algorithm::HS256,
-                jsonwebtoken::Algorithm::HS384,
-                jsonwebtoken::Algorithm::HS512,
-            ];
-            let key = jsonwebtoken::DecodingKey::from_secret(&[]);
-            let token_data = jsonwebtoken::decode::<KeycloakClaims>(token, &key, &validation)
-                .map_err(|_| AuthError::Unrecognized)?;
-            token_data.claims
+            // Fail closed: we have no JWKS/public key wired up to verify the RS256
+            // signature, so we cannot trust anything in the token. Accepting an
+            // unverified JWT here would let an attacker forge admin roles, so we
+            // refuse the token outright. Real Keycloak support requires fetching
+            // the realm JWKS and validating the signature (iss/aud/exp) — until
+            // then, credentials login is the only trusted path in production.
+            return Err(AuthError::Unrecognized);
         };
 
         let email = claims

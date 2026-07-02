@@ -115,11 +115,23 @@ async fn create(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     if amount <= 0 {
         return Err("Amount must be a positive integer.".to_string());
     }
+    // `amount` is persisted as an i32 column (`.bind(amount as i32)` below) while
+    // the full i64 is sent to Lemon Squeezy — reject out-of-range values so the DB
+    // cannot silently wrap (and diverge from what LS was told).
+    if amount > i32::MAX as i64 {
+        return Err("Amount is too large.".to_string());
+    }
     if amount_type == "PERCENT" && amount > 100 {
         return Err("Percentage discount must be between 1 and 100.".to_string());
     }
     if !matches!(duration.as_str(), "ONCE" | "FOREVER" | "REPEATING") {
         return Err("Invalid duration.".to_string());
+    }
+    // Same i32-column guard for `maxRedemptions`.
+    if let Some(mr) = max_redemptions {
+        if mr < 1 || mr > i32::MAX as i64 {
+            return Err("maxRedemptions must be between 1 and 2147483647.".to_string());
+        }
     }
 
     // ── Duplicate code check ───────────────────────────────────────────────

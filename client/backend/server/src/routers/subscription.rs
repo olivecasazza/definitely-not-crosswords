@@ -29,6 +29,11 @@ async fn get_status(ctx: &Ctx) -> Result<Value, String> {
             -- Cast to text: Prisma generates a native PG enum for SubscriptionStatus;
             -- reading a native enum OID into String without ::text panics at runtime.
             s.status::text AS subscription_status,
+            -- Whether the paid period is still active. Computed in SQL to avoid needing
+            -- the sqlx chrono feature. currentPeriodEnd is stored UTC-naive by the webhook,
+            -- so compare against NOW() AT TIME ZONE 'UTC' to keep both sides in UTC.
+            (s."currentPeriodEnd" IS NOT NULL
+                AND s."currentPeriodEnd" > (NOW() AT TIME ZONE 'UTC')) AS period_active,
             -- Month comparison done in SQL to avoid needing the sqlx chrono feature.
             -- Mirrors TS: resetDate.getUTCFullYear/Month === now.getUTCFullYear/Month
             CASE
@@ -52,10 +57,15 @@ async fn get_status(ctx: &Ctx) -> Result<Value, String> {
 
     let vip_pass: bool = row.get("vipPass");
     let sub_status: Option<String> = row.get("subscription_status");
+    // NULL when there is no subscription row (LEFT JOIN); treat as not-active.
+    let period_active: bool = row.try_get("period_active").unwrap_or(false);
 
+    // CANCELLED preserves Pro only until the already-paid period ends. Without the
+    // period_active gate a CANCELLED subscription would grant Pro indefinitely,
+    // relying on a later subscription_expired webhook that may be dropped or delayed.
     let is_pro = sub_status
         .as_deref()
-        .map(|s| s == "ACTIVE" || s == "CANCELLED")
+        .map(|s| s == "ACTIVE" || (s == "CANCELLED" && period_active))
         .unwrap_or(false)
         || vip_pass;
 

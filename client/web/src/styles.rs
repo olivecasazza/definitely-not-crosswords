@@ -82,15 +82,15 @@ a { color: inherit; text-decoration: none; }
 ::-webkit-scrollbar-thumb { background: var(--border-app); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
 
-.app-card { background-color: var(--bg-card); border: 1px solid var(--border-app); border-radius: .75rem; }
+.app-card { background-color: var(--bg-card); border: 1px solid var(--border-app); border-radius: 0; }
 .app-btn { padding: .375rem .75rem; font-size: .875rem; font-weight: 500; border: 1px solid var(--border-app);
-  border-radius: .375rem; background-color: var(--bg-card); color: var(--text-secondary);
+  border-radius: 0; background-color: var(--bg-card); color: var(--text-secondary);
   transition: all .15s ease; cursor: pointer; }
 .app-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
 .app-btn:disabled { opacity: .5; cursor: not-allowed; }
 .app-btn-active { color: var(--text-primary); border-color: var(--color-primary); }
 .app-input { background-color: var(--bg-cell-empty); color: var(--text-primary); border: 1px solid var(--border-app);
-  border-radius: .375rem; outline: none; padding: .4rem .6rem; transition: border-color .15s ease; }
+  border-radius: 0; outline: none; padding: .4rem .6rem; transition: border-color .15s ease; }
 .app-input:focus { border-color: var(--color-primary); }
 
 /* ── App shell: header + per-view panel-kit workspace + footer ──────────────

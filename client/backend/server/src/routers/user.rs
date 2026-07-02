@@ -70,6 +70,9 @@ async fn signup(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .as_str()
         .ok_or("missing password")?
         .to_string();
+    if password.len() < 8 {
+        return Err("Password must be at least 8 characters.".to_string());
+    }
 
     let email_exists: bool =
         sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM "User" WHERE email = $1)"#)
@@ -123,10 +126,12 @@ async fn signup(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .await
     .map_err(|e| e.to_string())?;
 
+    // NOTE: do NOT return `token_str` here. The verification token must only ever
+    // reach the address being verified (via email), otherwise possession of the
+    // email is never proven and anyone can self-verify an address they don't own.
     Ok(json!({
         "success": true,
         "userId": id,
-        "verificationToken": token_str,
     }))
 }
 
@@ -147,14 +152,17 @@ async fn is_username_unique(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 }
 
 async fn is_email_unique(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    // Normalize to match `signup`/`upsert_from_admin`, which store the trimmed,
+    // lowercased email — otherwise this reports "unique" for a case variant that
+    // signup then rejects.
     let email = match input["email"].as_str() {
-        Some(e) if e.contains('@') => e,
+        Some(e) if e.contains('@') => e.trim().to_lowercase(),
         _ => return Ok(json!({ "unique": true })),
     };
 
     let exists: bool =
         sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM "User" WHERE email = $1)"#)
-            .bind(email)
+            .bind(&email)
             .fetch_one(&ctx.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -206,15 +214,17 @@ async fn verify_email(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     Ok(json!({ "success": true }))
 }
 
-async fn get_profile(input: &Value, ctx: &Ctx) -> Result<Value, String> {
-    let email = input["email"].as_str().ok_or("missing email")?;
+async fn get_profile(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    // Scope to the authenticated caller; never trust a client-supplied email
+    // (that would let anyone read any account's profile / verification status).
+    let user = ctx.require_user()?;
 
     let row = sqlx::query(&format!(
         r#"SELECT id, name, email, to_char("emailVerified", '{}') AS "emailVerified"
-           FROM "User" WHERE email = $1"#,
+           FROM "User" WHERE id = $1"#,
         TS_FMT
     ))
-    .bind(email)
+    .bind(&user.id)
     .fetch_optional(&ctx.pool)
     .await
     .map_err(|e| e.to_string())?;
@@ -233,12 +243,14 @@ async fn get_profile(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 }
 
 async fn update_profile(input: &Value, ctx: &Ctx) -> Result<Value, String> {
-    let email = input["email"].as_str().ok_or("missing email")?;
+    // Only the authenticated user may rename their own account; ignore any
+    // client-supplied email (that would let anyone rename any account).
+    let user = ctx.require_user()?;
     let name = input["name"].as_str().ok_or("missing name")?;
 
-    let row = sqlx::query(r#"UPDATE "User" SET name = $1 WHERE email = $2 RETURNING name"#)
+    let row = sqlx::query(r#"UPDATE "User" SET name = $1 WHERE id = $2 RETURNING name"#)
         .bind(name)
-        .bind(email)
+        .bind(&user.id)
         .fetch_optional(&ctx.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -252,11 +264,15 @@ async fn update_profile(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     }
 }
 
-async fn delete_account(input: &Value, ctx: &Ctx) -> Result<Value, String> {
-    let email = input["email"].as_str().ok_or("missing email")?;
+async fn delete_account(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    // Delete only the authenticated caller's own account; never trust a
+    // client-supplied email (that would let anyone delete any account).
+    // Child rows (GameAction, UserSprite, CrosswordGenerationJob) cascade via
+    // the FK constraints made ON DELETE CASCADE in migration 20260529093000.
+    let user = ctx.require_user()?;
 
-    sqlx::query(r#"DELETE FROM "User" WHERE email = $1"#)
-        .bind(email)
+    sqlx::query(r#"DELETE FROM "User" WHERE id = $1"#)
+        .bind(&user.id)
         .execute(&ctx.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -517,6 +533,9 @@ async fn set_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .as_str()
         .ok_or("missing password")?
         .to_string();
+    if password.len() < 8 {
+        return Err("Password must be at least 8 characters.".to_string());
+    }
 
     let exists: bool = sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM "User" WHERE id = $1)"#)
         .bind(user_id)

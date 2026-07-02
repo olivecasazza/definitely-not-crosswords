@@ -1,11 +1,12 @@
 name: deploy-staging
 
-# Continuous staging deploy. Flux's built-in image-automation can't drive this
-# repo's deploy: the cluster is one kubenix-generated manifests.yaml (single-line
-# JSON), and the `$imagepolicy` setter marker lives in a Nix comment that Flux's
-# YAML-only Setter strategy never sees. So instead we bump the staging image tag in
-# the git source of truth (nixlab crosswords.nix); nixlab's rebuild-k8s-manifests
-# workflow regenerates manifests.yaml and Flux applies it. Prod stays pinned.
+# Continuous staging deploy. Flux's image-automation can't drive this repo (the
+# cluster is one kubenix-generated single-line-JSON manifests.yaml; the $imagepolicy
+# setter marker lives in a Nix comment Flux's YAML Setter never sees). So on a new
+# release we bump the staging image tag in nixlab's crosswords.nix AND regenerate
+# manifests.yaml right here — exactly what the local pre-commit hook does — then push
+# both. Flux applies manifests.yaml. Self-contained: no dependency on nixlab's CI
+# (their builds are Hydra + local pre-commit, not GitHub Actions). Prod stays pinned.
 #
 # Triggered AFTER the image build (CI/CD Pipeline) succeeds for a tag — not on the
 # tag push itself — so staging is never pointed at an image not yet in the registry.
@@ -18,53 +19,70 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag to deploy to staging (e.g. v0.1.1)"
+        description: "Image tag to deploy to staging (e.g. v0.1.3)"
         required: true
 
-# Serialize: never race two tag bumps against nixlab main.
+# Serialize: never race two bumps against nixlab main.
 concurrency:
   group: deploy-staging
   cancel-in-progress: false
 
 jobs:
-  bump-staging-tag:
-    name: Bump nixlab staging image tag
+  deploy-staging:
+    name: Bump staging tag + regenerate manifests
     runs-on: ubuntu-latest
     # Only for a successful image build of a tag (head_branch is the tag name,
-    # e.g. v0.1.2), or a manual dispatch. Skips main-branch pipeline runs.
+    # e.g. v0.1.3), or a manual dispatch. Skips main-branch pipeline runs.
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
        startsWith(github.event.workflow_run.head_branch, 'v'))
-    # Reuses RELEASE_PLZ_TOKEN — it must be a PAT with contents:write on
-    # casazza-info/nixlab (it already cuts crosswords tags; classic-PAT `repo`
-    # scope covers both repos). Inert if the secret is absent.
     steps:
-      - name: Update the staging image tag in nixlab
+      # access-tokens lets nix fetch nixlab's private flake input
+      # (github:olivecasazza/consortium-autoresearch). RELEASE_PLZ_TOKEN is an
+      # olivecasazza classic PAT (it already pushes to nixlab), so it can read it.
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            access-tokens = github.com=${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Setup Nix caching
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Bump staging tag + regenerate manifests in nixlab
         env:
           # Manual dispatch supplies the tag; otherwise it's the built tag.
           TAG: ${{ github.event.inputs.tag || github.event.workflow_run.head_branch }}
           NIXLAB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
-          if [ -z "$NIXLAB_TOKEN" ]; then
+          if [ -z "${NIXLAB_TOKEN:-}" ]; then
             echo "RELEASE_PLZ_TOKEN not set — skipping staging deploy."
             exit 0
           fi
           set -euo pipefail
-          git clone --depth 1 "https://x-access-token:${NIXLAB_TOKEN}@github.com/casazza-info/nixlab.git" nixlab
+          git clone "https://x-access-token:${NIXLAB_TOKEN}@github.com/casazza-info/nixlab.git" nixlab
           cd nixlab
           file=modules/k8s/apps/crosswords.nix
           # Rewrite only the line carrying the crosswords-staging $imagepolicy marker,
           # so the pinned prod tag (no marker) is never touched.
           sed -i -E 's|tag = "v[0-9]+\.[0-9]+\.[0-9]+"; # \{"\$imagepolicy": "apps:crosswords-staging"\}|tag = "'"$TAG"'"; # {"$imagepolicy": "apps:crosswords-staging"}|' "$file"
-          if git diff --quiet; then
+          if git diff --quiet -- "$file"; then
             echo "Staging already at $TAG — nothing to do."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -aqm "chore(k8s): deploy crosswords staging to $TAG"
-          # nixlab's rebuild-k8s-manifests workflow regenerates manifests.yaml from
-          # this .nix change and Flux applies it.
+          # Commit the tag bump first so `nix build` evaluates a clean tree at the new
+          # tag (no dirty-tree ambiguity), then fold the regenerated manifest in.
+          git commit -qm "chore(k8s): deploy crosswords staging to $TAG" -- "$file"
+          nix build .#k8s-manifests
+          cp -L result modules/k8s/manifests.yaml
+          rm -f result
+          git add modules/k8s/manifests.yaml
+          git commit -q --amend --no-edit
+          # Survive concurrent nixlab commits between clone and push.
+          git fetch origin main -q
+          git rebase origin/main
           git push origin HEAD:main
-          echo "Bumped nixlab crosswords staging to $TAG"
+          echo "Bumped nixlab crosswords staging to $TAG (+ regenerated manifests)"

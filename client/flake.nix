@@ -365,6 +365,10 @@
                 libsoup_3
                 gtk3
               ];
+              # Local dev is the "local" environment: the server registers the
+              # dev-admin bypass route and /api/config turns on its button.
+              # staging/prod set APP_ENV via the Helm chart (default production).
+              APP_ENV = "local";
               # So `cargo build -p crossword-server` finds the vendored onnxruntime
               # (no download-binaries, no network) inside `nix develop`.
             }

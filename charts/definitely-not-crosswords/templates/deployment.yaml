@@ -122,6 +122,8 @@ spec:
           env:
             # PORT and WEB_DIST (the bundled wasm frontend, served single-origin
             # with /api) are baked into the image; only secrets are injected here.
+            - name: APP_ENV
+              value: {{ .Values.environment | quote }}
             - name: NEXTAUTH_SECRET
               valueFrom:
                 secretKeyRef:

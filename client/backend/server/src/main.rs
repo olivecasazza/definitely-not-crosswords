@@ -40,6 +40,10 @@ struct AppState {
     pool: PgPool,
     auth: AuthService,
     events: EventBus,
+    /// Deploy environment: "local" | "staging" | "production" (from APP_ENV).
+    /// The wasm bundle is shared across envs, so the frontend learns the env at
+    /// runtime from `/api/config` rather than a build-time constant.
+    env: String,
 }
 
 #[tokio::main]
@@ -53,19 +57,27 @@ async fn main() -> anyhow::Result<()> {
         .max_connections(8)
         .connect(&db_url)
         .await?;
-    // allow_dev_admin=true enables the local-dev/native bearer paths in dev.
-    let auth = AuthService::new(true);
+    // "local" | "staging" | "production". Default production: the safe (most
+    // locked-down) choice if the var is ever missing.
+    let env = std::env::var("APP_ENV").unwrap_or_else(|_| "production".into());
+    let is_local = env == "local";
+    tracing::info!("APP_ENV={env} (dev admin bypass: {is_local})");
+
+    // The dev-admin bypass (local-dev credential provider + "dev-admin" bearer) is
+    // enabled ONLY in local. Outside local it's off AND the route is unregistered,
+    // so it can't mint an admin session on staging/prod.
+    let auth = AuthService::new(is_local);
     let events = EventBus::default();
 
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/api/healthz", get(|| async { "ok" }))
+        .route("/api/config", get(config))
         .route("/api/auth/session", get(session))
         .route("/api/auth/csrf", get(auth_routes::csrf))
         .route(
             "/api/auth/callback/credentials",
             post(auth_routes::credentials),
         )
-        .route("/api/auth/callback/local-dev", post(auth_routes::local_dev))
         .route(
             "/api/auth/signout",
             get(auth_routes::signout).post(auth_routes::signout),
@@ -73,8 +85,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/checkout", post(checkout::checkout))
         .route("/api/webhooks/lemonsqueezy", post(webhook::lemonsqueezy))
         .route("/api/trpc-ws", get(trpc_ws))
-        .route("/api/trpc/:proc", get(trpc_get).post(trpc_post))
-        .with_state(AppState { pool, auth, events });
+        .route("/api/trpc/:proc", get(trpc_get).post(trpc_post));
+    if is_local {
+        app = app.route("/api/auth/callback/local-dev", post(auth_routes::local_dev));
+    }
+    let app = app.with_state(AppState {
+        pool,
+        auth,
+        events,
+        env,
+    });
 
     // Optionally serve the built wasm frontend on the same origin, so the
     // relative `/api` paths + page-derived WS origin "just work" with no proxy.
@@ -111,6 +131,24 @@ pub(crate) fn req_auth(headers: &HeaderMap) -> RequestAuth {
             .and_then(|s| s.strip_prefix("Bearer "))
             .map(|s| s.to_string()),
     }
+}
+
+/// GET /api/config — runtime config for the shared wasm bundle: the deploy
+/// environment + derived feature flags. The frontend fetches this at startup
+/// because one bundle serves all environments (build-time constants can't tell
+/// staging from prod).
+async fn config(State(st): State<AppState>) -> Json<Value> {
+    let env = st.env.as_str();
+    Json(json!({
+        "environment": env,
+        "features": {
+            // The dev-admin login button only works where the backend registers
+            // the local-dev route — local docker-compose.
+            "devLoginBypass": env == "local",
+            // Beta banner (+ $1 Pro messaging) on staging only.
+            "stagingBanner": env == "staging",
+        }
+    }))
 }
 
 /// next-auth-compatible `GET /api/auth/session`: `{}` signed out, `{user}` in.

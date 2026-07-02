@@ -63,11 +63,36 @@ pub struct SubStatus {
     pub quota_limit: Option<i64>,
 }
 
+/// Runtime config from `GET /api/config`. The wasm bundle is shared across
+/// environments, so feature-gating is driven by the server's `APP_ENV` at
+/// runtime, not build-time constants.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct AppConfig {
+    /// "local" | "staging" | "production".
+    #[serde(default)]
+    pub environment: String,
+    #[serde(default)]
+    pub features: Features,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Features {
+    /// Show the "Developer Admin Bypass" login button (local only).
+    #[serde(default)]
+    pub dev_login_bypass: bool,
+    /// Show the staging beta banner (staging only).
+    #[serde(default)]
+    pub staging_banner: bool,
+}
+
 #[derive(Clone, Copy)]
 pub struct AppState {
     /// `None` = still loading; `Some(None)` = signed out; `Some(Some(u))` = user.
     pub session: Signal<Option<Option<User>>>,
     pub sub: Signal<Option<SubStatus>>,
+    /// `None` until `/api/config` resolves; features default to off meanwhile.
+    pub config: Signal<Option<AppConfig>>,
 }
 
 impl AppState {
@@ -77,6 +102,14 @@ impl AppState {
     pub fn is_admin(&self) -> bool {
         self.user().map(|u| u.role == Role::Admin).unwrap_or(false)
     }
+    /// Read a feature flag; false while config is still loading (safe default).
+    pub fn feature(&self, pick: impl Fn(&Features) -> bool) -> bool {
+        self.config
+            .read()
+            .as_ref()
+            .map(|c| pick(&c.features))
+            .unwrap_or(false)
+    }
 }
 
 /// Provide [`AppState`] and kick off the session fetch. Call once in the root.
@@ -84,11 +117,15 @@ pub fn provide_app_state() -> AppState {
     let state = use_context_provider(|| AppState {
         session: Signal::new(None),
         sub: Signal::new(None),
+        config: Signal::new(None),
     });
     use_hook(|| {
         let mut session = state.session;
         let mut sub = state.sub;
+        let mut config = state.config;
         spawn_local(async move {
+            // Config drives feature flags (banner, dev bypass) — fetch it first.
+            config.set(Some(fetch_config().await.unwrap_or_default()));
             let user = fetch_session().await;
             let signed_in = user.is_some();
             session.set(Some(user));
@@ -119,6 +156,14 @@ async fn fetch_session() -> Option<User> {
 
 async fn fetch_sub() -> Option<SubStatus> {
     let resp = gloo_net::http::Request::get("/api/subscription")
+        .send()
+        .await
+        .ok()?;
+    resp.json().await.ok()
+}
+
+async fn fetch_config() -> Option<AppConfig> {
+    let resp = gloo_net::http::Request::get("/api/config")
         .send()
         .await
         .ok()?;

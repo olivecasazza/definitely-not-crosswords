@@ -253,6 +253,8 @@ pub fn Login() -> Element {
 
     let ws = use_workspace("login_layout", default_layout);
     crate::store::sync_panel_mode(ws.mode);
+    // Gates the dev-admin bypass button (only shown in local dev).
+    let state = crate::store::use_app_state();
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
@@ -372,14 +374,18 @@ pub fn Login() -> Element {
                         "Continue with SSO"
                     }
 
-                    // Dev-only bypass (no-op against a production backend).
-                    button {
-                        r#type: "button",
-                        class: "app-btn",
-                        style: "width: 100%; padding: .75rem 1rem; margin-top: .75rem; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em;",
-                        disabled: *loading.read(),
-                        onclick: handle_dev_bypass.clone(),
-                        "🔑 Developer Admin Bypass"
+                    // Local-only dev bypass: the backend unregisters the local-dev
+                    // route outside local, and this button is hidden via the
+                    // devLoginBypass feature flag from /api/config.
+                    if state.feature(|f| f.dev_login_bypass) {
+                        button {
+                            r#type: "button",
+                            class: "app-btn",
+                            style: "width: 100%; padding: .75rem 1rem; margin-top: .75rem; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em;",
+                            disabled: *loading.read(),
+                            onclick: handle_dev_bypass.clone(),
+                            "🔑 Developer Admin Bypass"
+                        }
                     }
 
                     // Footer

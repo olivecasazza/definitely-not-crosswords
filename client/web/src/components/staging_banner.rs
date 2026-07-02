@@ -1,17 +1,11 @@
 //! Staging-only banner: warns users this is a beta/test environment (cheap Pro,
 //! but expect data loss / unexpected changes) and links to a pre-tagged GitHub
-//! issue for bug reports. Staging is detected at runtime from the host (the wasm
-//! bundle is shared between environments).
+//! issue for bug reports. Gated on the `stagingBanner` feature flag from
+//! `/api/config` (the server's APP_ENV), since the wasm bundle is shared across
+//! environments.
 
+use crate::store::use_app_state;
 use dioxus::prelude::*;
-
-/// True when served from the staging host (crosswords-staging.casazza.io).
-pub fn is_staging() -> bool {
-    web_sys::window()
-        .and_then(|w| w.location().host().ok())
-        .map(|h| h.contains("staging"))
-        .unwrap_or(false)
-}
 
 /// Pre-filled "new issue" URL, labelled `staging` so reports from here are
 /// distinguishable from prod. KISS — just a link to GitHub's issue form.
@@ -19,7 +13,8 @@ const REPORT_BUG_URL: &str = "https://github.com/olivecasazza/definitely-not-cro
 
 #[component]
 pub fn StagingBanner() -> Element {
-    if !is_staging() {
+    let state = use_app_state();
+    if !state.feature(|f| f.staging_banner) {
         return rsx! {};
     }
     rsx! {

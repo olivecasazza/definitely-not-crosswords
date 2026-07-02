@@ -4,6 +4,11 @@
 
 replicaCount: 1
 
+# Deploy environment: "local" | "staging" | "production". Injected as APP_ENV,
+# which the server exposes at /api/config so the shared wasm bundle can feature-gate
+# (staging banner, dev-login bypass) at runtime. Default production = most locked down.
+environment: "production"
+
 image:
   # The nix-built Rust server image (pushed by CI to GAR as :latest and :<sha>).
   repository: us-central1-docker.pkg.dev/casazza-identity/nixlab/definitely-not-crosswords

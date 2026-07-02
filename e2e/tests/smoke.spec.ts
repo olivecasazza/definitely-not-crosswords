@@ -31,11 +31,12 @@ test("navigate to login and see the credentials form", async ({ page }) => {
 test("navigate to signup and see the registration form", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#main")).not.toBeEmpty();
-  await page.getByRole("link", { name: /create account|get started|sign up/i }).first().click();
+  await page.getByRole("link", { name: /create account/i }).first().click();
   await expect(page).toHaveURL(/\/auth\/signup/);
   await expect(page.locator('input[type="email"]')).toBeVisible();
   await expect(page.locator('input[type="password"]')).toBeVisible();
-  await expect(page.getByRole("button", { name: /create account/i })).toBeVisible();
+  // The submit button reads "Sign Up" (the "Create Account" heading is an h1).
+  await expect(page.getByRole("button", { name: /sign up/i })).toBeVisible();
 });
 
 test("api health is green", async ({ request }) => {

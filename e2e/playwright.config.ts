@@ -20,9 +20,10 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL,
-    // 1080p so the recording doubles as a shareable demo clip.
+    // 1080p so the recording doubles as a shareable demo clip. `size` forces the
+    // video to full res (Playwright otherwise downscales the recording to ~800px).
     viewport: { width: 1920, height: 1080 },
-    video: "on",
+    video: { mode: "on", size: { width: 1920, height: 1080 } },
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     actionTimeout: 15_000,

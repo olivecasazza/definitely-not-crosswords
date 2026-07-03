@@ -206,7 +206,16 @@ async fn seed_games(pool: PgPool, count: usize) -> anyhow::Result<()> {
     for i in 0..count {
         let topic = &topics[i % topics.len()];
         tracing::info!("seed {}/{count}: generating topic '{topic}'", i + 1);
-        let input = json!({ "params": { "topic": topic } });
+        // Give platform games a clean title ("Animals") rather than the generator
+        // default ("Generated: animals").
+        let title = {
+            let mut c = topic.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => topic.to_string(),
+            }
+        };
+        let input = json!({ "params": { "topic": topic }, "title": title });
         // run_generation returns () and handles its own errors internally as
         // `failed` events (swallowed by noop_emit), so seeding is best-effort:
         // a topic that yields no grid simply produces no Game row.

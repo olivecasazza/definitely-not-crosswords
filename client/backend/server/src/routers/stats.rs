@@ -45,6 +45,7 @@ async fn global_leaderboard(ctx: &Ctx) -> Result<Value, String> {
         LEFT JOIN "GameMember" gm
                ON gm."userId" = u.id AND gm."completedGameId" IS NOT NULL
         LEFT JOIN "MemberScore" ms ON ms."memberId" = gm.id
+        WHERE u.id <> 'platform-system'
         GROUP BY u.id, u.name, u.email
         ORDER BY total_score DESC, games_played DESC, name ASC
         "#,

@@ -176,7 +176,11 @@ pub fn GameNew(id: String) -> Element {
                     spawn_local(async move {
                         is_starting.set(true);
                         start_error.set(String::new());
-                        match net::query_as::<serde_json::Value>(
+                        // POST, not GET: starting a game is a write. A GET can be
+                        // cached / prefetched / retried by the browser or an edge
+                        // proxy, which can make "Start" appear to hang even though
+                        // the server responds fast.
+                        match net::mutation_as::<serde_json::Value>(
                             "activeGame.start",
                             Some(json!({ "gameId": id })),
                         )

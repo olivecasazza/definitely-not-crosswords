@@ -229,25 +229,43 @@ async fn user_stats(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     }))
 }
 
-/// All users for the H2H opponent dropdown. Ports `getAllPlayers`.
+/// Players selectable in the H2H opponent dropdown. Ports `getAllPlayers`, but
+/// scoped: it required no auth and returned EVERY user (a full name roster to any
+/// visitor). Now it requires a session and a normal user only sees people they
+/// share a team with; admins see everyone. (Email is still gated by
+/// `visible_email`, so it's admin/own-row only.)
 async fn all_players(input: &Value, ctx: &Ctx) -> Result<Value, String> {
-    let exclude_email = input["excludeEmail"].as_str();
+    let user = ctx.require_user()?;
+    let is_admin = matches!(user.role, Role::Admin);
+    let exclude_email = input["excludeEmail"].as_str().unwrap_or("");
 
-    let rows = if let Some(excl) = exclude_email {
+    let rows = if is_admin {
         sqlx::query(
             r#"SELECT id, name, email FROM "User"
                WHERE (email IS NULL OR email != $1)
                ORDER BY name ASC NULLS LAST"#,
         )
-        .bind(excl)
+        .bind(exclude_email)
         .fetch_all(&ctx.pool)
         .await
         .map_err(|e| e.to_string())?
     } else {
-        sqlx::query(r#"SELECT id, name, email FROM "User" ORDER BY name ASC NULLS LAST"#)
-            .fetch_all(&ctx.pool)
-            .await
-            .map_err(|e| e.to_string())?
+        // Teammates only: users sharing at least one team with the caller.
+        sqlx::query(
+            r#"SELECT DISTINCT u.id, u.name, u.email
+               FROM "User" u
+               JOIN "TeamMember" tm2 ON tm2."userId" = u.id
+               JOIN "TeamMember" tm1 ON tm1."teamId" = tm2."teamId"
+               WHERE tm1."userId" = $1
+                 AND u.id != $1
+                 AND (u.email IS NULL OR u.email != $2)
+               ORDER BY u.name ASC NULLS LAST"#,
+        )
+        .bind(&user.id)
+        .bind(exclude_email)
+        .fetch_all(&ctx.pool)
+        .await
+        .map_err(|e| e.to_string())?
     };
 
     let players: Vec<Value> = rows
@@ -264,6 +282,30 @@ async fn all_players(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     Ok(json!(players))
 }
 
+/// True when `user` may view `opponent_id`'s comparison data: admins always,
+/// otherwise only when they share a team.
+async fn can_compare(
+    ctx: &Ctx,
+    user: &crossword_db::AuthUser,
+    opponent_id: &str,
+) -> Result<bool, String> {
+    if matches!(user.role, Role::Admin) {
+        return Ok(true);
+    }
+    sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS (
+              SELECT 1 FROM "TeamMember" tm1
+              JOIN "TeamMember" tm2 ON tm1."teamId" = tm2."teamId"
+              WHERE tm1."userId" = $1 AND tm2."userId" = $2
+           )"#,
+    )
+    .bind(&user.id)
+    .bind(opponent_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Head-to-head comparison between the logged-in user and an opponent.
 /// Ports `getHeadToHead` (protectedProcedure).
 async fn head_to_head(input: &Value, ctx: &Ctx) -> Result<Value, String> {
@@ -272,6 +314,12 @@ async fn head_to_head(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         Err(e) => return Err(e),
     };
     let opponent_id = input["opponentId"].as_str().ok_or("missing opponentId")?;
+
+    // Authorization: you may only compare with a teammate (admins bypass). Without
+    // this, any authenticated user could read any user's stats by id (IDOR).
+    if !can_compare(ctx, user, opponent_id).await? {
+        return Err("You can only compare stats with teammates.".to_string());
+    }
 
     // Fetch opponent display name.
     let opp_row = sqlx::query(r#"SELECT id, name, email FROM "User" WHERE id = $1"#)

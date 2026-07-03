@@ -25,10 +25,29 @@ fn http_base() -> String {
     }
 }
 
+/// Map a non-2xx HTTP status to a friendly message. tRPC app errors come back as
+/// HTTP 200 with an error envelope (handled by `parse_batch_single`); a non-2xx
+/// here means a transport/gateway failure (an auth redirect, or a 5xx with an
+/// HTML body) that must NOT be shown to the user as a raw status/body.
+fn status_error(status: u16) -> Option<String> {
+    match status {
+        200..=299 => None,
+        401 => Some("You need to sign in to do that.".into()),
+        403 => Some("You don't have access to that.".into()),
+        404 => Some("That wasn't found.".into()),
+        429 => Some("Too many requests — give it a moment.".into()),
+        500..=599 => Some("The server is having trouble right now. Please try again.".into()),
+        s => Some(format!("Request failed ({s}).")),
+    }
+}
+
 /// A tRPC query. `input` is the raw procedure input (None for no-arg procs).
 pub async fn query(proc: &str, input: Option<Value>) -> Result<Value, String> {
     let url = rpc::query_url(&http_base(), proc, input.as_ref());
     let resp = Request::get(&url).send().await.map_err(|e| e.to_string())?;
+    if let Some(msg) = status_error(resp.status()) {
+        return Err(msg);
+    }
     let text = resp.text().await.map_err(|e| e.to_string())?;
     rpc::parse_batch_single(&text)
 }
@@ -43,6 +62,9 @@ pub async fn mutation(proc: &str, input: Option<Value>) -> Result<Value, String>
         .send()
         .await
         .map_err(|e| e.to_string())?;
+    if let Some(msg) = status_error(resp.status()) {
+        return Err(msg);
+    }
     let text = resp.text().await.map_err(|e| e.to_string())?;
     rpc::parse_batch_single(&text)
 }

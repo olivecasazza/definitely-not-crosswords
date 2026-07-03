@@ -37,24 +37,47 @@ test("authenticated product tour", async ({ page }) => {
   await expect(page).toHaveURL(/\/games/, { timeout: 15_000 });
   await beat(page, 1800);
 
-  // If a playable game exists, open it and show the board (optional — staging
-  // may have none, and the tour should still produce a video).
-  const gameLink = page.locator('a[href^="/game/"]').first();
-  if (await gameLink.count()) {
-    await gameLink.click();
-    await expect(page).toHaveURL(/\/game\//, { timeout: 15_000 });
-    await beat(page, 2200);
+  // Play a game — the heart of the demo. Available games are clickable cards
+  // (onclick handlers, not <a> links) tagged "UNSTARTED".
+  const card = page.getByText("UNSTARTED").first();
+  if (await card.count()) {
+    await card.click(); // -> /game/:id/new
+    // Start the game.
+    const start = page.getByRole("button", { name: /start game/i });
+    await expect(start).toBeVisible({ timeout: 20_000 });
+    await beat(page);
+    await start.click();
+    // Now on the board (/game/:id, no /new).
+    await expect(page).toHaveURL(/\/game\/[^/]+$/, { timeout: 20_000 });
+    await beat(page, 1800);
+
+    // Pick a clue and type an answer, letter by letter, so the recording shows
+    // the crossword being filled in. (We don't know the solution — this is a
+    // demo of playing, not a solve.)
+    const clue = page.locator(".cw-clue-row").first();
+    if (await clue.count()) {
+      await clue.click();
+      await beat(page);
+      const slots = page.locator(".cw-letter-input");
+      const n = await slots.count();
+      if (n > 0) {
+        await slots.first().click();
+        // Auto-advance moves focus to the next cell as each letter lands.
+        await page.keyboard.type("CROSSWORDS".slice(0, n), { delay: 170 });
+        await beat(page);
+        const guess = page.getByRole("button", { name: /^guess$/i });
+        if (await guess.count()) {
+          await guess.click();
+          await beat(page, 2000);
+        }
+      }
+    }
   }
 
-  // Leaderboard, then profile — round out the tour.
-  const stats = page.getByRole("link", { name: /stats|leaderboard/i }).first();
+  // Round out the tour: the leaderboard.
+  const stats = page.getByRole("link", { name: /^stats$/i }).first();
   if (await stats.count()) {
     await stats.click();
-    await beat(page, 1600);
-  }
-  const profile = page.getByRole("link", { name: /^profile$/i }).first();
-  if (await profile.count()) {
-    await profile.click();
-    await beat(page, 1600);
+    await beat(page, 1800);
   }
 });

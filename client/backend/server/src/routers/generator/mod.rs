@@ -347,8 +347,10 @@ pub async fn run_generation(
     match result {
         Ok(gen) => {
             let title = title.unwrap_or_else(|| gen.title.clone());
-            match finalize_success(&pool, &job_id, &title, &gen, &raw_params, &log, started_at)
-                .await
+            match finalize_success(
+                &pool, &job_id, &title, &gen, &raw_params, &log, started_at, &user.id,
+            )
+            .await
             {
                 Ok(game_id) => {
                     if !is_unlimited {
@@ -444,6 +446,7 @@ async fn finalize_success(
     raw_params: &Value,
     log: &Arc<std::sync::Mutex<Vec<Value>>>,
     started_at: i64,
+    created_by: &str,
 ) -> Result<String, String> {
     let game_id = Uuid::new_v4().to_string();
     let completed_at = now_ms();
@@ -462,11 +465,12 @@ async fn finalize_success(
 
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     sqlx::query(
-        r#"INSERT INTO "Game" (id, type, "createdAt", "updatedAt", title, published, source)
-           VALUES ($1, 'Game', now(), now(), $2, false, 'GENERATED'::"GameSource")"#,
+        r#"INSERT INTO "Game" (id, type, "createdAt", "updatedAt", title, published, source, "createdById")
+           VALUES ($1, 'Game', now(), now(), $2, false, 'GENERATED'::"GameSource", $3)"#,
     )
     .bind(&game_id)
     .bind(title)
+    .bind(created_by)
     .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;

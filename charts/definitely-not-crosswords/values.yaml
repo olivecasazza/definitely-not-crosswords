@@ -104,6 +104,14 @@ adminUsers:
 dictionarySeed:
   enabled: true
 
+# Weekly platform game seeding (batch-generates published public games owned by
+# the Platform system user). Runs the server image in SEED_GAMES mode.
+gameSeed:
+  enabled: false
+  schedule: "0 6 * * 1"   # weekly, Monday 06:00 UTC
+  count: 5
+  topics: "animals,science,music,history,food,sports,geography,movies,space,nature"
+
 # Database Configuration (PostgreSQL)
 database:
   migrations:

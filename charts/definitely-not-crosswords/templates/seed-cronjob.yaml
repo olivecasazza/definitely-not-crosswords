@@ -1,0 +1,61 @@
+{{- if .Values.gameSeed.enabled }}
+# Weekly platform game seeding. Runs the server image in SEED_GAMES mode: the
+# main() seed branch generates published platform games (owned by the Platform
+# system user) then exits, so no command override is needed.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "definitely-not-crosswords.fullname" . }}-game-seed
+  labels:
+    {{- include "definitely-not-crosswords.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.gameSeed.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "definitely-not-crosswords.selectorLabels" . | nindent 12 }}
+        spec:
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          restartPolicy: Never
+          containers:
+            - name: game-seed
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              env:
+                - name: APP_ENV
+                  value: {{ .Values.environment | quote }}
+                - name: SEED_GAMES_COUNT
+                  value: {{ .Values.gameSeed.count | quote }}
+                - name: SEED_GAMES_TOPICS
+                  value: {{ .Values.gameSeed.topics | quote }}
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      {{- if .Values.database.cnpg.enabled }}
+                      name: {{ include "definitely-not-crosswords.fullname" . }}-db-app
+                      key: uri
+                      {{- else if .Values.database.external.existingSecret }}
+                      name: {{ .Values.database.external.existingSecret }}
+                      key: {{ .Values.database.external.existingSecretKey }}
+                      {{- else }}
+                      name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                      key: DATABASE_URL
+                      {{- end }}
+              # ONNX embedding + grid solving is CPU-heavy; give it headroom.
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
+                limits:
+                  cpu: "2"
+                  memory: 3Gi
+{{- end }}

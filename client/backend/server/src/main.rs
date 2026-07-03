@@ -63,6 +63,17 @@ async fn main() -> anyhow::Result<()> {
     let is_local = env == "local";
     tracing::info!("APP_ENV={env} (dev admin bypass: {is_local})");
 
+    // Batch-seed mode: when SEED_GAMES_COUNT is set (>0), the binary generates
+    // that many published platform games under the Platform system user, then
+    // exits instead of serving HTTP. Used by the weekly seeding CronJob.
+    if let Ok(cs) = std::env::var("SEED_GAMES_COUNT") {
+        let count: usize = cs.trim().parse().unwrap_or(0);
+        if count > 0 {
+            seed_games(pool.clone(), count).await?;
+            return Ok(());
+        }
+    }
+
     // The dev-admin bypass (local-dev credential provider + "dev-admin" bearer) is
     // enabled ONLY in local. Outside local it's off AND the route is unregistered,
     // so it can't mint an admin session on staging/prod.
@@ -115,6 +126,92 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("crossword-server listening on {addr}");
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Batch-generate `count` published platform games under the Platform system
+/// user, cycling through the configured topics. Best-effort: a failing
+/// generation is logged and skipped, never aborting the whole run. Called from
+/// `main()` when `SEED_GAMES_COUNT` is set; the process exits afterwards.
+async fn seed_games(pool: PgPool, count: usize) -> anyhow::Result<()> {
+    // Ensure the Platform system user exists (id is a text PK). It must be role
+    // ADMIN so the generator's quota check is bypassed, and must exist before any
+    // generation so the Game.createdById FK is satisfiable.
+    sqlx::query(
+        r#"INSERT INTO "User" (id, email, name, username, "emailVerified", role, "vipPass")
+           VALUES ('platform-system', 'platform@crosswords.system', 'Platform', 'platform',
+                   now(), 'ADMIN'::"UserRole", true)
+           ON CONFLICT (id) DO NOTHING"#,
+    )
+    .execute(&pool)
+    .await?;
+
+    let platform_user = crossword_db::AuthUser {
+        id: "platform-system".to_string(),
+        email: "platform@crosswords.system".to_string(),
+        role: crossword_db::Role::Admin,
+    };
+
+    let topics: Vec<String> = match std::env::var("SEED_GAMES_TOPICS") {
+        Ok(s) if !s.trim().is_empty() => s
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect(),
+        _ => [
+            "animals",
+            "science",
+            "music",
+            "history",
+            "food",
+            "sports",
+            "geography",
+            "movies",
+            "space",
+            "nature",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+    };
+    if topics.is_empty() {
+        anyhow::bail!("no seed topics available");
+    }
+
+    tracing::info!(
+        "seeding {count} platform games across {} topics",
+        topics.len()
+    );
+
+    // No live client; generation progress events are discarded.
+    let noop_emit: Arc<dyn Fn(Value) + Send + Sync> = Arc::new(|_| {});
+
+    for i in 0..count {
+        let topic = &topics[i % topics.len()];
+        tracing::info!("seed {}/{count}: generating topic '{topic}'", i + 1);
+        let input = json!({ "params": { "topic": topic } });
+        // run_generation returns () and handles its own errors internally as
+        // `failed` events (swallowed by noop_emit), so seeding is best-effort:
+        // a topic that yields no grid simply produces no Game row.
+        routers::generator::run_generation(
+            pool.clone(),
+            platform_user.clone(),
+            input,
+            noop_emit.clone(),
+        )
+        .await;
+    }
+
+    // Publish exactly the platform's freshly-generated (still unpublished) games.
+    // rows_affected is the end-to-end signal that seeding actually produced games.
+    let published = sqlx::query(
+        r#"UPDATE "Game" SET published = true, "updatedAt" = now()
+           WHERE "createdById" = 'platform-system' AND published = false"#,
+    )
+    .execute(&pool)
+    .await?
+    .rows_affected();
+    tracing::info!("seeding complete: published {published} platform games");
     Ok(())
 }
 

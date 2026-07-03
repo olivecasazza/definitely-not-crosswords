@@ -24,6 +24,24 @@ pub const DESIGN: &str = r#"
   --color-success: var(--pastel-green);
   --color-warning: var(--pastel-yellow);
   --color-error: var(--pastel-red);
+
+  /* Palette tokens: dark ink for text on pastel fills, plus podium metals. */
+  --contrast-ink: #0f172a;
+  --podium-silver: #cbd5e1;
+  --podium-bronze: #d97706;
+
+  /* App fonts. --mono is defined in the panel-kit remap block below. */
+  --font-sans: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* Type scale (rem) + weights are numeric. Inline font-sizes scattered across
+     components should adopt these vars over time; shared classes use them now. */
+  --fs-2xs: .625rem;
+  --fs-xs: .75rem;
+  --fs-sm: .8rem;
+  --fs-md: .875rem;
+  --fs-lg: 1rem;
+  --fs-xl: 1.5rem;
+  --fs-2xl: 2rem;
 }
 .light-mode {
   --bg-app: #ffffff;
@@ -79,12 +97,12 @@ a { color: inherit; text-decoration: none; }
 
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-app); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: var(--border-app); border-radius: 0; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
 
 .app-card { background-color: var(--bg-card); border: 1px solid var(--border-app); border-radius: 0; }
-.app-btn { padding: .375rem .75rem; font-size: .875rem; font-weight: 500; border: 1px solid var(--border-app);
-  border-radius: 0; background-color: var(--bg-card); color: var(--text-secondary);
+.app-btn { font-family: var(--font-sans); padding: .5rem .9rem; font-size: var(--fs-md); font-weight: 600;
+  border: 1px solid var(--border-app); border-radius: 0; background-color: var(--bg-card); color: var(--text-secondary);
   transition: all .15s ease; cursor: pointer; }
 .app-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
 .app-btn:disabled { opacity: .5; cursor: not-allowed; }
@@ -92,6 +110,10 @@ a { color: inherit; text-decoration: none; }
 .app-input { background-color: var(--bg-cell-empty); color: var(--text-primary); border: 1px solid var(--border-app);
   border-radius: 0; outline: none; padding: .4rem .6rem; transition: border-color .15s ease; }
 .app-input:focus { border-color: var(--color-primary); }
+
+/* panel-kit's "traffic light" window controls (`.light`) are pure-color circles
+   with no text content (see panel-kit.css) — there is no font to match, so
+   nothing to override here. Left as-is intentionally. */
 
 /* ── App shell: header + per-view panel-kit workspace + footer ──────────────
    Every view is a panel-kit workspace. On DESKTOP the workspace fills the area

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::rc::Rc;
 
+use crate::components::identicon::Identicon;
 use crate::net;
 use crate::store::use_app_state;
 use crate::Route;
@@ -53,17 +54,6 @@ struct GameMember {
 struct MemberUser {
     name: Option<String>,
     email: Option<String>,
-}
-
-fn initials(name: Option<&str>, email: Option<&str>) -> String {
-    let base = name.or(email).unwrap_or("?");
-    base.split(|c: char| c == '@' || c == ' ')
-        .next()
-        .unwrap_or("?")
-        .chars()
-        .take(2)
-        .collect::<String>()
-        .to_uppercase()
 }
 
 fn format_date(s: &str) -> String {
@@ -221,11 +211,6 @@ pub fn GameCompleted(id: String) -> Element {
                                                 .or(score_record.member.user.email.as_deref())
                                                 .unwrap_or("Anonymous");
 
-                                            let inits = initials(
-                                                score_record.member.user.name.as_deref(),
-                                                score_record.member.user.email.as_deref(),
-                                            );
-
                                             let total = score_record.correct_guesses + score_record.incorrect_guesses;
                                             let accuracy = if total > 0 {
                                                 score_record.correct_guesses * 100 / total
@@ -252,7 +237,9 @@ pub fn GameCompleted(id: String) -> Element {
                                                             style: "{rank_badge_style(index)}",
                                                             "{rank_n}"
                                                         }
-                                                        div { class: "cg-avatar", "{inits}" }
+                                                        div { class: "cg-avatar",
+                                                            Identicon { seed: display_name.to_string(), size: 30 }
+                                                        }
                                                         div { style: "display: flex; flex-direction: column; min-width: 0;",
                                                             span {
                                                                 style: "font-size: .875rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: .375rem;",

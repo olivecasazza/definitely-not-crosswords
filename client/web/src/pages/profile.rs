@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
 
+use crate::components::identicon::Identicon;
 use crate::components::pro_upgrade::ProUpgrade;
 use crate::net;
 use crate::store::use_app_state;
@@ -37,6 +38,7 @@ pub fn Profile() -> Element {
     let state = use_app_state();
 
     let user = state.user();
+    let user_id = user.as_ref().map(|u| u.id.clone()).unwrap_or_default();
     let user_email = user
         .as_ref()
         .and_then(|u| u.email.clone())
@@ -149,12 +151,6 @@ pub fn Profile() -> Element {
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
             Panel::Profile => {
-                let first_char = display_name
-                    .read()
-                    .chars()
-                    .next()
-                    .map(|c| c.to_uppercase().to_string())
-                    .unwrap_or_else(|| "U".to_string());
                 rsx! {
                     div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
 
@@ -172,7 +168,9 @@ pub fn Profile() -> Element {
                         div { class: "app-card pf-avatar-card",
                             div {
                                 style: "position: relative; display: inline-block;",
-                                div { class: "pf-avatar-circle", "{first_char}" }
+                                div { class: "pf-avatar-circle",
+                                    Identicon { seed: user_id.clone(), size: 72 }
+                                }
                                 if email_verified {
                                     div {
                                         class: "pf-verified-badge",
@@ -335,7 +333,7 @@ const PROFILE_CSS: &str = r#"
     justify-content: center;
     font-weight: 700;
     font-size: 1.875rem;
-    color: #0f172a;
+    color: var(--contrast-ink);
     border: 4px solid rgba(255,255,255,0.05);
     text-transform: uppercase;
     user-select: none;
@@ -348,7 +346,7 @@ const PROFILE_CSS: &str = r#"
     height: 1.5rem;
     border-radius: 50%;
     background: var(--pastel-green);
-    color: #0f172a;
+    color: var(--contrast-ink);
     border: 2px solid var(--bg-card);
     display: flex;
     align-items: center;

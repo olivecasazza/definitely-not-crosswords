@@ -5,5 +5,6 @@ pub mod brand;
 pub mod footer;
 pub mod generation_progress;
 pub mod header;
+pub mod identicon;
 pub mod pro_upgrade;
 pub mod staging_banner;

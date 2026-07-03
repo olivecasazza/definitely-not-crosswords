@@ -2,6 +2,7 @@
 //! flat nav instead of a dropdown). Auth-aware via `AppState`; the Admin link
 //! is gated on the `admin:access` capability; toggles the light/dark theme.
 
+use crate::components::identicon::Identicon;
 use crate::store::use_app_state;
 use crate::{set_light_class, Route};
 use dioxus::prelude::*;
@@ -59,7 +60,9 @@ pub fn AppHeader() -> Element {
                 match user {
                     Some(u) => rsx! {
                         Link { to: Route::Profile {}, class: "navlink",
-                            "{u.name.clone().or(u.email.clone()).unwrap_or_default()}"
+                            style: "display: inline-flex; align-items: center; gap: .4rem;",
+                            Identicon { seed: u.id.clone(), size: 22 }
+                            span { "{u.name.clone().or(u.email.clone()).unwrap_or_default()}" }
                         }
                         a { class: "app-btn", href: "/api/auth/signout", "Sign out" }
                     },

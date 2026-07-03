@@ -864,7 +864,7 @@ fn js_now_iso() -> String {
 const GAME_CSS: &str = r#"
 .cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 8px; box-sizing: border-box; }
 .cw-board { display: grid; gap: 3px; width: 100%; max-width: min(100%, 480px); }
-.cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); }
+.cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid rgba(39,39,42,0.25); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
 .cw-letter:hover { border-color: var(--border-hover); }
@@ -879,38 +879,38 @@ const GAME_CSS: &str = r#"
 .cw-clue { display: flex; flex-direction: column; gap: 12px; height: 100%; }
 .cw-clue-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; height: 100%; gap: 6px; }
 .cw-clue-head { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-app); padding-bottom: 8px; flex-wrap: wrap; }
-.cw-dir-badge { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; padding: 2px 6px; border-radius: 4px; border: 1px solid; }
+.cw-dir-badge { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em; padding: 2px 6px; border-radius: 0; border: 1px solid; }
 .cw-dir-across { background: rgba(254,234,153,0.1); color: var(--pastel-yellow); border-color: rgba(254,234,153,0.2); }
 .cw-dir-down { background: rgba(168,230,207,0.1); color: var(--pastel-green); border-color: rgba(168,230,207,0.2); }
 .cw-link-btn { margin-left: auto; background: none; border: none; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
 .cw-link-btn:hover { color: var(--text-primary); }
 .cw-clue-text { font-size: 15px; font-weight: 500; line-height: 1.5; color: var(--text-primary); }
 .cw-letters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 4px 0; }
-.cw-letter-input { width: 40px; height: 40px; text-align: center; font-size: 18px; font-weight: 700; text-transform: uppercase; border-radius: 6px; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-primary); }
+.cw-letter-input { width: 40px; height: 40px; text-align: center; font-size: 18px; font-weight: 700; text-transform: uppercase; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-primary); }
 .cw-letter-input:hover { border-color: var(--border-hover); }
 .cw-input-focused { border-color: var(--pastel-yellow); box-shadow: 0 0 12px rgba(254,234,153,0.25); }
 .cw-clue-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: auto; }
-.cw-btn-cancel { padding: 8px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 8px; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; }
+.cw-btn-cancel { font-family: var(--font-sans); padding: 8px 16px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; }
 .cw-btn-cancel:hover { color: var(--text-primary); border-color: var(--border-hover); }
-.cw-btn-guess { padding: 8px 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 8px; border: 1px solid var(--pastel-yellow); background: var(--pastel-yellow); color: #18181b; cursor: pointer; }
+.cw-btn-guess { font-family: var(--font-sans); padding: 8px 20px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--pastel-yellow); background: var(--pastel-yellow); color: var(--contrast-ink); cursor: pointer; }
 
 .cw-clues { display: flex; flex-direction: column; gap: 10px; height: 100%; }
 .cw-clues-head { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-app); padding-bottom: 8px; }
 .cw-clues-head h2 { font-size: 14px; color: var(--text-secondary); margin: 0; }
 .cw-tabs { display: flex; gap: 4px; }
-.cw-tab { padding: 4px 12px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 4px; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.cw-tab { font-family: var(--font-sans); padding: 4px 12px; font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; }
 .cw-tab:hover { border-color: var(--border-hover); }
 .cw-tab-active-across { background: var(--pastel-yellow); color: #18181b; border-color: var(--pastel-yellow); font-weight: 700; }
 .cw-tab-active-down { background: var(--pastel-green); color: #18181b; border-color: var(--pastel-green); font-weight: 700; }
 .cw-clue-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
-.cw-clue-row { display: flex; gap: 10px; padding: 10px; border-radius: 12px; border: 1px solid var(--border-app); cursor: pointer; }
+.cw-clue-row { display: flex; gap: 10px; padding: 10px; border-radius: 0; border: 1px solid var(--border-app); cursor: pointer; }
 .cw-clue-row:hover { border-color: var(--border-hover); }
 .cw-clue-row-sel { background: rgba(254,234,153,0.04); border-color: rgba(254,234,153,0.4); }
-.cw-clue-badge { width: 28px; height: 28px; flex-shrink: 0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; background: var(--bg-cell-empty); color: var(--text-secondary); border: 1px solid var(--border-app); }
+.cw-clue-badge { width: 28px; height: 28px; flex-shrink: 0; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: var(--fs-md); background: var(--bg-cell-empty); color: var(--text-secondary); border: 1px solid var(--border-app); }
 .cw-clue-body { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .cw-clue-row-text { font-size: 13px; color: var(--text-secondary); line-height: 1.4; }
 .cw-bubbles { display: flex; flex-wrap: wrap; gap: 4px; }
-.cw-bubble { width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.cw-bubble { width: 20px; height: 20px; border-radius: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .cw-bubble-empty { background: var(--bg-cell-empty); border: 1px solid var(--border-app); opacity: 0.3; }
 .cw-bubble.cw-placeholder { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--pastel-yellow); }
 .cw-bubble.cw-incorrect { background: rgba(255,140,140,0.18); color: var(--pastel-red); border: 1px solid var(--pastel-red); }

@@ -5,6 +5,7 @@ use serde_json::json;
 
 use wasm_bindgen_futures::spawn_local;
 
+use crate::components::identicon::Identicon;
 use crate::net;
 use crate::store::use_app_state;
 use crate::Route;
@@ -114,9 +115,9 @@ fn date_short(s: &str) -> String {
 
 fn rank_badge_style(index: usize) -> &'static str {
     match index {
-        0 => "background: var(--pastel-yellow); color: #0f172a; border-color: var(--pastel-yellow);",
-        1 => "background: #cbd5e1; color: #0f172a; border-color: #cbd5e1;",
-        2 => "background: #d97706; color: #f8fafc; border-color: #d97706;",
+        0 => "background: var(--pastel-yellow); color: var(--contrast-ink); border-color: var(--pastel-yellow);",
+        1 => "background: var(--podium-silver); color: var(--contrast-ink); border-color: var(--podium-silver);",
+        2 => "background: var(--podium-bronze); color: #f8fafc; border-color: var(--podium-bronze);",
         _ => "background: var(--bg-cell-empty); color: var(--text-secondary); border-color: var(--border-app);",
     }
 }
@@ -302,7 +303,7 @@ pub fn Stats() -> Element {
                                             // 2nd
                                             if entries.len() >= 2 {
                                                 div { class: "app-card st-podium-card",
-                                                    div { class: "st-podium-badge", style: "background: #cbd5e1; color: #0f172a; border-color: #cbd5e1;", "2" }
+                                                    div { class: "st-podium-badge", style: "background: var(--podium-silver); color: var(--contrast-ink); border-color: var(--podium-silver);", "2" }
                                                     span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary);", "{entries[1].name}" }
                                                     span { style: "font-size: .625rem; color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[1].total_score} pts" }
                                                     span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "{entries[1].games_played} games · {entries[1].accuracy}% Acc" }
@@ -310,7 +311,7 @@ pub fn Stats() -> Element {
                                             }
                                             // 1st (bigger)
                                             div { class: "app-card st-podium-card st-podium-first",
-                                                div { class: "st-podium-badge", style: "background: var(--pastel-yellow); color: #0f172a; border-color: var(--pastel-yellow); width: 3rem; height: 3rem; font-size: 1.25rem;", "👑" }
+                                                div { class: "st-podium-badge", style: "background: var(--pastel-yellow); color: var(--contrast-ink); border-color: var(--pastel-yellow); width: 3rem; height: 3rem; font-size: 1.25rem;", "👑" }
                                                 span { style: "font-size: 1rem; font-weight: 900; color: var(--text-primary);", "{entries[0].name}" }
                                                 span { style: "font-size: .875rem; color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[0].total_score} pts" }
                                                 span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "{entries[0].games_played} games · {entries[0].accuracy}% Acc" }
@@ -318,7 +319,7 @@ pub fn Stats() -> Element {
                                             // 3rd
                                             if entries.len() >= 3 {
                                                 div { class: "app-card st-podium-card",
-                                                    div { class: "st-podium-badge", style: "background: #d97706; color: #f8fafc; border-color: #d97706;", "3" }
+                                                    div { class: "st-podium-badge", style: "background: var(--podium-bronze); color: #f8fafc; border-color: var(--podium-bronze);", "3" }
                                                     span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary);", "{entries[2].name}" }
                                                     span { style: "font-size: .625rem; color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[2].total_score} pts" }
                                                     span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "{entries[2].games_played} games · {entries[2].accuracy}% Acc" }
@@ -361,6 +362,7 @@ pub fn Stats() -> Element {
                                                                     }
                                                                     td {
                                                                         span { style: "display: flex; align-items: center; gap: .375rem;",
+                                                                            Identicon { seed: entry.id.clone(), size: 20 }
                                                                             "{entry.name}"
                                                                             if is_me {
                                                                                 span { style: "font-size: .5rem; font-weight: 900; border: 1px solid rgba(254,234,153,0.3); color: var(--pastel-yellow); padding: 0 .25rem; border-radius: .125rem; text-transform: uppercase;", "YOU" }

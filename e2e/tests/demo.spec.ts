@@ -37,18 +37,34 @@ test("authenticated product tour", async ({ page }) => {
   await expect(page).toHaveURL(/\/games/, { timeout: 15_000 });
   await beat(page, 1800);
 
-  // Play a game — the heart of the demo. Available games are clickable cards
-  // (onclick handlers, not <a> links) tagged "UNSTARTED".
-  const card = page.getByText("UNSTARTED").first();
-  if (await card.count()) {
-    await card.click(); // -> /game/:id/new
-    // Start the game.
+  // Play a game — the heart of the demo. Game rows are clickable cards (onclick
+  // handlers, not <a> links). Prefer resuming an ACTIVE game (straight to the
+  // board); otherwise start an UNSTARTED one (which has a slower "start" step).
+  const card = (label: string) =>
+    page
+      .locator('div[style*="cursor: pointer"]')
+      .filter({ hasText: label })
+      .first();
+
+  const active = card("ACTIVE");
+  const unstarted = card("UNSTARTED");
+  let opened = false;
+  if (await active.count()) {
+    await active.click(); // ActiveGame -> GamePlay (board) directly
+    opened = true;
+  } else if (await unstarted.count()) {
+    await unstarted.click(); // -> /game/:id/new
     const start = page.getByRole("button", { name: /start game/i });
     await expect(start).toBeVisible({ timeout: 20_000 });
     await beat(page);
     await start.click();
-    // Now on the board (/game/:id, no /new).
-    await expect(page).toHaveURL(/\/game\/[^/]+$/, { timeout: 20_000 });
+    opened = true;
+  }
+
+  if (opened) {
+    // On the board (/game/:id). Starting a fresh game can be slow, so wait
+    // generously.
+    await expect(page).toHaveURL(/\/game\/[^/]+$/, { timeout: 60_000 });
     await beat(page, 1800);
 
     // Pick a clue and type an answer, letter by letter, so the recording shows

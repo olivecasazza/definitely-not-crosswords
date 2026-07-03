@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.5...v0.1.6) - 2026-07-03
+
+### Fixed
+
+- *(security)* scope stats player list + head-to-head to teammates
+- *(security)* close prod auth backdoors + IDOR, harden payments/teams (pre-prod audit)
+
 ## [0.1.5](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.4...v0.1.5) - 2026-07-03
 
 ### Added

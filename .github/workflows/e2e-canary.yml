@@ -31,6 +31,11 @@ jobs:
       # account). Absent -> demo.spec.ts self-skips; the canary still runs.
       E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
       E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      # Optional second staging account for the co-op chapter (join/presence/
+      # live letters between two different users). Absent -> the chapter falls
+      # back to the primary account (live transport only, no presence chips).
+      E2E_EMAIL_2: ${{ secrets.E2E_EMAIL_2 }}
+      E2E_PASSWORD_2: ${{ secrets.E2E_PASSWORD_2 }}
     steps:
       - uses: actions/checkout@v4
       - name: Install deps

@@ -831,6 +831,9 @@ name = "crossword-tools"
 version = "0.1.8"
 dependencies = [
  "anyhow",
+ "hex",
+ "rand 0.8.6",
+ "scrypt",
  "serde_json",
  "sqlx",
  "tokio",

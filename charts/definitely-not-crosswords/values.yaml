@@ -104,6 +104,16 @@ adminUsers:
 dictionarySeed:
   enabled: true
 
+# E2E demo/canary test users (Playwright logs in with these). usersJson holds
+# {"team": {"name": "..."}, "users": [{email, name, password}]} (team
+# optional) and is rendered into the app secret — set it from sops, never
+# plaintext in values. The seed upserts users (drift-only re-hash) and the
+# shared team, so it's safe on every deploy. Off in this file; staging enables
+# it (prod should not carry test users).
+e2eUsers:
+  enabled: false
+  usersJson: ""
+
 # Weekly platform game seeding (batch-generates published public games owned by
 # the Platform system user). Runs the server image in SEED_GAMES mode.
 gameSeed:

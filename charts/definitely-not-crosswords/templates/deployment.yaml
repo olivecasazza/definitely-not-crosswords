@@ -72,6 +72,7 @@ spec:
                   {{- end }}
         {{- end }}
         {{- if .Values.e2eUsers.enabled }}
+        {{- $e2e := .Values.e2eUsers.existingSecret | default (printf "%s-secrets" (include "definitely-not-crosswords.fullname" .)) }}
         - name: seed-e2e-users
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -80,7 +81,7 @@ spec:
             - name: E2E_USERS_JSON
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                  name: {{ $e2e }}
                   key: E2E_USERS_JSON
                   # Environments without test users skip the seed gracefully.
                   optional: true

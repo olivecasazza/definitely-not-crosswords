@@ -113,6 +113,9 @@ dictionarySeed:
 e2eUsers:
   enabled: false
   usersJson: ""
+  # Read E2E_USERS_JSON from an existing secret instead of usersJson (sops /
+  # ExternalSecret-managed clusters use this — same pattern as lemonSqueezy).
+  existingSecret: ""
 
 # Weekly platform game seeding (batch-generates published public games owned by
 # the Platform system user). Runs the server image in SEED_GAMES mode.

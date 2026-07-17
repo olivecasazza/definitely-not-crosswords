@@ -14,11 +14,16 @@ use crossword_core::game::{
     ActionType, Cell, Direction, GameAction, Question, QuestionWithAnswerMap,
 };
 use dioxus::prelude::*;
+use futures::StreamExt;
+use gloo_timers::future::{IntervalStream, TimeoutFuture};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen_futures::spawn_local;
 
+use crate::components::identicon::Identicon;
 use crate::net;
+use crate::store::use_app_state;
 use crate::Route;
 
 /// Identity key for a question (number + direction; numbers are reused across
@@ -52,6 +57,81 @@ struct ActionSlot {
     cord_y: i32,
     previous_state: String,
     state: String,
+}
+
+/// A co-op member of this game, from `activeGame.get`'s `gameMembers`.
+#[derive(Clone, PartialEq)]
+struct MemberInfo {
+    user_id: String,
+    user_name: String,
+    is_owner: bool,
+}
+
+/// Another player's live selection, stamped with our local tick so stale
+/// entries (a closed tab never broadcasts a clear) can be pruned.
+#[derive(Clone, PartialEq)]
+struct PresenceEntry {
+    name: String,
+    selection: Option<QKey>,
+    tick: u64,
+}
+
+/// A remote player's focused word, projected onto the board as a colored border.
+#[derive(Clone, PartialEq)]
+struct RemoteSelection {
+    key: QKey,
+    color: String,
+    name: String,
+}
+
+/// Presence entries older than this many seconds stop rendering.
+const PRESENCE_TTL_SECS: u64 = 45;
+
+/// Presence palette — pastel tones matching the design tokens. Yellow is
+/// reserved for the local player (matches the existing selection styling),
+/// red stays exclusive to incorrect guesses.
+const SELF_COLOR: &str = "#feea99";
+const REMOTE_COLORS: [&str; 4] = ["#a8e6cf", "#a8c8f0", "#d0b8f0", "#f0b8d0"];
+
+/// Deterministic per-player color: remote players hash into the palette.
+fn player_color(user_id: &str, my_id: Option<&str>) -> String {
+    if Some(user_id) == my_id {
+        return SELF_COLOR.to_string();
+    }
+    let h: usize = user_id.bytes().map(|b| b as usize).sum();
+    REMOTE_COLORS[h % REMOTE_COLORS.len()].to_string()
+}
+
+/// "ACROSS" → Direction::Across (the wire format is UPPERCASE).
+fn direction_from_str(s: &str) -> Option<Direction> {
+    match s {
+        "ACROSS" => Some(Direction::Across),
+        "DOWN" => Some(Direction::Down),
+        _ => None,
+    }
+}
+
+/// Parse the `gameMembers` array from `activeGame.get`. `userName` is absent
+/// on pre-coop backends — fall back to the leaderboard's placeholder.
+fn parse_members(data: &Value) -> Vec<MemberInfo> {
+    data.get("gameMembers")
+        .and_then(|m| m.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    Some(MemberInfo {
+                        user_id: v.get("userId")?.as_str()?.to_string(),
+                        user_name: v
+                            .get("userName")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("Anonymous Player")
+                            .to_string(),
+                        is_owner: v.get("isOwner").and_then(|b| b.as_bool()).unwrap_or(false),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -94,11 +174,20 @@ pub fn GamePlay(id: String) -> Element {
     let mut game_action_data = use_signal(Vec::<ActionSlot>::new);
     let mut focused_index = use_signal(|| Option::<usize>::None);
 
+    // co-op state: roster, live remote selections, join/invite UI
+    let state = use_app_state();
+    let mut members = use_signal(Vec::<MemberInfo>::new);
+    let presence = use_signal(HashMap::<String, PresenceEntry>::new);
+    let clock = use_signal(|| 0u64);
+    let mut invite_copied = use_signal(|| false);
+    let mut joining = use_signal(|| false);
+    let mut join_error = use_signal(String::new);
+
     // per-letter input mount handles, so we can drive focus without web-sys.
     let mut input_refs = use_signal(Vec::<Option<Rc<MountedData>>>::new);
 
     // keep subscription handles alive for the component lifetime.
-    let _subs = use_signal(|| Option::<(net::Subscription, net::Subscription)>::None);
+    let _subs = use_signal(|| Option::<(net::Subscription, net::Subscription, net::Subscription)>::None);
 
     let id_for_load = id.clone();
 
@@ -109,6 +198,9 @@ pub fn GamePlay(id: String) -> Element {
         let mut loading = loading;
         let mut load_error = load_error;
         let mut subs = _subs;
+        let mut members = members;
+        let mut presence = presence;
+        let mut clock = clock;
         let id = id_for_load.clone();
         spawn_local(async move {
             match net::query("activeGame.get", Some(json!({ "id": id }))).await {
@@ -128,6 +220,7 @@ pub fn GamePlay(id: String) -> Element {
                         .unwrap_or_default();
                     questions.set(qs);
                     actions.set(acts);
+                    members.set(parse_members(&data));
                     loading.set(false);
                 }
                 Err(e) => {
@@ -181,7 +274,63 @@ pub fn GamePlay(id: String) -> Element {
             }
         });
 
-        subs.set(Some((on_actions, on_done)));
+        // Presence: other members' live clue selections. Global emitter like
+        // the others — filter by activeGameId (and drop our own echoes).
+        let id_pres = id_for_load.clone();
+        let on_presence = net::subscribe("activeGame.onPresence", None, move |data: Value| {
+            if data.get("activeGameId").and_then(|x| x.as_str()) != Some(id_pres.as_str()) {
+                return;
+            }
+            let uid = match data.get("userId").and_then(|x| x.as_str()) {
+                Some(u) => u.to_string(),
+                None => return,
+            };
+            if state.user().map(|u| u.id == uid).unwrap_or(false) {
+                return;
+            }
+            let selection = match (
+                data.get("number").and_then(|v| v.as_i64()),
+                data.get("direction")
+                    .and_then(|x| x.as_str())
+                    .and_then(direction_from_str),
+            ) {
+                (Some(n), Some(d)) => Some((n as i32, d)),
+                _ => None,
+            };
+            let name = data
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("Anonymous Player")
+                .to_string();
+            presence.write().insert(
+                uid,
+                PresenceEntry {
+                    name,
+                    selection,
+                    tick: *clock.peek(),
+                },
+            );
+        });
+
+        // Prune stale presence every 5s — a closed tab never sends a clear.
+        spawn(async move {
+            let mut ticks = IntervalStream::new(5_000);
+            while ticks.next().await.is_some() {
+                let now = *clock.peek() + 5;
+                clock.set(now);
+                let any_stale = presence
+                    .peek()
+                    .values()
+                    .any(|e| now.saturating_sub(e.tick) > PRESENCE_TTL_SECS);
+                if any_stale {
+                    presence
+                        .write()
+                        .retain(|_, e| now.saturating_sub(e.tick) <= PRESENCE_TTL_SECS);
+                }
+            }
+        });
+
+        subs.set(Some((on_actions, on_done, on_presence)));
     });
 
     // --- derived state (recomputes when questions/actions change) ---
@@ -229,8 +378,28 @@ pub fn GamePlay(id: String) -> Element {
 
     // --- selection helpers ---------------------------------------------------
 
+    // Broadcast our selection to the other members (no-op until we join).
+    let id_for_presence = id.clone();
+    let publish_presence = move |selection: Option<QKey>| {
+        let joined = state
+            .user()
+            .map(|u| members.peek().iter().any(|m| m.user_id == u.id))
+            .unwrap_or(false);
+        if !joined {
+            return;
+        }
+        let input = match selection {
+            Some((n, d)) => json!({ "id": id_for_presence, "number": n, "direction": dir_str(d) }),
+            None => json!({ "id": id_for_presence, "number": null }),
+        };
+        spawn_local(async move {
+            let _ = net::mutation("activeGame.publishPresence", Some(input)).await;
+        });
+    };
+
     // Snapshot the in-progress word for a question, pre-filling current letters.
-    let mut select_question = move |key: QKey| {
+    let publish_for_select = publish_presence.clone();
+    let select_question = move |key: QKey| {
         let maps = answer_maps.peek();
         if let Some(m) = maps.iter().find(|m| qkey(&m.question) == key) {
             let slots: Vec<ActionSlot> = m
@@ -256,6 +425,7 @@ pub fn GamePlay(id: String) -> Element {
             input_refs.set(vec![None; n]);
             selected.set(Some(key));
             focused_index.set(Some(0));
+            publish_for_select(Some(key));
         }
     };
 
@@ -301,17 +471,23 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     let mut submit_placeholder_for_unselect = submit_placeholder.clone();
+    let publish_for_unselect = publish_presence.clone();
     let unselect = move |_| {
+        let was_selected = selected.peek().is_some();
         let any_typed = game_action_data.peek().iter().any(|s| !s.state.is_empty());
-        if selected.peek().is_some() && any_typed {
+        if was_selected && any_typed {
             submit_placeholder_for_unselect();
         }
         selected.set(None);
         game_action_data.set(Vec::new());
         focused_index.set(None);
+        if was_selected {
+            publish_for_unselect(None);
+        }
     };
 
     // Click a board cell → select a covering question (current dir first).
+    let mut select_question_for_coords = select_question.clone();
     let select_coordinates = move |x: i32, y: i32| {
         let maps = answer_maps.peek();
         let dir = *selected_direction.peek();
@@ -323,30 +499,36 @@ pub fn GamePlay(id: String) -> Element {
             .or_else(|| maps.iter().find(|m| covers(m)));
         if let Some(m) = found {
             let key = qkey(&m.question);
-            select_question(key);
+            select_question_for_coords(key);
         }
     };
 
     // Direction toggles (click active → null = show all).
+    let publish_for_toggle = publish_presence.clone();
     let toggle_dir = move |d: Direction| {
         let cur = *selected_direction.peek();
         if cur == Some(d) {
             selected_direction.set(None);
         } else {
             // unselect (saving progress) then set the new filter
+            let was_selected = selected.peek().is_some();
             let any_typed = game_action_data.peek().iter().any(|s| !s.state.is_empty());
-            if selected.peek().is_some() && any_typed {
+            if was_selected && any_typed {
                 submit_placeholder();
             }
             selected.set(None);
             game_action_data.set(Vec::new());
             focused_index.set(None);
+            if was_selected {
+                publish_for_toggle(None);
+            }
             selected_direction.set(Some(d));
         }
     };
 
     // --- guess submission ----------------------------------------------------
     let id_for_guess = id.clone();
+    let publish_for_guess = publish_presence.clone();
     let submit_guess = move || {
         let slots = game_action_data.peek().clone();
         if slots.is_empty() {
@@ -422,6 +604,7 @@ pub fn GamePlay(id: String) -> Element {
             selected.set(None);
             game_action_data.set(Vec::new());
             focused_index.set(None);
+            publish_for_guess(None);
         }
 
         let id_complete = id_for_guess.clone();
@@ -493,6 +676,51 @@ pub fn GamePlay(id: String) -> Element {
         _ => {}
     };
 
+    // --- join / invite -------------------------------------------------------
+
+    // Join the roster, refresh it, then announce ourselves with an (empty)
+    // presence broadcast so the other players' strips light up immediately.
+    let id_for_join = id.clone();
+    let publish_for_join = publish_presence.clone();
+    let join_game = move |_| {
+        joining.set(true);
+        join_error.set(String::new());
+        let id = id_for_join.clone();
+        let publish = publish_for_join.clone();
+        spawn_local(async move {
+            match net::mutation("activeGame.join", Some(json!({ "id": id }))).await {
+                Ok(_) => {
+                    if let Ok(data) = net::query("activeGame.get", Some(json!({ "id": id }))).await
+                    {
+                        members.set(parse_members(&data));
+                    }
+                    publish(None);
+                }
+                Err(e) => join_error.set(e),
+            }
+            joining.set(false);
+        });
+    };
+
+    // Copy the invite URL via the JS clipboard API (no extra Rust deps).
+    let id_for_invite = id.clone();
+    let copy_invite = move |_| {
+        let origin = web_sys::window()
+            .and_then(|w| w.location().origin().ok())
+            .unwrap_or_default();
+        let url = format!("{origin}/game/{id_for_invite}");
+        let script = format!(
+            "navigator.clipboard && navigator.clipboard.writeText({})",
+            serde_json::to_string(&url).unwrap_or_default()
+        );
+        dioxus::document::eval(&script);
+        invite_copied.set(true);
+        spawn_local(async move {
+            TimeoutFuture::new(2_000).await;
+            invite_copied.set(false);
+        });
+    };
+
     // ------------------------------------------------------------------------
     if *loading.read() {
         return rsx! {
@@ -526,15 +754,62 @@ pub fn GamePlay(id: String) -> Element {
 
     let body = move |kind: PanelId, _max: bool| -> Element {
         match kind {
-            PanelId::Board => render_board(
-                &grid,
-                size,
-                &questions.read(),
-                &selected_q,
-                &game_action_data.read(),
-                *focused_index.read(),
-                select_coordinates.clone(),
-            ),
+            PanelId::Board => {
+                let me = state.user();
+                let my_id = me.as_ref().map(|u| u.id.clone());
+                let mems = members.read().clone();
+                let is_member = my_id
+                    .as_deref()
+                    .map(|id| mems.iter().any(|m| m.user_id == id))
+                    .unwrap_or(false);
+                let tick = *clock.read();
+                // Live remote selections → colored focus borders on the board.
+                let remote: Vec<RemoteSelection> = presence
+                    .read()
+                    .iter()
+                    .filter(|(_, e)| tick.saturating_sub(e.tick) <= PRESENCE_TTL_SECS)
+                    .filter_map(|(uid, e)| {
+                        e.selection.map(|q| RemoteSelection {
+                            key: q,
+                            color: player_color(uid, my_id.as_deref()),
+                            name: e.name.clone(),
+                        })
+                    })
+                    .collect();
+                let maps = answer_maps.read().clone();
+                rsx! {
+                    div { class: "cw-board-col",
+                        {render_players_strip(
+                            &mems,
+                            &presence.read(),
+                            my_id.as_deref(),
+                            tick,
+                            *invite_copied.read(),
+                            copy_invite.clone(),
+                        )}
+                        div { class: "cw-board-area",
+                            {render_board(
+                                &grid,
+                                size,
+                                &maps,
+                                &selected_q,
+                                &game_action_data.read(),
+                                *focused_index.read(),
+                                &remote,
+                                select_coordinates.clone(),
+                            )}
+                            if !is_member && !state.is_loading() {
+                                {render_join_overlay(
+                                    state.user().is_some(),
+                                    *joining.read(),
+                                    &join_error.read(),
+                                    join_game.clone(),
+                                )}
+                            }
+                        }
+                    }
+                }
+            }
             PanelId::Clue => render_clue(
                 &selected_q,
                 &game_action_data.read(),
@@ -578,20 +853,21 @@ fn use_workspace_local() -> panel_kit::Workspace<PanelId> {
 // rendering helpers
 // ---------------------------------------------------------------------------
 
-fn cell_number(questions: &[Question], cell: &Cell) -> Option<i32> {
-    questions
-        .iter()
-        .find(|q| q.root_x == cell.cord_x && q.root_y == cell.cord_y)
-        .map(|q| q.number)
+fn cell_number(maps: &[QuestionWithAnswerMap], cell: &Cell) -> Option<i32> {
+    maps.iter()
+        .find(|m| m.question.root_x == cell.cord_x && m.question.root_y == cell.cord_y)
+        .map(|m| m.question.number)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_board(
     grid: &[Vec<Cell>],
     size: crossword_core::game::Coord,
-    questions: &[Question],
+    maps: &[QuestionWithAnswerMap],
     selected_q: &Option<QuestionWithAnswerMap>,
     slots: &[ActionSlot],
     focused_index: Option<usize>,
+    remote: &[RemoteSelection],
     select_coordinates: impl FnMut(i32, i32) + Clone + 'static,
 ) -> Element {
     let cols = size.x.max(1);
@@ -635,7 +911,7 @@ fn render_board(
                         } else {
                             let selected = is_in_selected(x, y);
                             let focused = focused_coord == Some((x, y));
-                            let num = cell_number(questions, &cell);
+                            let num = cell_number(maps, &cell);
                             let action_type = cell.modifications.first().map(|m| m.action_type);
                             let mut classes = String::from("cw-cell cw-letter");
                             if focused {
@@ -650,6 +926,23 @@ fn render_board(
                                     None => {}
                                 }
                             }
+                            // A remote player's focused word gets a colored ring
+                            // (inset shadow — no layout shift) + a hover tooltip.
+                            let remote_hit = remote.iter().find(|r| {
+                                maps.iter().any(|m| {
+                                    qkey(&m.question) == r.key
+                                        && m.answer_map
+                                            .iter()
+                                            .any(|c| c.cord_x == x && c.cord_y == y)
+                                })
+                            });
+                            let (ring, ring_title) = match remote_hit {
+                                Some(r) => (
+                                    format!("box-shadow: inset 0 0 0 2px {};", r.color),
+                                    format!("{} is working here", r.name),
+                                ),
+                                None => (String::new(), String::new()),
+                            };
                             let display = if selected {
                                 typed_at(x, y)
                             } else {
@@ -659,6 +952,8 @@ fn render_board(
                             rsx! {
                                 div {
                                     class: "{classes}",
+                                    style: "{ring}",
+                                    title: "{ring_title}",
                                     onclick: move |_| sc(x, y),
                                     if let Some(n) = num {
                                         span { class: "cw-num", "{n}" }
@@ -845,6 +1140,110 @@ fn render_clues(
     }
 }
 
+// ---------------------------------------------------------------------------
+
+/// The co-op roster bar: one chip per player (color dot, name, host/you tags,
+/// the clue they're on) + the invite-link button. Players we only know about
+/// via presence (joined after we loaded) get chips too.
+#[allow(clippy::too_many_arguments)]
+fn render_players_strip(
+    mems: &[MemberInfo],
+    presence: &HashMap<String, PresenceEntry>,
+    my_id: Option<&str>,
+    tick: u64,
+    invite_copied: bool,
+    mut copy_invite: impl FnMut(Event<MouseData>) + Clone + 'static,
+) -> Element {
+    // (uid, name, is_owner, live selection)
+    let mut chips: Vec<(String, String, bool, Option<QKey>)> = Vec::new();
+    for m in mems {
+        let sel = presence
+            .get(&m.user_id)
+            .filter(|e| tick.saturating_sub(e.tick) <= PRESENCE_TTL_SECS)
+            .and_then(|e| e.selection);
+        chips.push((m.user_id.clone(), m.user_name.clone(), m.is_owner, sel));
+    }
+    for (uid, e) in presence {
+        if mems.iter().any(|m| &m.user_id == uid) || tick.saturating_sub(e.tick) > PRESENCE_TTL_SECS
+        {
+            continue;
+        }
+        chips.push((uid.clone(), e.name.clone(), false, e.selection));
+    }
+
+    rsx! {
+        div { class: "cw-players",
+            for (uid, name, is_owner, sel) in chips {
+                {
+                    let color = player_color(&uid, my_id);
+                    let is_you = Some(uid.as_str()) == my_id;
+                    rsx! {
+                        span {
+                            class: "cw-chip",
+                            key: "{uid}",
+                            // The underline correlates the chip with that
+                            // player's focus ring on the board.
+                            style: "border-bottom: 2px solid {color};",
+                            Identicon { seed: uid.clone(), size: 16 }
+                            span { "{name}" }
+                            if is_you {
+                                span { class: "cw-chip-tag", "you" }
+                            }
+                            if is_owner {
+                                span { class: "cw-chip-tag", "host" }
+                            }
+                            if let Some((n, d)) = sel {
+                                span { class: "cw-chip-clue", style: "color: {color};",
+                                    "#{n} {dir_str(d).to_lowercase()}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            button {
+                class: "cw-invite-btn",
+                onclick: move |e| copy_invite(e),
+                if invite_copied { "Link copied ✓" } else { "Copy invite link" }
+            }
+        }
+    }
+}
+
+/// The join prompt covering the board for non-members (the game itself is
+/// watchable either way — `activeGame.get` is public by design).
+fn render_join_overlay(
+    signed_in: bool,
+    joining: bool,
+    join_error: &str,
+    mut join_game: impl FnMut(Event<MouseData>) + Clone + 'static,
+) -> Element {
+    rsx! {
+        div { class: "cw-join-overlay",
+            div { class: "cw-join-card",
+                h3 { "Co-op game in progress" }
+                if signed_in {
+                    p { class: "muted",
+                        "You're watching live. Join to start filling the grid with everyone else."
+                    }
+                    button {
+                        class: "cw-btn-guess",
+                        disabled: joining,
+                        onclick: move |e| join_game(e),
+                        if joining { "Joining…" } else { "Join game" }
+                    }
+                    if !join_error.is_empty() {
+                        p { class: "error", "{join_error}" }
+                    }
+                } else {
+                    p { class: "muted", "You're watching live. Sign in to join the grid." }
+                    Link { to: Route::Login {}, class: "app-btn app-btn-active", "Sign in" }
+                }
+            }
+        }
+    }
+}
+
 /// Timestamp for an optimistic local action. `sort_modifications` orders
 /// newest-first by lexicographic `submitted_at`. We can't pull `js-sys`/`Date`
 /// (Cargo.toml is locked), so we synthesize a key that (a) sorts ABOVE any real
@@ -863,6 +1262,19 @@ fn js_now_iso() -> String {
 
 const GAME_CSS: &str = r#"
 .cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 8px; box-sizing: border-box; }
+.cw-board-col { display: flex; flex-direction: column; height: 100%; }
+.cw-board-area { position: relative; flex: 1; min-height: 0; }
+.cw-players { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--border-app); }
+.cw-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border-app); border-bottom-width: 2px; font-size: var(--fs-xs); font-family: var(--font-sans); color: var(--text-primary); background: var(--bg-card); }
+.cw-chip-tag { font-size: var(--fs-2xs); font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); border: 1px solid var(--border-app); padding: 0 4px; }
+.cw-chip-clue { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.cw-invite-btn { margin-left: auto; padding: 4px 12px; font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
+.cw-invite-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+.cw-join-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: rgba(9,9,11,0.55); backdrop-filter: blur(2px); }
+.cw-join-card { display: flex; flex-direction: column; gap: 12px; max-width: 22rem; padding: 24px 28px; text-align: center; background: var(--bg-card); border: 1px solid var(--border-app); }
+.cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
+.cw-join-card p { margin: 0; font-size: 12px; }
+.cw-join-card .error { font-size: 11px; font-family: var(--mono); }
 .cw-board { display: grid; gap: 3px; width: 100%; max-width: min(100%, 480px); }
 .cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid rgba(39,39,42,0.25); opacity: 0.4; }

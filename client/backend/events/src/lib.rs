@@ -38,11 +38,15 @@ mod tests {
         let bus = EventBus::new(8);
         let mut rx = bus.subscribe();
         assert_eq!(
-            bus.publish(AppEvent::Message {
-                text: "hello".into()
+            bus.publish(AppEvent::GameCompleted {
+                active_game_id: "ag-1".into(),
+                completed_game_id: "cg-1".into(),
             }),
             1
         );
-        assert!(matches!(rx.recv().await.unwrap(), AppEvent::Message { text } if text == "hello"));
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            AppEvent::GameCompleted { completed_game_id, .. } if completed_game_id == "cg-1"
+        ));
     }
 }

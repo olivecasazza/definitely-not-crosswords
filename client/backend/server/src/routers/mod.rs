@@ -10,7 +10,6 @@ pub mod active_game;
 pub mod discount;
 pub mod game_list;
 pub mod generator;
-pub mod message;
 pub mod stats;
 pub mod subscription;
 pub mod team;
@@ -39,9 +38,6 @@ pub async fn dispatch(proc: &str, input: &Value, ctx: &Ctx) -> Result<Value, Str
         return r;
     }
     if let Some(r) = generator::try_handle(proc, input, ctx).await {
-        return r;
-    }
-    if let Some(r) = message::try_handle(proc, input, ctx).await {
         return r;
     }
     Err(format!(

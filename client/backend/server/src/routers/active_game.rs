@@ -10,7 +10,9 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
         "activeGame.get" => Some(get(input, ctx).await),
         "activeGame.getStartDetails" => Some(get_start_details(input, ctx).await),
         "activeGame.start" => Some(start(input, ctx).await),
+        "activeGame.join" => Some(join(input, ctx).await),
         "activeGame.addActions" => Some(add_actions(input, ctx).await),
+        "activeGame.publishPresence" => Some(publish_presence(input, ctx).await),
         "activeGame.complete" => Some(complete(input, ctx).await),
         _ => None,
     }
@@ -122,14 +124,18 @@ async fn get(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         })
         .collect();
 
-    // Game members for this active game.
+    // Game members for this active game, with display names for the players
+    // strip. Names are already public via the leaderboard; emails stay hidden.
     let member_rows = sqlx::query(
         r#"
-        SELECT id, type, "userId", "isOwner", "activeGameId", "completedGameId",
-               to_char("createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt",
-               to_char("updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "updatedAt"
-        FROM "GameMember"
-        WHERE "activeGameId" = $1
+        SELECT gm.id, gm.type, gm."userId", gm."isOwner", gm."activeGameId", gm."completedGameId",
+               to_char(gm."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt",
+               to_char(gm."updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "updatedAt",
+               COALESCE(u.name, 'Anonymous Player') AS user_name
+        FROM "GameMember" gm
+        JOIN "User" u ON u.id = gm."userId"
+        WHERE gm."activeGameId" = $1
+        ORDER BY gm."createdAt" ASC
         "#,
     )
     .bind(&ag_id)
@@ -144,6 +150,7 @@ async fn get(input: &Value, ctx: &Ctx) -> Result<Value, String> {
                 "id":              r.get::<String, _>("id"),
                 "type":            r.get::<String, _>("type"),
                 "userId":          r.get::<String, _>("userId"),
+                "userName":        r.get::<String, _>("user_name"),
                 "isOwner":         r.get::<bool, _>("isOwner"),
                 "activeGameId":    r.get::<Option<String>, _>("activeGameId"),
                 "completedGameId": r.get::<Option<String>, _>("completedGameId"),
@@ -347,6 +354,128 @@ async fn start(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .map_err(|e| e.to_string())?;
 
     Ok(json!({ "id": ag_id }))
+}
+
+/// activeGame.join — protected.
+/// Adds the caller as a (non-owner) GameMember of an existing ActiveGame.
+/// This is the co-op entry point: the owner shares `/game/<activeGameId>` and
+/// friends join through it. Idempotent — re-joining returns the same id.
+async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let user = match ctx.require_user() {
+        Ok(u) => u,
+        Err(e) => return Err(e),
+    };
+
+    let id = input
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing id".to_string())?;
+
+    // The active game must exist and its parent Game must still be published.
+    let ag = sqlx::query(
+        r#"
+        SELECT ag.id
+        FROM "ActiveGame" ag
+        JOIN "Game" g ON g.id = ag."gameId"
+        WHERE ag.id = $1 AND g.published = true
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if ag.is_none() {
+        return Err("Active game not found".to_string());
+    }
+
+    // Already a member (owner or prior join) — treat as success.
+    let existing = sqlx::query(
+        r#"SELECT 1 FROM "GameMember" WHERE "activeGameId" = $1 AND "userId" = $2 LIMIT 1"#,
+    )
+    .bind(id)
+    .bind(&user.id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if existing.is_some() {
+        return Ok(json!({ "id": id, "joined": true }));
+    }
+
+    let member_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO "GameMember" (id, "userId", "isOwner", "activeGameId", "createdAt", "updatedAt")
+        VALUES ($1, $2, false, $3, now(), now())
+        "#,
+    )
+    .bind(&member_id)
+    .bind(&user.id)
+    .bind(id)
+    .execute(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(json!({ "id": id, "joined": true }))
+}
+
+/// activeGame.publishPresence — protected; caller must be a member.
+/// Broadcasts the caller's currently-selected clue (or a clear) to the other
+/// members via `activeGame.onPresence`. Ephemeral: nothing is persisted.
+async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let user = match ctx.require_user() {
+        Ok(u) => u,
+        Err(e) => return Err(e),
+    };
+
+    let id = input
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing id".to_string())?;
+
+    let is_member = sqlx::query(
+        r#"SELECT 1 FROM "GameMember" WHERE "activeGameId" = $1 AND "userId" = $2 LIMIT 1"#,
+    )
+    .bind(id)
+    .bind(&user.id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .is_some();
+    if !is_member {
+        return Err("FORBIDDEN".to_string());
+    }
+
+    // A clear is `{ number: null }`; a focus carries number + direction.
+    let number = input.get("number").and_then(|v| v.as_i64()).map(|n| n as i32);
+    let direction = input
+        .get("direction")
+        .and_then(|v| v.as_str())
+        .filter(|d| *d == "ACROSS" || *d == "DOWN")
+        .map(|d| d.to_string());
+    // Direction without a number (or vice versa) is malformed — treat as clear.
+    let (number, direction) = match (number, direction) {
+        (Some(n), Some(d)) => (Some(n), Some(d)),
+        _ => (None, None),
+    };
+
+    // Display name for the players strip; same fallback as the leaderboard.
+    let name_row = sqlx::query(r#"SELECT COALESCE(name, 'Anonymous Player') AS name FROM "User" WHERE id = $1"#)
+        .bind(&user.id)
+        .fetch_one(&ctx.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let name: String = name_row.get("name");
+
+    ctx.events.publish(crossword_db::AppEvent::GamePresence {
+        active_game_id: id.to_string(),
+        user_id: user.id.clone(),
+        name,
+        number,
+        direction,
+    });
+    Ok(json!({ "ok": true }))
 }
 
 /// activeGame.addActions — protected.

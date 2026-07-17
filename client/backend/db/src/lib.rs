@@ -100,9 +100,6 @@ pub enum GenerationEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AppEvent {
-    Message {
-        text: String,
-    },
     GameActionsAdded {
         active_game_id: String,
         // Raw camelCase action objects (as the client consumes them), so the WS
@@ -112,6 +109,16 @@ pub enum AppEvent {
     GameCompleted {
         active_game_id: String,
         completed_game_id: String,
+    },
+    /// Ephemeral co-op presence: which clue a member is focused on right now.
+    /// `number`/`direction` are `None` when the player clears their selection.
+    /// Not persisted — broadcast-only, fan-out via `activeGame.onPresence`.
+    GamePresence {
+        active_game_id: String,
+        user_id: String,
+        name: String,
+        number: Option<i32>,
+        direction: Option<String>,
     },
     GenerationProgress {
         event: GenerationEvent,

@@ -467,7 +467,22 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
                 completed_game_id,
             },
         ) => Some(json!({ "activeGameId": active_game_id, "completedGameId": completed_game_id })),
-        ("message.onMessage", AppEvent::Message { text }) => Some(json!({ "text": text })),
+        (
+            "activeGame.onPresence",
+            AppEvent::GamePresence {
+                active_game_id,
+                user_id,
+                name,
+                number,
+                direction,
+            },
+        ) => Some(json!({
+            "activeGameId": active_game_id,
+            "userId": user_id,
+            "name": name,
+            "number": number,
+            "direction": direction,
+        })),
         _ => None,
     }
 }

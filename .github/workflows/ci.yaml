@@ -121,13 +121,13 @@ jobs:
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
           if [ -z "$PR_NUMBER" ]; then
-            PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --json number --jq '.[0].number')
+            PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
           fi
 
           echo "PR Number: $PR_NUMBER"
 
           # Breaking change: "type!:" prefix or "BREAKING CHANGE(S)" in the body.
-          has_breaking=$(gh pr view $PR_NUMBER --json commits --jq '[.commits[].message | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
+          has_breaking=$(gh pr view $PR_NUMBER -R ${{ github.repository }} --json commits --jq '[.commits[].message | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
 
           if [ "$has_breaking" = "true" ]; then
             echo "is_major=true" >> $GITHUB_OUTPUT
@@ -150,11 +150,11 @@ jobs:
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
           if [ -z "$PR_NUMBER" ]; then
-            PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --json number --jq '.[0].number')
+            PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
           fi
 
           if [ "$IS_MAJOR" = "true" ]; then
-            approvals=$(gh pr view $PR_NUMBER --json reviews --jq '[.reviews[] | select(.state == "APPROVED")] | length')
+            approvals=$(gh pr view $PR_NUMBER -R ${{ github.repository }} --json reviews --jq '[.reviews[] | select(.state == "APPROVED")] | length')
             if [ "$approvals" -eq 0 ]; then
               echo "❌ Major version change requires at least one APPROVED review to merge!"
               exit 1
@@ -177,7 +177,7 @@ jobs:
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
           if [ -z "$PR_NUMBER" ]; then
-            PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --json number --jq '.[0].number')
+            PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
           fi
-          gh pr merge $PR_NUMBER --auto --squash
+          gh pr merge $PR_NUMBER -R ${{ github.repository }} --auto --squash
           echo "✅ Dynamic auto-merge enabled for this PR (squash method)."

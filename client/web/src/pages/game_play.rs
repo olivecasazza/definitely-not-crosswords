@@ -1021,7 +1021,11 @@ fn render_clue(
                                 key: "{slot.cord_x}-{slot.cord_y}",
                                 class: "{cls}",
                                 r#type: "text",
-                                maxlength: "1",
+                                // No maxlength="1": a full box makes the browser
+                                // swallow the keystroke entirely — no oninput, no
+                                // auto-advance, and a prefilled (resumed) word
+                                // becomes impossible to edit. The handler keeps
+                                // the last char typed, so length stays enforced.
                                 autocomplete: "off",
                                 spellcheck: "false",
                                 value: "{slot.state}",

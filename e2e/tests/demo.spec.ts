@@ -33,6 +33,36 @@ type Clue = {
   answer: string;
   questionText: string;
   direction: "ACROSS" | "DOWN";
+  rootX: number;
+  rootY: number;
+};
+
+type ClueAction = {
+  cordX: number;
+  cordY: number;
+  actionType: string;
+  state: string;
+};
+
+/** A clue is solved when every cell's latest action is its correct letter. */
+const solvedClues = (clues: Clue[], actions: ClueAction[]) => {
+  const latest = new Map<string, ClueAction>();
+  for (const a of actions) latest.set(`${a.cordX},${a.cordY}`, a); // ASC → last wins
+  return new Set(
+    clues
+      .filter((c) =>
+        Array.from({ length: c.answer.length }, (_, i) => i).every((i) => {
+          const x = c.direction === "ACROSS" ? c.rootX + i : c.rootX;
+          const y = c.direction === "ACROSS" ? c.rootY : c.rootY + i;
+          const a = latest.get(`${x},${y}`);
+          return (
+            a?.actionType === "correctGuess" &&
+            a.state.toUpperCase() === c.answer[i].toUpperCase()
+          );
+        }),
+      )
+      .map((c) => `${c.number}${c.direction}`),
+  );
 };
 
 /** Batched tRPC query, sharing the page's session cookie. */
@@ -147,10 +177,13 @@ test("authenticated product tour", async ({ page, browser }) => {
     await dwell(page, 1000, 1800);
 
     // Pull the answers through the API (the client gets them too) so we can
-    // play real, correct words on camera.
+    // play real, correct words on camera. Resumed games come back with some
+    // clues already solved — play only what's still open.
     const activeId = page.url().split("/game/")[1];
     const data = await trpcGet(page, "activeGame.get", { id: activeId });
-    clues = (data?.game?.questions ?? []) as Clue[];
+    const all = (data?.game?.questions ?? []) as Clue[];
+    const solved = solvedClues(all, (data?.actions ?? []) as ClueAction[]);
+    clues = all.filter((c) => !solved.has(`${c.number}${c.direction}`));
   });
   const completing = clues.length > 0 && clues.length <= COMPLETION_MAX_CLUES;
   const soloClues = completing ? clues : clues.slice(0, 3);

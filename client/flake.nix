@@ -200,7 +200,7 @@
               <meta name="viewport" content="width=device-width, initial-scale=1" />
               <title>definitely-not-crosswords</title></head>
               <body><div id="main"></div>
-              <script type="module">import init from "./crossword-web.js"; init();</script>
+              <script type="module">import init from "/crossword-web.js"; init();</script>
               </body></html>
               HTML
             '';

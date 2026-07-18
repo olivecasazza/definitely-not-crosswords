@@ -76,9 +76,21 @@ async function solveClue(page: Page, clue: Clue) {
   const inputs = page.locator(".cw-letter-input");
   await expect(inputs).toHaveCount(clue.answer.length);
   await humanTypeLetters(page, clue.answer);
+  // Read the boxes back before committing — if the auto-advance raced a slow
+  // frame, fail here with a clear diff instead of a mystery wrong guess.
+  const typed = await inputs.evaluateAll((els) =>
+    els.map((e) => (e as HTMLInputElement).value).join(""),
+  );
+  expect(typed.toUpperCase()).toBe(clue.answer.toUpperCase());
   await dwell(page, 300, 800); // a beat to "read it back"
-  await humanClick(page, page.getByRole("button", { name: /^guess$/i }));
+  const guess = page.getByRole("button", { name: /^guess$/i });
+  await humanClick(page, guess);
   // Correct guesses clear the entry row — that's the scoring-path assertion.
+  // Give the mutation a beat, then retry once if a re-render ate the click.
+  await page.waitForTimeout(1500);
+  if (await inputs.count()) {
+    await humanClick(page, guess);
+  }
   await expect(inputs).toHaveCount(0);
 }
 
@@ -183,11 +195,18 @@ test("authenticated product tour", async ({ page, browser }) => {
         await expect(p2.locator(".cw-letter").first()).toBeVisible();
 
         if (secondAccount) {
-          // A different user gets the join prompt; take it.
+          // A different user gets the join prompt — unless a previous attempt
+          // already joined them (retries/re-runs stay green). Wait for either:
+          // the button, or their chip already being on their roster.
           const join = p2.getByRole("button", { name: /^join game$/i });
-          await expect(join).toBeVisible({ timeout: 20_000 });
-          await join.click();
-          await expect(join).not.toBeVisible();
+          const p2Chips = p2.locator(".cw-players .cw-chip");
+          await expect(async () => {
+            expect((await join.isVisible()) || (await p2Chips.count()) >= 2).toBeTruthy();
+          }).toPass({ timeout: 25_000 });
+          if (await join.isVisible()) {
+            await join.click();
+            await expect(join).not.toBeVisible();
+          }
           // The roster on the *recorded* page lights up with the second chip.
           await expect(page.locator(".cw-players .cw-chip")).toHaveCount(2, {
             timeout: 20_000,

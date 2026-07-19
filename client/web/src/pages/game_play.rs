@@ -362,7 +362,9 @@ pub fn GamePlay(id: String) -> Element {
             .collect()
     };
 
-    // --- focus driver: focus the input matching focused_index ---
+    // --- focus driver: focus the input matching focused_index AND scroll the
+    //     corresponding board cell into view so the typed letter stays on
+    //     camera. ---
     use_effect(move || {
         let idx = *focused_index.read();
         let refs = input_refs.read();
@@ -373,6 +375,18 @@ pub fn GamePlay(id: String) -> Element {
                     let _ = node.set_focus(true).await;
                 });
             }
+            // Scroll the focused board cell into view. The `.cw-focused` class
+            // moves with the focused cell; bring it center so the typed letter
+            // stays on camera as the player advances through the word.
+            spawn_local(async move {
+                if let Some(win) = web_sys::window() {
+                    if let Some(doc) = win.document() {
+                        if let Some(el) = doc.query_selector(".cw-focused").ok().flatten() {
+                            let _ = el.scroll_into_view_with_bool(true);
+                        }
+                    }
+                }
+            });
         }
     });
 
@@ -955,6 +969,8 @@ fn render_board(
                             rsx! {
                                 div {
                                     class: "{classes}",
+                                    "data-x": "{x}",
+                                    "data-y": "{y}",
                                     style: "{ring}",
                                     title: "{ring_title}",
                                     onclick: move |_| sc(x, y),
@@ -1268,9 +1284,9 @@ fn js_now_iso() -> String {
 // ---------------------------------------------------------------------------
 
 const GAME_CSS: &str = r#"
-.cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 8px; box-sizing: border-box; }
-.cw-board-col { display: flex; flex-direction: column; height: 100%; }
-.cw-board-area { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: stretch; justify-content: stretch; padding: 4px; box-sizing: border-box; }
+.cw-board-col { display: flex; flex-direction: column; height: 100%; width: 100%; }
+.cw-board-area { position: relative; flex: 1; min-height: 0; overflow: auto; display: flex; align-items: center; justify-content: center; }
 .cw-players { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--border-app); }
 .cw-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border-app); border-bottom-width: 2px; font-size: var(--fs-xs); font-family: var(--font-sans); color: var(--text-primary); background: var(--bg-card); }
 .cw-chip-tag { font-size: var(--fs-2xs); font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); border: 1px solid var(--border-app); padding: 0 4px; }

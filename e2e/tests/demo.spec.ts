@@ -259,6 +259,12 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     const all = (data?.game?.questions ?? []) as Clue[];
     const solved = solvedClues(all, (data?.actions ?? []) as ClueAction[]);
     clues = all.filter((c) => !solved.has(`${c.number}${c.direction}`));
+
+    // Kick off the phone's game load NOW (in parallel with chapter 3) so the
+    // PiP shows the board while the PC plays, instead of sitting in the lobby
+    // until co-op. The phone stays parked here; chapter 4 just adds the join.
+    const gameUrl = page.url();
+    void p2.goto(gameUrl).then(() => fitBoardToViewport(p2));
   });
   const completing = clues.length > 0 && clues.length <= COMPLETION_MAX_CLUES;
   const soloClues = completing ? clues : clues.slice(0, 3);
@@ -283,27 +289,21 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
   const partnerCouldFinish = completing && clues.length <= 2;
   if (soloClues.length > 1 && playedClues.size > 0 && !partnerCouldFinish) {
     await test.step("Co-op join + presence", async () => {
-      const gameUrl = page.url();
       const secondAccount = Boolean(EMAIL2 && PASSWORD2);
       await fitBoardToViewport(page);
-      // PC showcases the invite affordance WHILE the phone loads the game in
-      // parallel — both boards converge, then the phone joins. (The phone
-      // doesn't need the clipboard; it just needs the URL the PC is on.)
-      await Promise.all([
-        (async () => {
-          const invite = page.locator(".cw-invite-btn");
-          await expect(invite).toBeVisible();
-          await humanClick(page, invite);
-          await expect(page.getByText(/link copied/i)).toBeVisible();
-          await dwell(page);
-        })(),
-        (async () => {
-          await p2.goto(gameUrl);
-          await expect(p2.locator(".cw-letter").first()).toBeVisible();
-          await fitBoardToViewport(p2);
-          await keepPhoneOnBoard(p2);
-        })(),
-      ]);
+      // Phone already navigated to the game in chapter 2 (in parallel with
+      // the PC's solo solve). Wait for its board, then showcase the invite
+      // affordance while the phone joins.
+      await expect(p2.locator(".cw-letter").first()).toBeVisible({
+        timeout: 30_000,
+      });
+      await keepPhoneOnBoard(p2);
+      const invite = page.locator(".cw-invite-btn");
+      await expect(invite).toBeVisible();
+      await humanClick(page, invite);
+      await expect(page.getByText(/link copied/i)).toBeVisible();
+      await dwell(page);
+      await fitBoardToViewport(p2);
 
         if (secondAccount) {
           // A different user gets the join prompt — unless a previous attempt

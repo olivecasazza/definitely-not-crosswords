@@ -283,20 +283,26 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
   const partnerCouldFinish = completing && clues.length <= 2;
   if (soloClues.length > 1 && playedClues.size > 0 && !partnerCouldFinish) {
     await test.step("Co-op join + presence", async () => {
-      // The invite affordance itself is part of the tour.
-      const invite = page.locator(".cw-invite-btn");
-      await expect(invite).toBeVisible();
-      await humanClick(page, invite);
-      await expect(page.getByText(/link copied/i)).toBeVisible();
-      await dwell(page);
-
       const gameUrl = page.url();
       const secondAccount = Boolean(EMAIL2 && PASSWORD2);
       await fitBoardToViewport(page);
-      // The phone player follows the invite link onto the same game.
-      await p2.goto(gameUrl);
-      await expect(p2.locator(".cw-letter").first()).toBeVisible();
-      await keepPhoneOnBoard(p2);
+      // PC showcases the invite affordance WHILE the phone loads the game in
+      // parallel — both boards converge, then the phone joins. (The phone
+      // doesn't need the clipboard; it just needs the URL the PC is on.)
+      await Promise.all([
+        (async () => {
+          const invite = page.locator(".cw-invite-btn");
+          await expect(invite).toBeVisible();
+          await humanClick(page, invite);
+          await expect(page.getByText(/link copied/i)).toBeVisible();
+          await dwell(page);
+        })(),
+        (async () => {
+          await p2.goto(gameUrl);
+          await expect(p2.locator(".cw-letter").first()).toBeVisible();
+          await keepPhoneOnBoard(p2);
+        })(),
+      ]);
 
         if (secondAccount) {
           // A different user gets the join prompt — unless a previous attempt

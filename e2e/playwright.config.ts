@@ -29,6 +29,15 @@ export default defineConfig({
     actionTimeout: 15_000,
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        // The device descriptor resets the viewport to 1280x720 — re-assert
+        // 1080p so the page fills the 1920x1080 recording canvas (otherwise
+        // the video gets grey gutters on the right and bottom).
+        viewport: { width: 1920, height: 1080 },
+      },
+    },
   ],
 });

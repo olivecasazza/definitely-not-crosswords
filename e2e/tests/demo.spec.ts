@@ -102,6 +102,17 @@ async function signInDirect(page: Page, email: string, password: string) {
 }
 
 /**
+ * Keep the phone's view pinned to its board panel so the spectator cam shows
+ * the PC's live updates. On the 390×844 stacked mobile layout the Active Clue
+ * panel a player just edited sits above the board; without scrolling back, the
+ * board drifts out of frame and partner updates happen off-camera.
+ */
+async function keepPhoneOnBoard(p2: Page) {
+  const board = p2.locator(".cw-board-area");
+  if (await board.count()) await board.scrollIntoViewIfNeeded();
+}
+
+/**
  * Zoom the board down when its grid overflows the visible board area — the
  * CSS caps width but tall grids can still clip under `.cw-board-area`'s
  * overflow:hidden, pushing live letter updates off-camera. No-op when the
@@ -281,6 +292,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       // The phone player follows the invite link onto the same game.
       await p2.goto(gameUrl);
       await expect(p2.locator(".cw-letter").first()).toBeVisible();
+      await keepPhoneOnBoard(p2);
 
         if (secondAccount) {
           // A different user gets the join prompt — unless a previous attempt
@@ -317,6 +329,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
         }
         await solving;
         playedClues.add(clueKey(partner));
+        await keepPhoneOnBoard(p2);
 
         // Player two's correct letters must land on the recorded board.
         await expect
@@ -334,6 +347,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       for (const clue of clues) {
         if (playedClues.has(clueKey(clue))) continue;
         await solveClue(page, clue);
+        await keepPhoneOnBoard(p2);
       }
       // The last correct guess completes the game and lands on the results.
       await expect(page).toHaveURL(/\/game\/[^/]+\/completed/, {

@@ -182,7 +182,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       await wander(page);
       await dwell(page);
       await signIn(page, EMAIL!, PASSWORD!);
-      await dwell(page);
+      await dwell(page, 2000, 3000); // landed — let the viewer register it
     });
 
     // ── Player two signs in on their phone (the PiP in the video) ──────────
@@ -203,7 +203,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     await expect(page.getByText("Available").first()).toBeVisible();
     await expect(page.getByText("Completed").first()).toBeVisible();
     await wander(page);
-    await dwell(page, 1200, 2200);
+    await dwell(page, 2600, 3600);
 
     // Game rows are clickable cards (onclick handlers, not links). Prefer
     // resuming an ACTIVE game (straight to the board); otherwise start an
@@ -234,7 +234,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     await expect(page.locator(".cw-letter").first()).toBeVisible();
     await expect(page.locator(".cw-clue-row").first()).toBeVisible();
     await fitBoardToViewport(page);
-    await dwell(page, 1000, 1800);
+    await dwell(page, 2400, 3400);
 
     // Pull the answers through the API (the client gets them too) so we can
     // play real, correct words on camera. Resumed games come back with some
@@ -257,7 +257,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       await solveClue(page, soloClues[0]);
       playedClues.add(clueKey(soloClues[0]));
       await expect(page.locator(".cw-correct").first()).toBeVisible();
-      await dwell(page, 900, 1600);
+      await dwell(page, 2600, 3600); // let the correct letters sink in
     });
   }
 
@@ -299,7 +299,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
           await expect(page.locator(".cw-players .cw-chip")).toHaveCount(2, {
             timeout: 20_000,
           });
-          await dwell(page, 1400, 2200);
+          await dwell(page, 2600, 3600);
         }
 
         // Player two picks a different clue and works it — while we watch the
@@ -324,7 +324,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
             timeout: 20_000,
           })
           .toBeGreaterThan(correctBefore);
-        await dwell(page, 1400, 2400);
+        await dwell(page, 3200, 4200); // watch the partner's letters land live
     });
   }
 
@@ -344,7 +344,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       ).toBeVisible();
       await expect(page.getByText(/match standings/i)).toBeVisible();
       await wander(page);
-      await dwell(page, 2000, 3200); // the results money shot
+      await dwell(page, 4200, 5500); // the results money shot
     });
   }
 
@@ -355,20 +355,23 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
 
     // Leaderboard — podium/table (or its empty state) renders.
     await expect(page.getByText("Leaderboard").first()).toBeVisible();
-    await dwell(page, 1400, 2200);
+    await dwell(page, 2600, 3600);
 
     // Career — the panel always renders; stat cards only once the account has
     // games (post-completion it does, and the numbers are fresh on camera).
-    await expect(page.getByText("Career").first()).toBeVisible();
+    const career = page.getByText("Career").first();
+    await career.scrollIntoViewIfNeeded();
+    await expect(career).toBeVisible();
     if (await page.getByText("Global Rank").count()) {
       await expect(page.getByText("Global Rank")).toBeVisible();
-      await dwell(page, 1200, 2000);
+      await dwell(page, 2600, 3600);
     }
 
     // Compare — pick an opponent and let the head-to-head render. The player
     // list is scoped to teammates (the e2e users share a seeded team, and the
     // co-op completion above gives them a real match record).
     const picker = page.locator("select.app-input");
+    await picker.scrollIntoViewIfNeeded();
     await expect(picker).toBeVisible();
     const opponentCount = await picker.locator("option").count();
     if (opponentCount > 1) {
@@ -376,13 +379,15 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       await expect(page.getByText(/co-op match record/i)).toBeVisible({
         timeout: 15_000,
       });
-      await dwell(page, 1600, 2600);
+      await dwell(page, 3200, 4400);
     }
 
     // Teams — the collaboration hub (create form + leaderboard).
-    await expect(page.getByText(/create a team/i)).toBeVisible();
+    const teams = page.getByText(/create a team/i);
+    await teams.scrollIntoViewIfNeeded();
+    await expect(teams).toBeVisible();
     await wander(page);
-    await dwell(page, 1200, 2000);
+    await dwell(page, 2400, 3400);
   });
 
   // ── Chapter 7: profile + the premium pitch ───────────────────────────────
@@ -400,7 +405,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     const upgrade = page.getByRole("button", { name: /upgrade to pro/i });
     await expect(proActive.or(upgrade).first()).toBeVisible();
     await wander(page);
-    await dwell(page, 1800, 2800); // end on the premium pitch
+    await dwell(page, 2800, 3800); // end on the premium pitch
   });
   } finally {
     await ctx2.close();

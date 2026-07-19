@@ -91,12 +91,13 @@ jobs:
           phone=$(find results -path '*phone*' -name '*.webm' | head -1)
           # yuv420p is load-bearing for Safari/Discord/Slack playback.
           if [ -n "$phone" ]; then
-            # Picture-in-picture: the second player's phone, bottom-right, with a
-            # thin bezel. scale=-2 keeps the height even for libx264;
-            # eof_action=repeat freezes the phone on its last frame if the phone
-            # clip ends first; output length follows the main recording.
+            # Split-screen dock: the main recording scaled onto a dark 1920x1080
+            # canvas (the app's own bg color) at the left, and the second
+            # player's phone docked at the right — nothing gets covered.
+            # Output length follows the main recording; the phone freezes on
+            # its last frame if its clip ends first.
             ffmpeg -y -i "$v" -i "$phone" -filter_complex \
-              "[1:v]scale=340:-2,pad=iw+8:ih+8:4:4:color=0xECECF1[pip];[0:v][pip]overlay=W-w-28:H-h-28:eof_action=repeat" \
+              "[0:v]scale=1450:-2,pad=1920:1080:20:-1:color=0x121212[canvas];[1:v]scale=410:-2[phone];[canvas][phone]overlay=W-w-20:(H-h)/2:eof_action=repeat" \
               -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
           else
             ffmpeg -y -i "$v" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4

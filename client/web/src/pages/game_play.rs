@@ -872,13 +872,12 @@ fn render_board(
 ) -> Element {
     let cols = size.x.max(1);
     let rows = size.y.max(1);
-    // Fit BOTH axes of the board area: `94cqh * cols/rows` is the width at
-    // which the grid's height fills 94% of the wrap (a size container), and
-    // min() additionally caps at the area width — the binding constraint
-    // always wins, so tall puzzles can never clip their bottom rows.
-    let ratio = cols as f64 / rows as f64;
+    // aspect-ratio + max-width/max-height lets the browser shrink the grid to
+    // fit BOTH axes (preserving the ratio) inside .cw-board-area — no cqh
+    // math, no clipping. The grid sits at the smaller of (area width) or
+    // (area height × cols/rows).
     let style = format!(
-        "grid-template-columns: repeat({cols}, 1fr); grid-template-rows: repeat({rows}, 1fr); aspect-ratio: {cols} / {rows}; width: min(100%, calc(94cqh * {ratio:.4}));",
+        "grid-template-columns: repeat({cols}, 1fr); grid-template-rows: repeat({rows}, 1fr); aspect-ratio: {cols} / {rows};",
     );
 
     // focused coord (the cell currently being typed in)
@@ -1269,9 +1268,9 @@ fn js_now_iso() -> String {
 // ---------------------------------------------------------------------------
 
 const GAME_CSS: &str = r#"
-.cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 8px; box-sizing: border-box; container-type: size; }
+.cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 8px; box-sizing: border-box; }
 .cw-board-col { display: flex; flex-direction: column; height: 100%; }
-.cw-board-area { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.cw-board-area { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
 .cw-players { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--border-app); }
 .cw-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border-app); border-bottom-width: 2px; font-size: var(--fs-xs); font-family: var(--font-sans); color: var(--text-primary); background: var(--bg-card); }
 .cw-chip-tag { font-size: var(--fs-2xs); font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); border: 1px solid var(--border-app); padding: 0 4px; }
@@ -1283,7 +1282,7 @@ const GAME_CSS: &str = r#"
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
 .cw-join-card p { margin: 0; font-size: 12px; }
 .cw-join-card .error { font-size: 11px; font-family: var(--mono); }
-.cw-board { display: grid; gap: 3px; }
+.cw-board { display: grid; gap: 3px; max-width: 100%; max-height: 100%; }
 .cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid rgba(39,39,42,0.25); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }

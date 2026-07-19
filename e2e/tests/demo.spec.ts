@@ -300,6 +300,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
         (async () => {
           await p2.goto(gameUrl);
           await expect(p2.locator(".cw-letter").first()).toBeVisible();
+          await fitBoardToViewport(p2);
           await keepPhoneOnBoard(p2);
         })(),
       ]);

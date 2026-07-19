@@ -113,3 +113,22 @@ jobs:
           release-plz release \
             --manifest-path client/Cargo.toml \
             --git-token "$GIT_TOKEN"
+
+      # release-plz opens a NEW timestamped branch every run and never deletes
+      # the old ones. The repo's delete-branch-on-merge covers merged PRs; this
+      # sweeps the rest: any release-plz-* branch older than 7 days with no
+      # open PR. (A branch an open release PR sits on is always kept.)
+      - name: Prune stale release-plz branches
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          git fetch origin --prune
+          cutoff=$(date -d '7 days ago' +%s)
+          for ref in $(git branch -r --format='%(refname:short)' | grep '^origin/release-plz-' || true); do
+            b=${ref#origin/}
+            [ "$(git log -1 --format=%ct "$ref")" -lt "$cutoff" ] || continue
+            open=$(gh pr list -R ${{ github.repository }} --state open --head "$b" --json number --jq length)
+            [ "$open" = "0" ] || { echo "keeping $b (open PR)"; continue; }
+            echo "deleting stale branch $b"
+            git push origin --delete "$b" || true
+          done

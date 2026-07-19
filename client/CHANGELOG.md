@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.18](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.17...v0.1.18) - 2026-07-19
+
+### Added
+
+- *(coop)* join-by-link invites + live per-player presence on the board
+- *(games)* platform game ownership + weekly seed CronJob
+- *(app)* APP_ENV-driven runtime config + feature flags
+- *(billing)* port Lemon Squeezy webhook so purchases grant Pro
+- *(staging)* beta banner + bug-report link, and port Pro checkout with env discount
+- *(server)* build crossword-server in the nix flake via a vendored onnxruntime
+- *(server)* serve the wasm frontend single-origin (WEB_DIST)
+- *(desktop)* add Tauri desktop crate + fix flake to build it
+- *(server)* port ONNX crossword generator to Rust
+- *(backend)* next-auth login endpoints — Rust can issue session cookies
+- *(backend)* tRPC WebSocket subscriptions — live multiplayer on Rust
+- *(backend)* port all tRPC routers to Rust (sqlx) — verified vs Postgres
+- *(backend)* wire JWE auth + /api/auth/session + router-module fan-out
+- *(backend)* Rust tRPC server slice — Axum + sqlx, proven end-to-end
+
+### Fixed
+
+- *(games)* clean platform game titles + exclude Platform user from leaderboard
+- *(security)* scope stats player list + head-to-head to teammates
+- *(security)* close prod auth backdoors + IDOR, harden payments/teams (pre-prod audit)
+
+### Other
+
+- *(backend)* add port deps (uuid, scrypt, reqwest, chrono) for router fan-out
+
 ## [0.1.17](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.16...v0.1.17) - 2026-07-19
 
 ### Added

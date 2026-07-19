@@ -183,26 +183,30 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     recordVideo: { dir: path.join(testInfo.outputDir, "phone") },
   });
   const p2 = await ctx2.newPage();
-  // Land on the home page immediately so the PiP isn't blank during chapter 1.
-  await p2.goto("/");
   try {
-    // ── Chapter 1: landing + sign-in ───────────────────────────────────────
+    // ── Chapter 1: sign in BOTH players in parallel ────────────────────────
+    // Independent contexts → concurrent sign-ins cut ~10s of sequential
+    // typing from the recording. The human-paced helpers jitter independently
+    // on each page; sync still comes from the per-page assertions below.
     await test.step("Landing and sign-in", async () => {
-      await page.goto("/");
-      await expect(page.locator("#main")).not.toBeEmpty();
-      await wander(page);
-      await dwell(page);
-      await signIn(page, EMAIL!, PASSWORD!);
+      await Promise.all([
+        (async () => {
+          await page.goto("/");
+          await expect(page.locator("#main")).not.toBeEmpty();
+          await wander(page);
+          await dwell(page);
+          await signIn(page, EMAIL!, PASSWORD!);
+        })(),
+        (async () => {
+          await p2.goto("/");
+          await expect(p2.locator("#main")).not.toBeEmpty();
+          await signInDirect(p2, (EMAIL2 ?? EMAIL)!, (PASSWORD2 ?? PASSWORD)!);
+          await p2.goto("/games");
+          await expect(p2.getByText("Available").first()).toBeVisible();
+          await dwell(p2);
+        })(),
+      ]);
       await dwell(page, 2000, 3000); // landed — let the viewer register it
-    });
-
-    // ── Player two signs in on their phone (the PiP in the video) ──────────
-    await test.step("Player two on phone", async () => {
-      await expect(p2.locator("#main")).not.toBeEmpty();
-      await signInDirect(p2, (EMAIL2 ?? EMAIL)!, (PASSWORD2 ?? PASSWORD)!);
-      await p2.goto("/games");
-      await expect(p2.getByText("Available").first()).toBeVisible();
-      await dwell(p2);
     });
 
   // ── Chapter 2: the lobby ─────────────────────────────────────────────────

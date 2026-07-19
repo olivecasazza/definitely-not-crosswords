@@ -127,7 +127,9 @@ jobs:
           echo "PR Number: $PR_NUMBER"
 
           # Breaking change: "type!:" prefix or "BREAKING CHANGE(S)" in the body.
-          has_breaking=$(gh pr view $PR_NUMBER -R ${{ github.repository }} --json commits --jq '[.commits[].message | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
+          # Note: the API can return a null commit message (release-plz's commit
+          # on the release PR does) — `. // ""` keeps jq's test() from dying on it.
+          has_breaking=$(gh pr view $PR_NUMBER -R ${{ github.repository }} --json commits --jq '[.commits[].message | . // "" | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
 
           if [ "$has_breaking" = "true" ]; then
             echo "is_major=true" >> $GITHUB_OUTPUT

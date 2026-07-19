@@ -243,7 +243,10 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     } else {
       return; // no playable data on staging — later chapters degrade
     }
-    await expect(page).toHaveURL(/\/game\/[^/]+$/, { timeout: 60_000 });
+    // Some flows route through a pre-game briefing at /game/:id/new before
+    // landing on the play URL. Accept either; the .cw-letter gate below is
+    // the real "we're on the board" check.
+    await expect(page).toHaveURL(/\/game\/[^/]+(\/new)?$/, { timeout: 60_000 });
 
     // Feature gate: board + clue list actually rendered.
     await expect(page.locator(".cw-letter").first()).toBeVisible();

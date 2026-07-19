@@ -263,11 +263,20 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     const solved = solvedClues(all, (data?.actions ?? []) as ClueAction[]);
     clues = all.filter((c) => !solved.has(`${c.number}${c.direction}`));
 
-    // Kick off the phone's game load NOW (in parallel with chapter 3) so the
-    // PiP shows the board while the PC plays, instead of sitting in the lobby
-    // until co-op. The phone stays parked here; chapter 4 just adds the join.
+    // Phone loads the game in parallel with chapter 3 AND auto-joins, so the
+    // PiP shows the joined board while the PC plays solo — not a "join game"
+    // modal blocking the view. Chapter 4 still showcases the invite button +
+    // presence ring on the recorded page; the join click itself happened here.
     const gameUrl = page.url();
-    void p2.goto(gameUrl).then(() => fitBoardToViewport(p2));
+    void (async () => {
+      await p2.goto(gameUrl);
+      await fitBoardToViewport(p2);
+      const join = p2.getByRole("button", { name: /^join game$/i });
+      if (await join.isVisible({ timeout: 15_000 }).catch(() => false)) {
+        await join.click().catch(() => {});
+      }
+      await keepPhoneOnBoard(p2);
+    })();
   });
   const completing = clues.length > 0 && clues.length <= COMPLETION_MAX_CLUES;
   const soloClues = completing ? clues : clues.slice(0, 3);
@@ -309,19 +318,9 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       await fitBoardToViewport(p2);
 
         if (secondAccount) {
-          // A different user gets the join prompt — unless a previous attempt
-          // already joined them (retries/re-runs stay green). Wait for either:
-          // the button, or their chip already being on their roster.
-          const join = p2.getByRole("button", { name: /^join game$/i });
-          const p2Chips = p2.locator(".cw-players .cw-chip");
-          await expect(async () => {
-            expect((await join.isVisible()) || (await p2Chips.count()) >= 2).toBeTruthy();
-          }).toPass({ timeout: 25_000 });
-          if (await join.isVisible()) {
-            await join.click();
-            await expect(join).not.toBeVisible();
-          }
-          // The roster on the *recorded* page lights up with the second chip.
+          // p2 already joined in chapter 2 (so the PiP shows the board
+          // throughout). Just assert the roster chip landed on the recorded
+          // page — the join click itself isn't the demo beat anymore.
           await expect(page.locator(".cw-players .cw-chip")).toHaveCount(2, {
             timeout: 20_000,
           });

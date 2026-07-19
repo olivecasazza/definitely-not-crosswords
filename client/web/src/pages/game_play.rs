@@ -362,9 +362,7 @@ pub fn GamePlay(id: String) -> Element {
             .collect()
     };
 
-    // --- focus driver: focus the input matching focused_index AND scroll the
-    //     corresponding board cell into view so the typed letter stays on
-    //     camera. ---
+    // --- focus driver: focus the input matching focused_index ---
     use_effect(move || {
         let idx = *focused_index.read();
         let refs = input_refs.read();
@@ -375,18 +373,6 @@ pub fn GamePlay(id: String) -> Element {
                     let _ = node.set_focus(true).await;
                 });
             }
-            // Scroll the focused board cell into view. The `.cw-focused` class
-            // moves with the focused cell; bring it center so the typed letter
-            // stays on camera as the player advances through the word.
-            spawn_local(async move {
-                if let Some(win) = web_sys::window() {
-                    if let Some(doc) = win.document() {
-                        if let Some(el) = doc.query_selector(".cw-focused").ok().flatten() {
-                            let _ = el.scroll_into_view_with_bool(true);
-                        }
-                    }
-                }
-            });
         }
     });
 

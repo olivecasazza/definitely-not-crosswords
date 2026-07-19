@@ -872,9 +872,13 @@ fn render_board(
 ) -> Element {
     let cols = size.x.max(1);
     let rows = size.y.max(1);
+    // Fit BOTH axes of the board area: `94cqh * cols/rows` is the width at
+    // which the grid's height fills 94% of the wrap (a size container), and
+    // min() additionally caps at the area width — the binding constraint
+    // always wins, so tall puzzles can never clip their bottom rows.
+    let ratio = cols as f64 / rows as f64;
     let style = format!(
-        "grid-template-columns: repeat({cols}, 1fr); grid-template-rows: repeat({rows}, 1fr); aspect-ratio: {} / {};",
-        cols, rows
+        "grid-template-columns: repeat({cols}, 1fr); grid-template-rows: repeat({rows}, 1fr); aspect-ratio: {cols} / {rows}; width: min(100%, calc(94cqh * {ratio:.4}));",
     );
 
     // focused coord (the cell currently being typed in)
@@ -985,9 +989,9 @@ fn render_clue(
         None => {
             return rsx! {
                 div { class: "cw-clue-empty",
-                    h3 { "Ready to solve?" }
-                    p { class: "muted",
-                        "Tap a square on the board or pick a clue from the list to start typing."
+                    p { class: "cw-empty-title", "Ready to solve?" }
+                    p { class: "cw-empty-hint muted",
+                        "Pick a square on the board or a clue from the list to start typing."
                     }
                 }
             };
@@ -1279,7 +1283,7 @@ const GAME_CSS: &str = r#"
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
 .cw-join-card p { margin: 0; font-size: 12px; }
 .cw-join-card .error { font-size: 11px; font-family: var(--mono); }
-.cw-board { display: grid; gap: 3px; width: 100%; max-width: min(100%, 480px, 96cqh); }
+.cw-board { display: grid; gap: 3px; }
 .cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid rgba(39,39,42,0.25); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
@@ -1293,7 +1297,9 @@ const GAME_CSS: &str = r#"
 .cw-char { pointer-events: none; }
 
 .cw-clue { display: flex; flex-direction: column; gap: 12px; height: 100%; }
-.cw-clue-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; height: 100%; gap: 6px; }
+.cw-clue-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; height: 100%; gap: 8px; padding: 16px; box-sizing: border-box; }
+.cw-empty-title { margin: 0; font-size: var(--fs-lg); font-weight: 700; letter-spacing: .02em; color: var(--text-primary); }
+.cw-empty-hint { margin: 0; font-size: var(--fs-sm); max-width: 36ch; line-height: 1.6; }
 .cw-clue-head { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-app); padding-bottom: 8px; flex-wrap: wrap; }
 .cw-dir-badge { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em; padding: 2px 6px; border-radius: 0; border: 1px solid; }
 .cw-dir-across { background: rgba(254,234,153,0.1); color: var(--pastel-yellow); border-color: rgba(254,234,153,0.2); }

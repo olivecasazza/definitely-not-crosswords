@@ -19,11 +19,13 @@ page you.
 2. **Lobby** — Available/Active/Completed panels render.
 3. **Gameplay** — opens a game (continue first, else start), solves a clue for
    real (answers pulled via the tRPC API with the session cookie).
-4. **Co-op** — copies the invite link, then a second browser context joins the
-   same game: roster chips, per-player presence ring on the board, and the
-   partner's correct letters landing live on the recorded page. Uses
-   `E2E_EMAIL_2` / `E2E_PASSWORD_2` when set; otherwise falls back to the
-   primary account (live transport only — presence hides same-user echoes).
+4. **Co-op** — copies the invite link, then a second player joins the same
+   game from an emulated iPhone (its own recording; CI composites it
+   picture-in-picture into the published demo.mp4): roster chips, per-player
+   presence ring on the board, and the partner's correct letters landing live
+   on the recorded page. Uses `E2E_EMAIL_2` / `E2E_PASSWORD_2` when set;
+   otherwise falls back to the primary account (live transport only —
+   presence hides same-user echoes).
 5. **Completion** — when the puzzle is small (≤12 clues) the tour finishes it,
    landing on "Crossword Solved!" with real standings. This writes a
    CompletedGame to the test account on purpose: it keeps the stats pages

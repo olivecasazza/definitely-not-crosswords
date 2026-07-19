@@ -82,12 +82,25 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
           # Playwright writes one webm per test under test-results/<test>/.
-          v=$(find results -path '*tour*' -name '*.webm' -o -path '*demo*' -name '*.webm' | head -1)
+          # The co-op second player is recorded on an emulated phone; its video
+          # lives under a phone/ subdir of the same test output dir.
+          v=$(find results \( -path '*tour*' -o -path '*demo*' \) -name '*.webm' -not -path '*phone*' | head -1)
           if [ -z "$v" ]; then
             echo "No demo video (E2E_EMAIL/E2E_PASSWORD unset -> demo skipped)."; exit 0
           fi
+          phone=$(find results -path '*phone*' -name '*.webm' | head -1)
           # yuv420p is load-bearing for Safari/Discord/Slack playback.
-          ffmpeg -y -i "$v" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+          if [ -n "$phone" ]; then
+            # Picture-in-picture: the second player's phone, bottom-right, with a
+            # thin bezel. scale=-2 keeps the height even for libx264;
+            # eof_action=repeat freezes the phone on its last frame if the phone
+            # clip ends first; output length follows the main recording.
+            ffmpeg -y -i "$v" -i "$phone" -filter_complex \
+              "[1:v]scale=340:-2,pad=iw+8:ih+8:4:4:color=0xECECF1[pip];[0:v][pip]overlay=W-w-28:H-h-28:eof_action=repeat" \
+              -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+          else
+            ffmpeg -y -i "$v" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+          fi
           echo "MP4=1" >> "$GITHUB_ENV"
       - name: Publish demo.mp4
         if: env.MP4 == '1'

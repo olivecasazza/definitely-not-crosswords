@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, devices, type Page } from "@playwright/test";
+import path from "node:path";
 import { dwell, humanClick, humanType, humanTypeLetters, wander, rand } from "./helpers";
 
 // Authenticated product tour — the source of the demo video and a feature-
@@ -87,6 +88,42 @@ async function signIn(page: Page, email: string, password: string) {
   await expect(page).not.toHaveURL(/\/auth\/login/, { timeout: 20_000 });
 }
 
+/**
+ * Sign in via the login page directly — the mobile nav can tuck the "Sign in"
+ * link behind a menu, so the phone player goes straight to the form.
+ */
+async function signInDirect(page: Page, email: string, password: string) {
+  await page.goto("/auth/login");
+  await humanType(page, page.locator('input[type="email"]'), email);
+  await humanType(page, page.locator('input[type="password"]'), password);
+  await dwell(page, 400, 900);
+  await humanClick(page, page.getByRole("button", { name: /^sign in/i }));
+  await expect(page).not.toHaveURL(/\/auth\/login/, { timeout: 20_000 });
+}
+
+/**
+ * Zoom the board down when its grid overflows the visible board area — the
+ * CSS caps width but tall grids can still clip under `.cw-board-area`'s
+ * overflow:hidden, pushing live letter updates off-camera. No-op when the
+ * board already fits.
+ */
+async function fitBoardToViewport(page: Page) {
+  await page.evaluate(() => {
+    const area = document.querySelector<HTMLElement>(".cw-board-area");
+    const board = document.querySelector<HTMLElement>(".cw-board");
+    if (!area || !board) return;
+    board.style.zoom = ""; // measure unzoomed
+    const visible = area.getBoundingClientRect();
+    const grid = board.getBoundingClientRect();
+    const factor = Math.min(
+      visible.width / grid.width,
+      visible.height / grid.height,
+      1,
+    );
+    if (factor < 1) board.style.zoom = String(Math.floor(factor * 100) / 100);
+  });
+}
+
 /** Select a clue from the list and guess it correctly, at reading speed. */
 async function solveClue(page: Page, clue: Clue) {
   // The clue list is filtered by direction tabs — make sure ours is showing.
@@ -124,16 +161,38 @@ async function solveClue(page: Page, clue: Clue) {
   await expect(inputs).toHaveCount(0);
 }
 
-test("authenticated product tour", async ({ page, browser }) => {
-  // ── Chapter 1: landing + sign-in ─────────────────────────────────────────
-  await test.step("Landing and sign-in", async () => {
-    await page.goto("/");
-    await expect(page.locator("#main")).not.toBeEmpty();
-    await wander(page);
-    await dwell(page);
-    await signIn(page, EMAIL!, PASSWORD!);
-    await dwell(page);
+test("authenticated product tour", async ({ page, browser }, testInfo) => {
+  // Player two gets their own phone recording — CI composites it
+  // picture-in-picture into the published demo.mp4. Created at test start so
+  // the phone video spans the full tour and shares its timeline.
+  const ctx2 = await browser.newContext({
+    ...devices["iPhone 13"],
+    baseURL:
+      process.env.E2E_BASE_URL ?? "https://crosswords-staging.casazza.io",
+    recordVideo: { dir: path.join(testInfo.outputDir, "phone") },
   });
+  const p2 = await ctx2.newPage();
+  // Land on the home page immediately so the PiP isn't blank during chapter 1.
+  await p2.goto("/");
+  try {
+    // ── Chapter 1: landing + sign-in ───────────────────────────────────────
+    await test.step("Landing and sign-in", async () => {
+      await page.goto("/");
+      await expect(page.locator("#main")).not.toBeEmpty();
+      await wander(page);
+      await dwell(page);
+      await signIn(page, EMAIL!, PASSWORD!);
+      await dwell(page);
+    });
+
+    // ── Player two signs in on their phone (the PiP in the video) ──────────
+    await test.step("Player two on phone", async () => {
+      await expect(p2.locator("#main")).not.toBeEmpty();
+      await signInDirect(p2, (EMAIL2 ?? EMAIL)!, (PASSWORD2 ?? PASSWORD)!);
+      await p2.goto("/games");
+      await expect(p2.getByText("Available").first()).toBeVisible();
+      await dwell(p2);
+    });
 
   // ── Chapter 2: the lobby ─────────────────────────────────────────────────
   let clues: Clue[] = [];
@@ -174,6 +233,7 @@ test("authenticated product tour", async ({ page, browser }) => {
     // Feature gate: board + clue list actually rendered.
     await expect(page.locator(".cw-letter").first()).toBeVisible();
     await expect(page.locator(".cw-clue-row").first()).toBeVisible();
+    await fitBoardToViewport(page);
     await dwell(page, 1000, 1800);
 
     // Pull the answers through the API (the client gets them too) so we can
@@ -215,17 +275,12 @@ test("authenticated product tour", async ({ page, browser }) => {
       await expect(page.getByText(/link copied/i)).toBeVisible();
       await dwell(page);
 
-      const origin = new URL(page.url()).origin;
       const gameUrl = page.url();
       const secondAccount = Boolean(EMAIL2 && PASSWORD2);
-      const ctx2 = await browser.newContext({ baseURL: origin });
-      const p2 = await ctx2.newPage();
-      try {
-        await p2.goto("/");
-        await expect(p2.locator("#main")).not.toBeEmpty();
-        await signIn(p2, (EMAIL2 ?? EMAIL)!, (PASSWORD2 ?? PASSWORD)!);
-        await p2.goto(gameUrl);
-        await expect(p2.locator(".cw-letter").first()).toBeVisible();
+      await fitBoardToViewport(page);
+      // The phone player follows the invite link onto the same game.
+      await p2.goto(gameUrl);
+      await expect(p2.locator(".cw-letter").first()).toBeVisible();
 
         if (secondAccount) {
           // A different user gets the join prompt — unless a previous attempt
@@ -270,9 +325,6 @@ test("authenticated product tour", async ({ page, browser }) => {
           })
           .toBeGreaterThan(correctBefore);
         await dwell(page, 1400, 2400);
-      } finally {
-        await ctx2.close();
-      }
     });
   }
 
@@ -350,4 +402,7 @@ test("authenticated product tour", async ({ page, browser }) => {
     await wander(page);
     await dwell(page, 1800, 2800); // end on the premium pitch
   });
+  } finally {
+    await ctx2.close();
+  }
 });

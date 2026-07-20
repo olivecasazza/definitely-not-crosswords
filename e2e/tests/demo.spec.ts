@@ -113,6 +113,16 @@ async function keepPhoneOnBoard(p2: Page) {
 }
 
 /**
+ * Show the phone's own typing: scroll its Active Clue panel (where the inputs
+ * live) into view. Pair with keepPhoneOnBoard afterwards so the PiP returns to
+ * the board to catch the PC's live updates.
+ */
+async function keepPhoneOnClue(p2: Page) {
+  const clue = p2.locator(".cw-clue").first();
+  if (await clue.count()) await clue.scrollIntoViewIfNeeded();
+}
+
+/**
  * Zoom the board down when its grid overflows the visible board area — the
  * CSS caps width but tall grids can still clip under `.cw-board-area`'s
  * overflow:hidden, pushing live letter updates off-camera. No-op when the
@@ -331,6 +341,10 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
         // presence ring + roster badge light up on the recorded page.
         const partner = soloClues[1];
         const correctBefore = await page.locator(".cw-correct").count();
+        // Phone is about to type — bring its Active Clue panel on-camera so
+        // the viewer sees the phone's own input. Scrolls back to the board
+        // after, so the PC's live updates stay visible.
+        await keepPhoneOnClue(p2);
         const solving = solveClue(p2, partner);
         if (secondAccount) {
           await expect(

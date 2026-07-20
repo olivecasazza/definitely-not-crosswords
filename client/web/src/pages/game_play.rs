@@ -834,7 +834,7 @@ pub fn GamePlay(id: String) -> Element {
     rsx! {
         style { {GAME_CSS} }
         div {
-            class: ws.root_class(),
+            class: "{ws.root_class()} cw-game-shell",
             tabindex: "0",
             onmousemove: move |e| ws.handle_mouse_move(&e),
             onmouseup: move |_| ws.handle_mouse_up(),
@@ -990,9 +990,16 @@ fn render_clue(
         None => {
             return rsx! {
                 div { class: "cw-clue-empty",
-                    p { class: "cw-empty-title", "Ready to solve?" }
-                    p { class: "cw-empty-hint muted",
-                        "Pick a square on the board or a clue from the list to start typing."
+                    div { class: "cw-empty-card",
+                        div { class: "cw-empty-cta", "Ready to solve?" }
+                        p { class: "cw-empty-hint",
+                            "Pick a square on the board or a clue from the list to start typing."
+                        }
+                        div { class: "cw-empty-keys",
+                            span { class: "cw-empty-key", "Click" }
+                            span { class: "cw-empty-key-sep", "or" }
+                            span { class: "cw-empty-key", "Tap a clue" }
+                        }
                     }
                 }
             };
@@ -1270,9 +1277,13 @@ fn js_now_iso() -> String {
 // ---------------------------------------------------------------------------
 
 const GAME_CSS: &str = r#"
-.cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: stretch; justify-content: stretch; padding: 4px; box-sizing: border-box; }
+/* Override panel-kit's .panel-body padding so the board fills its panel —
+   the default 1.75rem top + .55rem sides clipped the grid on both axes.
+   Scoped to the game shell so other pages keep the panel-kit default. */
+.cw-game-shell .panel-body { padding: 6px; }
+.cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 0; box-sizing: border-box; }
 .cw-board-col { display: flex; flex-direction: column; height: 100%; width: 100%; }
-.cw-board-area { position: relative; flex: 1; min-height: 0; overflow: auto; display: flex; align-items: center; justify-content: center; }
+.cw-board-area { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 4px; box-sizing: border-box; }
 .cw-players { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--border-app); }
 .cw-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border-app); border-bottom-width: 2px; font-size: var(--fs-xs); font-family: var(--font-sans); color: var(--text-primary); background: var(--bg-card); }
 .cw-chip-tag { font-size: var(--fs-2xs); font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); border: 1px solid var(--border-app); padding: 0 4px; }
@@ -1298,9 +1309,13 @@ const GAME_CSS: &str = r#"
 .cw-char { pointer-events: none; }
 
 .cw-clue { display: flex; flex-direction: column; gap: 12px; height: 100%; }
-.cw-clue-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; height: 100%; gap: 8px; padding: 16px; box-sizing: border-box; }
-.cw-empty-title { margin: 0; font-size: var(--fs-lg); font-weight: 700; letter-spacing: .02em; color: var(--text-primary); }
-.cw-empty-hint { margin: 0; font-size: var(--fs-sm); max-width: 36ch; line-height: 1.6; }
+.cw-clue-empty { display: flex; align-items: center; justify-content: center; height: 100%; padding: 12px; box-sizing: border-box; }
+.cw-empty-card { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 28rem; padding: 18px 22px; text-align: center; background: var(--bg-card); border: 1px dashed var(--border-app); }
+.cw-empty-cta { font-size: var(--fs-md); font-weight: 700; letter-spacing: .02em; color: var(--text-primary); }
+.cw-empty-hint { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); max-width: 32ch; line-height: 1.55; }
+.cw-empty-keys { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.cw-empty-key { font-family: var(--mono); font-size: var(--fs-2xs); padding: 2px 8px; border: 1px solid var(--border-app); color: var(--text-secondary); }
+.cw-empty-key-sep { font-size: var(--fs-2xs); color: var(--text-secondary); opacity: 0.7; }
 .cw-clue-head { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-app); padding-bottom: 8px; flex-wrap: wrap; }
 .cw-dir-badge { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em; padding: 2px 6px; border-radius: 0; border: 1px solid; }
 .cw-dir-across { background: rgba(254,234,153,0.1); color: var(--pastel-yellow); border-color: rgba(254,234,153,0.2); }

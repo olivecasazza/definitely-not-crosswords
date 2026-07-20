@@ -834,7 +834,7 @@ pub fn GamePlay(id: String) -> Element {
     rsx! {
         style { {GAME_CSS} }
         div {
-            class: "{ws.root_class()} cw-game-shell",
+            class: ws.root_class(),
             tabindex: "0",
             onmousemove: move |e| ws.handle_mouse_move(&e),
             onmouseup: move |_| ws.handle_mouse_up(),
@@ -1277,11 +1277,6 @@ fn js_now_iso() -> String {
 // ---------------------------------------------------------------------------
 
 const GAME_CSS: &str = r#"
-/* Override panel-kit's .panel-body padding so the board fills its panel —
-   the default 1.75rem top clipped the grid. Scoped to the game shell;
-   keep enough headroom (.5rem) so the panel-head doesn't overlap
-   interactive content like the clue-list tabs. */
-.cw-game-shell .panel-body { padding: .5rem .35rem .35rem; }
 .cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 0; box-sizing: border-box; }
 .cw-board-col { display: flex; flex-direction: column; height: 100%; width: 100%; }
 .cw-board-area { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 4px; box-sizing: border-box; }

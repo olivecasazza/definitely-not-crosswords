@@ -255,9 +255,21 @@ pub fn GamePlay(id: String) -> Element {
                 }
             }
             if !incoming.is_empty() {
-                let mut cur = actions.peek().clone();
-                cur.extend(incoming);
-                actions.set(cur);
+                // Stagger application so remote letters land one-by-one (≈90ms
+                // apart) instead of the whole word flashing in at once. The
+                // viewer sees the other player "typing" even though the wire
+                // protocol only carries the submitted guess.
+                let mut actions_sig = actions.clone();
+                spawn_local(async move {
+                    for (i, a) in incoming.into_iter().enumerate() {
+                        if i > 0 {
+                            TimeoutFuture::new(90).await;
+                        }
+                        let mut cur = actions_sig.peek().clone();
+                        cur.push(a);
+                        actions_sig.set(cur);
+                    }
+                });
             }
         });
 
@@ -1291,7 +1303,7 @@ const GAME_CSS: &str = r#"
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
 .cw-join-card p { margin: 0; font-size: 12px; }
 .cw-join-card .error { font-size: 11px; font-family: var(--mono); }
-.cw-board { display: grid; gap: 3px; max-width: 100%; max-height: 100%; }
+.cw-board { display: grid; gap: 3px; max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; }
 .cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid rgba(39,39,42,0.25); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }

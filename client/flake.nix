@@ -195,12 +195,23 @@
               wasm-bindgen --target web --no-typescript \
                 --out-dir $out --out-name crossword-web "$wasm"
               wasm-opt -Oz -o $out/crossword-web_bg.wasm $out/crossword-web_bg.wasm || true
-              cat > $out/index.html <<'HTML'
+              # Content-hash cache-bust: the glue/wasm are served with a long
+              # max-age under FIXED names, so an edge cache (Cloudflare) can
+              # hand a stale glue to browsers while the wasm is fresh — the
+              # version skew breaks wasm instantiation on every deploy until
+              # the entry expires. index.html itself is never cached, so a
+              # per-content query busts the glue's cache key on each deploy.
+              wasmHash=$(sha256sum $out/crossword-web_bg.wasm | cut -c1-12)
+              sed -i "s/crossword-web_bg\.wasm/crossword-web_bg.wasm?v=$wasmHash/g" $out/crossword-web.js
+              # Hash AFTER the sed so any glue change (incl. a new wasmHash
+              # embedded in it) changes the glue's own cache key.
+              glueHash=$(sha256sum $out/crossword-web.js | cut -c1-12)
+              cat > $out/index.html <<HTML
               <!doctype html><html><head><meta charset="utf-8" />
               <meta name="viewport" content="width=device-width, initial-scale=1" />
               <title>definitely-not-crosswords</title></head>
               <body><div id="main"></div>
-              <script type="module">import init from "/crossword-web.js"; init();</script>
+              <script type="module">import init from "/crossword-web.js?v=$glueHash"; init();</script>
               </body></html>
               HTML
             '';

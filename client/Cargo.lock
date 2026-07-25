@@ -849,6 +849,7 @@ dependencies = [
  "gloo-net",
  "gloo-storage",
  "gloo-timers",
+ "js-sys",
  "panel-kit",
  "serde",
  "serde_json",

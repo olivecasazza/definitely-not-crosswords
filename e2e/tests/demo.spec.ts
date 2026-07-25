@@ -123,31 +123,10 @@ async function keepPhoneOnClue(p2: Page) {
 }
 
 /**
- * Zoom the board down when its grid overflows the visible board area — the
- * CSS caps width but tall grids can still clip under `.cw-board-area`'s
- * overflow:hidden, pushing live letter updates off-camera. No-op when the
- * board already fits.
+ * Select a clue from the list: flip to its direction tab if needed, click its
+ * row, and wait for the letter boxes. Shared by solveClue and the guess beats.
  */
-async function fitBoardToViewport(page: Page) {
-  await page.evaluate(() => {
-    const area = document.querySelector<HTMLElement>(".cw-board-area");
-    const board = document.querySelector<HTMLElement>(".cw-board");
-    if (!area || !board) return;
-    board.style.zoom = ""; // measure unzoomed
-    const visible = area.getBoundingClientRect();
-    const grid = board.getBoundingClientRect();
-    const factor = Math.min(
-      visible.width / grid.width,
-      visible.height / grid.height,
-      1,
-    );
-    if (factor < 1) board.style.zoom = String(Math.floor(factor * 100) / 100);
-  });
-}
-
-/** Select a clue from the list and guess it correctly, at reading speed. */
-async function solveClue(page: Page, clue: Clue) {
-  // The clue list is filtered by direction tabs — make sure ours is showing.
+async function selectClue(page: Page, clue: Clue) {
   const tab = page.getByRole("button", {
     name: clue.direction === "ACROSS" ? /^across$/i : /^down$/i,
   });
@@ -161,8 +140,30 @@ async function solveClue(page: Page, clue: Clue) {
     })
     .first();
   await humanClick(page, row);
+  await expect(page.locator(".cw-letter-input")).toHaveCount(clue.answer.length);
+}
+
+/** A word the same length as the answer that is definitely wrong. */
+const misspelling = (answer: string) =>
+  (answer[0].toUpperCase() === "A" ? "B" : "A") + answer.slice(1);
+
+/** Click Guess and wait for the entry row to clear (correct-guess path). */
+async function submitGuess(page: Page) {
+  const guess = page.getByRole("button", { name: /^guess$/i });
+  await humanClick(page, guess);
+  // Correct guesses clear the entry row — that's the scoring-path assertion.
+  // Give the mutation a beat, then retry once if a re-render ate the click.
+  await page.waitForTimeout(1500);
+  if (await page.locator(".cw-letter-input").count()) {
+    await humanClick(page, guess);
+  }
+  await expect(page.locator(".cw-letter-input")).toHaveCount(0);
+}
+
+/** Select a clue from the list and guess it correctly, at reading speed. */
+async function solveClue(page: Page, clue: Clue) {
+  await selectClue(page, clue);
   const inputs = page.locator(".cw-letter-input");
-  await expect(inputs).toHaveCount(clue.answer.length);
   await humanTypeLetters(page, clue.answer);
   // Read the boxes back before committing — if the auto-advance raced a slow
   // frame, fail here with a clear diff instead of a mystery wrong guess.
@@ -171,15 +172,7 @@ async function solveClue(page: Page, clue: Clue) {
   );
   expect(typed.toUpperCase()).toBe(clue.answer.toUpperCase());
   await dwell(page, 300, 800); // a beat to "read it back"
-  const guess = page.getByRole("button", { name: /^guess$/i });
-  await humanClick(page, guess);
-  // Correct guesses clear the entry row — that's the scoring-path assertion.
-  // Give the mutation a beat, then retry once if a re-render ate the click.
-  await page.waitForTimeout(1500);
-  if (await inputs.count()) {
-    await humanClick(page, guess);
-  }
-  await expect(inputs).toHaveCount(0);
+  await submitGuess(page);
 }
 
 test("authenticated product tour", async ({ page, browser }, testInfo) => {
@@ -242,6 +235,8 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     const unstarted = card("UNSTARTED");
     if (await active.count()) {
       await humanClick(page, active);
+      // Resume lands directly on the play URL.
+      await expect(page).toHaveURL(/\/game\/[^/]+$/, { timeout: 60_000 });
     } else if (await unstarted.count()) {
       await humanClick(page, unstarted);
       const start = page.getByRole("button", {
@@ -250,18 +245,20 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       await expect(start).toBeVisible({ timeout: 20_000 });
       await dwell(page);
       await humanClick(page, start);
+      // Fresh starts generate the puzzle server-side (can take a minute+).
+      // The briefing page at /game/:id/new matches the play-URL pattern, so
+      // gate on LEAVING /new — otherwise we race ahead and the board gate
+      // below times out while the server is still generating.
+      await expect(page).not.toHaveURL(/\/game\/[^/]+\/new$/, {
+        timeout: 150_000,
+      });
     } else {
       return; // no playable data on staging — later chapters degrade
     }
-    // Some flows route through a pre-game briefing at /game/:id/new before
-    // landing on the play URL. Accept either; the .cw-letter gate below is
-    // the real "we're on the board" check.
-    await expect(page).toHaveURL(/\/game\/[^/]+(\/new)?$/, { timeout: 60_000 });
 
     // Feature gate: board + clue list actually rendered.
     await expect(page.locator(".cw-letter").first()).toBeVisible();
     await expect(page.locator(".cw-clue-row").first()).toBeVisible();
-    await fitBoardToViewport(page);
     await dwell(page, 2400, 3400);
 
     // Pull the answers through the API (the client gets them too) so we can
@@ -280,10 +277,18 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     const gameUrl = page.url();
     void (async () => {
       await p2.goto(gameUrl);
-      await fitBoardToViewport(p2);
-      const join = p2.getByRole("button", { name: /^join game$/i });
-      if (await join.isVisible({ timeout: 15_000 }).catch(() => false)) {
-        await join.click().catch(() => {});
+      // waitFor, not isVisible: isVisible ignores its timeout and the join
+      // overlay only renders after hydration + the members query land.
+      const visible = await p2
+        .getByRole("button", { name: /^join game$/i })
+        .waitFor({ state: "visible", timeout: 20_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (visible) {
+        await p2
+          .getByRole("button", { name: /^join game$/i })
+          .click()
+          .catch(() => {});
       }
       await keepPhoneOnBoard(p2);
     })();
@@ -293,14 +298,60 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
   const playedClues = new Set<string>();
   const clueKey = (c: Clue) => `${c.number}${c.direction}`;
 
-  // ── Chapter 3: solve the first clue (never the last one — that's the
-  //    finale, so a tiny puzzle doesn't complete mid-chapter) ──────────────
+  // ── Chapter 3: the three guess states — placeholder save, a wrong guess
+  //    (red), then the correction (green). Never plays the last clue: that's
+  //    the finale, so a tiny puzzle doesn't complete mid-chapter. ───────────
   if (soloClues.length >= 2) {
+    await test.step("Guess beats: placeholder, miss, hit", async () => {
+      const [placeholderClue, hitClue] = soloClues;
+
+      // Beat 1 — placeholder: type a partial word, then clear the selection.
+      // The letters persist on the board with the yellow placeholder border.
+      await selectClue(page, placeholderClue);
+      await humanTypeLetters(
+        page,
+        placeholderClue.answer.slice(
+          0,
+          Math.min(2, placeholderClue.answer.length - 1),
+        ),
+      );
+      await dwell(page, 500, 900);
+      await humanClick(page, page.locator(".cw-link-btn")); // "ESC to clear"
+      await expect(page.locator(".cw-placeholder").first()).toBeVisible();
+      await dwell(page, 2000, 3000);
+
+      // Beat 2 — a wrong guess: red cells, and the selection stays so the
+      // mistake can be fixed in place.
+      await selectClue(page, hitClue);
+      await humanTypeLetters(page, misspelling(hitClue.answer));
+      await dwell(page, 300, 700);
+      await humanClick(page, page.getByRole("button", { name: /^guess$/i }));
+      await expect(page.locator(".cw-incorrect").first()).toBeVisible();
+      await dwell(page, 2400, 3400); // let the red sink in
+
+      // Beat 3 — correct it: retype over the boxes, green cells, entry clears.
+      await humanClick(page, page.locator(".cw-letter-input").first());
+      await humanTypeLetters(page, hitClue.answer);
+      const typed = await page
+        .locator(".cw-letter-input")
+        .evaluateAll((els) =>
+          els.map((e) => (e as HTMLInputElement).value).join(""),
+        );
+      expect(typed.toUpperCase()).toBe(hitClue.answer.toUpperCase());
+      await dwell(page, 300, 800);
+      await submitGuess(page);
+      await expect(page.locator(".cw-correct").first()).toBeVisible();
+      playedClues.add(clueKey(hitClue));
+      await dwell(page, 2600, 3600); // let the correct letters sink in
+    });
+  } else if (soloClues.length === 1) {
+    // Single-clue game: just solve it — no room for the miss/hit beats
+    // without completing the puzzle early.
     await test.step("Solve a clue", async () => {
       await solveClue(page, soloClues[0]);
       playedClues.add(clueKey(soloClues[0]));
       await expect(page.locator(".cw-correct").first()).toBeVisible();
-      await dwell(page, 2600, 3600); // let the correct letters sink in
+      await dwell(page, 2600, 3600);
     });
   }
 
@@ -312,7 +363,6 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
   if (soloClues.length > 1 && playedClues.size > 0 && !partnerCouldFinish) {
     await test.step("Co-op join + presence", async () => {
       const secondAccount = Boolean(EMAIL2 && PASSWORD2);
-      await fitBoardToViewport(page);
       // Phone already navigated to the game in chapter 2 (in parallel with
       // the PC's solo solve). Wait for its board, then showcase the invite
       // affordance while the phone joins.
@@ -325,21 +375,20 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       await humanClick(page, invite);
       await expect(page.getByText(/link copied/i)).toBeVisible();
       await dwell(page);
-      await fitBoardToViewport(p2);
 
         if (secondAccount) {
-          // p2 already joined in chapter 2 (so the PiP shows the board
-          // throughout). Just assert the roster chip landed on the recorded
-          // page — the join click itself isn't the demo beat anymore.
-          await expect(page.locator(".cw-players .cw-chip")).toHaveCount(2, {
-            timeout: 20_000,
-          });
+          // The phone joined in chapter 2 (so the dock shows the board
+          // throughout). Its roster chip is proven by the presence assertions
+          // below once it starts working a clue — a bare count here races the
+          // presence broadcast when the phone was ALREADY a member (returning
+          // players never re-publish on arrival).
           await dwell(page, 2600, 3600);
         }
 
-        // Player two picks a different clue and works it — while we watch the
+        // Player two picks an unplayed clue and works it — while we watch the
         // presence ring + roster badge light up on the recorded page.
-        const partner = soloClues[1];
+        const partner = soloClues.find((c) => !playedClues.has(clueKey(c)));
+        if (!partner) return; // nothing left that wouldn't finish the puzzle
         const correctBefore = await page.locator(".cw-correct").count();
         // Phone is about to type — bring its Active Clue panel on-camera so
         // the viewer sees the phone's own input. Scrolls back to the board

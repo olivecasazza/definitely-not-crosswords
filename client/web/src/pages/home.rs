@@ -19,11 +19,27 @@ impl PanelKind for Panel {
     }
 }
 
+/// First-mount geometry, computed as viewport proportions (a saved layout
+/// always wins; panel-kit re-scales floating panels on window resize).
 fn default_layout() -> Vec<PanelWin<Panel>> {
+    let (vw, vh) = web_sys::window()
+        .and_then(|w| {
+            Some((
+                w.inner_width().ok()?.as_f64()?,
+                w.inner_height().ok()?.as_f64()?,
+            ))
+        })
+        .unwrap_or((1440.0, 900.0));
+    const GAP: f64 = 20.0;
+    let welcome_w = (vw * 0.30).clamp(380.0, 620.0);
+    let start_w = (vw * 0.20).clamp(280.0, 420.0);
+    let h = (vh * 0.55).clamp(420.0, 620.0);
+    let x0 = ((vw - welcome_w - GAP - start_w) / 2.0).max(16.0);
+    let y0 = ((vh - h) / 2.0).max(16.0);
     let mut b = LayoutBuilder::new();
     vec![
-        b.at(Panel::Welcome, 480.0, 170.0, 560.0, 560.0),
-        b.at(Panel::Start, 1060.0, 170.0, 380.0, 560.0),
+        b.at(Panel::Welcome, x0, y0, welcome_w, h),
+        b.at(Panel::Start, x0 + welcome_w + GAP, y0, start_w, h),
     ]
 }
 

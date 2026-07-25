@@ -111,6 +111,42 @@ fn direction_from_str(s: &str) -> Option<Direction> {
     }
 }
 
+/// Build the mutation input + optimistic local actions for a batch of slots.
+/// Shared by placeholder saves and guess submissions — the only difference
+/// is the action type stamped on each letter.
+fn build_action_batch(
+    slots: &[ActionSlot],
+    game_id: &str,
+    at: ActionType,
+) -> (Value, Vec<GameAction>) {
+    let at_str = action_type_str(at);
+    let payload: Vec<Value> = slots
+        .iter()
+        .map(|s| {
+            json!({
+                "activeGameId": game_id,
+                "cordX": s.cord_x,
+                "cordY": s.cord_y,
+                "actionType": at_str,
+                "previousState": s.previous_state,
+                "state": s.state,
+            })
+        })
+        .collect();
+    let now = js_now_iso();
+    let local: Vec<GameAction> = slots
+        .iter()
+        .map(|s| GameAction {
+            action_type: at,
+            cord_x: s.cord_x,
+            cord_y: s.cord_y,
+            state: s.state.clone(),
+            submitted_at: now.clone(),
+        })
+        .collect();
+    (json!({ "id": game_id, "actions": payload }), local)
+}
+
 /// Parse the `gameMembers` array from `activeGame.get`. `userName` is absent
 /// on pre-coop backends — fall back to the leaderboard's placeholder.
 fn parse_members(data: &Value) -> Vec<MemberInfo> {
@@ -151,13 +187,41 @@ impl panel_kit::PanelKind for PanelId {
     }
 }
 
+/// First-mount geometry, computed as viewport proportions. Only used when no
+/// saved layout exists (fresh profile / incognito / CI) — panel-kit persists
+/// to localStorage and re-scales floating geometry on window resize. Fixed
+/// pixel defaults only ever fit the one canvas they were tuned on.
 fn default_layout() -> Vec<panel_kit::PanelWin<PanelId>> {
+    let (vw, vh) = viewport();
+    const M: f64 = 16.0; // workspace margin / inter-panel gap
+    let left_w = (vw * 0.34).clamp(360.0, 760.0);
+    let usable_h = vh - 3.0 * M;
+    let board_h = (usable_h * 0.68).max(280.0);
+    let clue_h = (usable_h - board_h).max(160.0);
     let mut b = panel_kit::LayoutBuilder::new();
     vec![
-        b.at(PanelId::Board, 16.0, 16.0, 640.0, 640.0),
-        b.at(PanelId::Clue, 16.0, 672.0, 640.0, 292.0),
-        b.at(PanelId::Clues, 672.0, 16.0, 1232.0, 948.0),
+        b.at(PanelId::Board, M, M, left_w, board_h),
+        b.at(PanelId::Clue, M, 2.0 * M + board_h, left_w, clue_h),
+        b.at(
+            PanelId::Clues,
+            2.0 * M + left_w,
+            M,
+            (vw - left_w - 3.0 * M).max(360.0),
+            vh - 2.0 * M,
+        ),
     ]
+}
+
+/// Live window size with a desktop-ish fallback (SSR/headless first tick).
+fn viewport() -> (f64, f64) {
+    web_sys::window()
+        .and_then(|w| {
+            Some((
+                w.inner_width().ok()?.as_f64()?,
+                w.inner_height().ok()?.as_f64()?,
+            ))
+        })
+        .unwrap_or((1440.0, 900.0))
 }
 
 #[component]
@@ -443,37 +507,21 @@ pub fn GamePlay(id: String) -> Element {
 
     // Submit the current word as a placeholder save (used by unselect).
     let id_for_save = id.clone();
-    let mut submit_placeholder = move || {
-        let slots = game_action_data.peek().clone();
+    let submit_placeholder = move || {
+        // Only persist letters the player actually changed. Saving the whole
+        // prefilled word would restamp every cell — including correct guesses
+        // — as a placeholder, hiding them behind placeholder styling.
+        let slots: Vec<ActionSlot> = game_action_data
+            .peek()
+            .iter()
+            .filter(|s| s.state != s.previous_state)
+            .cloned()
+            .collect();
         if slots.is_empty() {
             return;
         }
-        let payload_actions: Vec<Value> = slots
-            .iter()
-            .map(|s| {
-                json!({
-                    "activeGameId": id_for_save,
-                    "cordX": s.cord_x,
-                    "cordY": s.cord_y,
-                    "actionType": "placeholder",
-                    "previousState": s.previous_state,
-                    "state": s.state,
-                })
-            })
-            .collect();
-        let input = json!({ "id": id_for_save, "actions": payload_actions });
+        let (input, local) = build_action_batch(&slots, &id_for_save, ActionType::Placeholder);
         // optimistic local merge so the board updates immediately
-        let now = js_now_iso();
-        let local: Vec<GameAction> = slots
-            .iter()
-            .map(|s| GameAction {
-                action_type: ActionType::Placeholder,
-                cord_x: s.cord_x,
-                cord_y: s.cord_y,
-                state: s.state.clone(),
-                submitted_at: now.clone(),
-            })
-            .collect();
         let mut cur = actions.peek().clone();
         cur.extend(local);
         actions.set(cur);
@@ -482,21 +530,28 @@ pub fn GamePlay(id: String) -> Element {
         });
     };
 
-    let mut submit_placeholder_for_unselect = submit_placeholder.clone();
-    let publish_for_unselect = publish_presence.clone();
-    let unselect = move |_| {
+    // Clear the active selection: drop the in-progress word and stop
+    // broadcasting presence. `save_progress` first persists the typed letters
+    // as a placeholder (unselect / direction-toggle); a correct guess already
+    // persisted its letters, so it clears without saving.
+    let mut submit_placeholder_for_clear = submit_placeholder.clone();
+    let publish_for_clear = publish_presence.clone();
+    let clear_selection = move |save_progress: bool| {
         let was_selected = selected.peek().is_some();
         let any_typed = game_action_data.peek().iter().any(|s| !s.state.is_empty());
-        if was_selected && any_typed {
-            submit_placeholder_for_unselect();
+        if save_progress && was_selected && any_typed {
+            submit_placeholder_for_clear();
         }
         selected.set(None);
         game_action_data.set(Vec::new());
         focused_index.set(None);
         if was_selected {
-            publish_for_unselect(None);
+            publish_for_clear(None);
         }
     };
+
+    let mut clear_for_unselect = clear_selection.clone();
+    let unselect = move |_| clear_for_unselect(true);
 
     // Click a board cell → select a covering question (current dir first).
     let mut select_question_for_coords = select_question.clone();
@@ -516,31 +571,21 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     // Direction toggles (click active → null = show all).
-    let publish_for_toggle = publish_presence.clone();
+    let mut clear_for_toggle = clear_selection.clone();
     let toggle_dir = move |d: Direction| {
         let cur = *selected_direction.peek();
         if cur == Some(d) {
             selected_direction.set(None);
         } else {
             // unselect (saving progress) then set the new filter
-            let was_selected = selected.peek().is_some();
-            let any_typed = game_action_data.peek().iter().any(|s| !s.state.is_empty());
-            if was_selected && any_typed {
-                submit_placeholder();
-            }
-            selected.set(None);
-            game_action_data.set(Vec::new());
-            focused_index.set(None);
-            if was_selected {
-                publish_for_toggle(None);
-            }
+            clear_for_toggle(true);
             selected_direction.set(Some(d));
         }
     };
 
     // --- guess submission ----------------------------------------------------
     let id_for_guess = id.clone();
-    let publish_for_guess = publish_presence.clone();
+    let mut clear_for_guess = clear_selection.clone();
     let submit_guess = move || {
         let slots = game_action_data.peek().clone();
         if slots.is_empty() {
@@ -568,35 +613,9 @@ pub fn GamePlay(id: String) -> Element {
         } else {
             ActionType::IncorrectGuess
         };
-        let at_str = action_type_str(at);
-
-        let payload_actions: Vec<Value> = slots
-            .iter()
-            .map(|s| {
-                json!({
-                    "activeGameId": id_for_guess,
-                    "cordX": s.cord_x,
-                    "cordY": s.cord_y,
-                    "actionType": at_str,
-                    "previousState": s.previous_state,
-                    "state": s.state,
-                })
-            })
-            .collect();
-        let add_input = json!({ "id": id_for_guess, "actions": payload_actions });
+        let (add_input, new_local) = build_action_batch(&slots, &id_for_guess, at);
 
         // Build the new action set locally for an inline solved-check.
-        let now = js_now_iso();
-        let new_local: Vec<GameAction> = slots
-            .iter()
-            .map(|s| GameAction {
-                action_type: at,
-                cord_x: s.cord_x,
-                cord_y: s.cord_y,
-                state: s.state.clone(),
-                submitted_at: now.clone(),
-            })
-            .collect();
         let mut next_actions = actions.peek().clone();
         next_actions.extend(new_local);
 
@@ -613,10 +632,7 @@ pub fn GamePlay(id: String) -> Element {
         actions.set(next_actions);
 
         if is_correct {
-            selected.set(None);
-            game_action_data.set(Vec::new());
-            focused_index.set(None);
-            publish_for_guess(None);
+            clear_for_guess(false);
         }
 
         let id_complete = id_for_guess.clone();
@@ -884,12 +900,12 @@ fn render_board(
 ) -> Element {
     let cols = size.x.max(1);
     let rows = size.y.max(1);
-    // aspect-ratio + max-width/max-height lets the browser shrink the grid to
-    // fit BOTH axes (preserving the ratio) inside .cw-board-area — no cqh
-    // math, no clipping. The grid sits at the smaller of (area width) or
-    // (area height × cols/rows).
+    // `.cw-board-area` is a `container-type: size` context, so cqw/cqh measure
+    // the panel area itself (not the viewport). Width is the largest size that
+    // fits BOTH axes — derived from the height cap via the grid ratio — and
+    // aspect-ratio derives height from it. No cqh guessing, no JS zoom hacks.
     let style = format!(
-        "grid-template-columns: repeat({cols}, 1fr); grid-template-rows: repeat({rows}, 1fr); aspect-ratio: {cols} / {rows};",
+        "grid-template-columns: repeat({cols}, 1fr); grid-template-rows: repeat({rows}, 1fr); aspect-ratio: {cols} / {rows}; width: min(100cqw, 100cqh * {cols} / {rows});",
     );
 
     // focused coord (the cell currently being typed in)
@@ -1273,17 +1289,13 @@ fn render_join_overlay(
 }
 
 /// Timestamp for an optimistic local action. `sort_modifications` orders
-/// newest-first by lexicographic `submitted_at`. We can't pull `js-sys`/`Date`
-/// (Cargo.toml is locked), so we synthesize a key that (a) sorts ABOVE any real
-/// server timestamp — every real ts starts with a year digit < '9' — and (b)
-/// strictly increases per call via an atomic counter, so a later optimistic
-/// action always beats an earlier one. Without the counter, equal-key ties fall
-/// back to stable-insertion order, which surfaces the OLDER edit and makes a
-/// corrected wrong guess uncompletable. wasm is single-threaded; Relaxed is fine.
+/// newest-first by lexicographic `submitted_at`, so this must be a real UTC
+/// ISO instant like the server's. A fabricated "maximal" timestamp outranks
+/// every real action forever: a remote player's correct guess could never
+/// displace a stale local placeholder until reload (the whole board appeared
+/// frozen to the other player).
 fn js_now_iso() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    format!("9999-{:020}", SEQ.fetch_add(1, Ordering::Relaxed))
+    js_sys::Date::new_0().to_iso_string().into()
 }
 
 // ---------------------------------------------------------------------------
@@ -1291,7 +1303,7 @@ fn js_now_iso() -> String {
 const GAME_CSS: &str = r#"
 .cw-board-wrap { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 0; box-sizing: border-box; }
 .cw-board-col { display: flex; flex-direction: column; height: 100%; width: 100%; }
-.cw-board-area { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 4px; box-sizing: border-box; }
+.cw-board-area { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 4px; box-sizing: border-box; container-type: size; }
 .cw-players { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--border-app); }
 .cw-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border-app); border-bottom-width: 2px; font-size: var(--fs-xs); font-family: var(--font-sans); color: var(--text-primary); background: var(--bg-card); }
 .cw-chip-tag { font-size: var(--fs-2xs); font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); border: 1px solid var(--border-app); padding: 0 4px; }

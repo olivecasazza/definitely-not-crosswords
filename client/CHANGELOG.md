@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.27](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.26...v0.1.27) - 2026-07-26
+
+### Fixed
+
+- *(ci)* never rebase the generated k8s manifest when bumping staging
+- *(chart)* route every ingress path to service.port
+
+### Other
+
+- changelog for v0.1.26 [skip ci]
+
+
 ## [0.1.26](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.25...v0.1.26) - 2026-07-26
 
 ### Fixed

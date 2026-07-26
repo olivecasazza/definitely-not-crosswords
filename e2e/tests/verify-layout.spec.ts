@@ -33,6 +33,26 @@ function expectInside(r: Rect, container: Rect, tol = 2, what = "rect") {
   ).toBe(true);
 }
 
+/**
+ * The grid's TRACKS fit its own box. `boundingBox()` can't see this: the board
+ * element stays the size CSS gave it while its `1fr` tracks blow past it and
+ * `.cw-board-area { overflow: hidden }` silently clips the last columns/rows —
+ * exactly the "board cut off" regression. scrollWidth/Height is the only probe
+ * that catches it.
+ */
+async function expectGridNotClipped(page: Page, label: string) {
+  const m = await page.evaluate(() => {
+    const b = document.querySelector(".cw-board") as HTMLElement | null;
+    if (!b) return null;
+    return { sw: b.scrollWidth, sh: b.scrollHeight, cw: b.clientWidth, ch: b.clientHeight };
+  });
+  expect(m, `${label}: .cw-board rendered`).not.toBeNull();
+  expect(
+    m!.sw <= m!.cw + 1 && m!.sh <= m!.ch + 1,
+    `${label}: grid tracks overflow the board box (content ${m!.sw}x${m!.sh} vs box ${m!.cw}x${m!.ch}) — columns/rows are being clipped`,
+  ).toBe(true);
+}
+
 async function expectPageFitsViewport(page: Page, label: string) {
   const overflow = await page.evaluate(() => ({
     scrollW: document.documentElement.scrollWidth,
@@ -143,6 +163,7 @@ test.describe("game board (needs e2e account)", () => {
     expect(board, ".cw-board rendered").not.toBeNull();
     expectInside(area!, screen, 2, "board area");
     expectInside(board!, area!, 2, "board grid");
+    await expectGridNotClipped(page, "board/desktop");
 
     // Not collapsed either: the fit must USE the area (the failure mode where
     // aspect-ratio + fr tracks shrink-wraps the grid to its content).
@@ -193,6 +214,14 @@ test.describe("game board (needs e2e account)", () => {
       expect(board).not.toBeNull();
       expectInside(area!, screen, 2, "phone board area");
       expectInside(board!, area!, 2, "phone board grid");
+      await expectGridNotClipped(page, "board/phone");
+      // ...and the stacked mobile panel actually gives the board room. It used
+      // to collapse to panel-kit's 180px floor (cells ~2px) because
+      // `container-type: size` hid the board's height from the auto-sized panel.
+      expect(
+        board!.width >= Math.min(area!.width, viewport.width * 0.8),
+        `phone board collapsed: ${JSON.stringify(board)} in area ${JSON.stringify(area)}`,
+      ).toBe(true);
     } finally {
       await ctx.close();
     }

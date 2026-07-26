@@ -820,6 +820,7 @@ dependencies = [
  "sqlx",
  "tokenizers",
  "tokio",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",

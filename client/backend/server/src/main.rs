@@ -132,6 +132,20 @@ async fn main() -> anyhow::Result<()> {
             let index = format!("{dir}/index.html");
             let serve = tower_http::services::ServeDir::new(&dir)
                 .fallback(tower_http::services::ServeFile::new(index));
+            // `must-revalidate` on the whole bundle. index.html carries a
+            // content hash on the glue (`crossword-web.js?v=…`), but the
+            // wasm-bindgen `snippets/*` the glue imports are hardcoded relative
+            // paths with no query — nothing busts them. A CDN that cached them
+            // from an older release then pairs OLD snippets with the NEW glue
+            // and the app dies on import with "does not provide an export named
+            // …", serving a blank page. That took prod down on the v0.1.0 →
+            // v0.1.26 promotion (Cloudflare had 60-day-old snippets).
+            let serve = tower::ServiceBuilder::new()
+                .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+                    axum::http::header::CACHE_CONTROL,
+                    axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+                ))
+                .service(serve);
             tracing::info!("serving frontend bundle from {dir}");
             app.fallback_service(serve)
         }

@@ -79,12 +79,16 @@ async fn main() -> anyhow::Result<()> {
     // so it can't mint an admin session on staging/prod.
     let auth = AuthService::new(is_local);
 
-    // Fail closed: refuse to serve PRODUCTION with an empty or the known-weak
+    // Fail closed on any DEPLOYED environment with an empty or known-weak
     // session-signing secret, since it makes admin session cookies forgeable
-    // offline. Staging/local tolerate the default to keep setup frictionless;
-    // secret rotation itself is an operator task.
-    if env == "production"
-        && (auth.nextauth_secret.is_empty() || auth.nextauth_secret == "supersecretsecret")
+    // offline — claims carry `role`, so a forged cookie is an admin cookie.
+    //
+    // This used to be `env == "production"` only, on the theory that staging
+    // could tolerate the default for frictionless setup. It could not: staging
+    // ran for months signing real sessions with the `supersecretsecret` that
+    // ships in the public chart, and the guard stayed silent because the env
+    // name didn't match. Anything that isn't local gets checked now.
+    if !is_local && (auth.nextauth_secret.is_empty() || auth.nextauth_secret == "supersecretsecret")
     {
         anyhow::bail!(
             "refusing to start: NEXTAUTH_SECRET is empty or the known-weak default \

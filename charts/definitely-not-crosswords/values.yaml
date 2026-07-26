@@ -89,6 +89,12 @@ billing:
 # to the configured role and marked verified when emailVerified is true.
 adminUsers:
   enabled: true
+  # Secret holding ADMIN_PASSWORDS_JSON — {"<email>":"<password>"} — used to give
+  # these accounts an initial password. Defaults to the app secret. Passwords
+  # must NOT go in `users` below: that whole block is rendered into the pod spec
+  # as plaintext. With no such key the admins are seeded with a NULL password,
+  # which fails every sign-in and cannot be fixed from inside the product.
+  passwordsSecret: ""
   users:
     - email: "olive@casazza.info"
       name: "Olive Casazza"

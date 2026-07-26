@@ -57,6 +57,16 @@ spec:
           env:
             - name: ADMIN_USERS_JSON
               value: {{ toJson .Values.adminUsers | quote }}
+            # Initial passwords for the seeded admins, as {"<email>":"<password>"}.
+            # From a Secret, never from values — adminUsers above is rendered into
+            # the pod spec in plaintext. Absent -> admins are created with a NULL
+            # password, which cannot sign in and cannot be recovered in-product.
+            - name: ADMIN_PASSWORDS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adminUsers.passwordsSecret | default (printf "%s-secrets" (include "definitely-not-crosswords.fullname" .)) }}
+                  key: ADMIN_PASSWORDS_JSON
+                  optional: true
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

@@ -64,25 +64,38 @@ jobs:
           git clone "https://x-access-token:${NIXLAB_TOKEN}@github.com/casazza-info/nixlab.git" nixlab
           cd nixlab
           file=modules/k8s/apps/crosswords.nix
-          # Rewrite only the line carrying the crosswords-staging $imagepolicy marker,
-          # so the pinned prod tag (no marker) is never touched.
-          sed -i -E 's|tag = "v[0-9]+\.[0-9]+\.[0-9]+"; # \{"\$imagepolicy": "apps:crosswords-staging"\}|tag = "'"$TAG"'"; # {"$imagepolicy": "apps:crosswords-staging"}|' "$file"
-          if git diff --quiet -- "$file"; then
-            echo "Staging already at $TAG — nothing to do."
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Commit the tag bump first so `nix build` evaluates a clean tree at the new
-          # tag (no dirty-tree ambiguity), then fold the regenerated manifest in.
-          git commit -qm "chore(k8s): deploy crosswords staging to $TAG" -- "$file"
-          nix build .#k8s-manifests
-          cp -L result modules/k8s/manifests.yaml
-          rm -f result
-          git add modules/k8s/manifests.yaml
-          git commit -q --amend --no-edit
-          # Survive concurrent nixlab commits between clone and push.
-          git fetch origin main -q
-          git rebase origin/main
-          git push origin HEAD:main
-          echo "Bumped nixlab crosswords staging to $TAG (+ regenerated manifests)"
+
+          # manifests.yaml is kubenix-generated and nixlab regenerates it on EVERY
+          # change, so it must never take part in a rebase — the old
+          # regenerate-then-rebase order put it in one and conflicted every single
+          # run ("CONFLICT (content): modules/k8s/manifests.yaml"). Instead: start
+          # from the current origin/main each attempt, apply the source edit,
+          # regenerate the manifest from THAT tree, push. A lost race just retries
+          # against the newer main rather than trying to merge generated output.
+          for attempt in 1 2 3; do
+            git fetch origin main -q
+            git reset -q --hard origin/main
+            # Rewrite only the line carrying the crosswords-staging $imagepolicy marker,
+            # so the pinned prod tag (no marker) is never touched.
+            sed -i -E 's|tag = "v[0-9]+\.[0-9]+\.[0-9]+"; # \{"\$imagepolicy": "apps:crosswords-staging"\}|tag = "'"$TAG"'"; # {"$imagepolicy": "apps:crosswords-staging"}|' "$file"
+            if git diff --quiet -- "$file"; then
+              echo "Staging already at $TAG — nothing to do."
+              exit 0
+            fi
+            # Commit the tag bump first so `nix build` evaluates a clean tree at the
+            # new tag (no dirty-tree ambiguity), then fold the regenerated manifest in.
+            git commit -qm "chore(k8s): deploy crosswords staging to $TAG" -- "$file"
+            nix build .#k8s-manifests
+            cp -L result modules/k8s/manifests.yaml
+            rm -f result
+            git add modules/k8s/manifests.yaml
+            git commit -q --amend --no-edit
+            if git push origin HEAD:main; then
+              echo "Bumped nixlab crosswords staging to $TAG (+ regenerated manifests)"
+              exit 0
+            fi
+            echo "nixlab main moved under us; retrying from the new head ($attempt/3)"
+          done
+          echo "Could not land the staging bump after 3 attempts."; exit 1

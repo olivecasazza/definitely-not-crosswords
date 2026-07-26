@@ -29,6 +29,7 @@
         crossword-server = client.packages.${system}.crossword-server;
         crossword-web = client.packages.${system}.crossword-web;
         crossword-tools = client.packages.${system}.crossword-tools;
+        crossword-desktop = client.packages.${system}.crossword-desktop;
 
         # Runtime assets for the generator (embedding model + WordNet dictionary),
         # fetched and verified by hash. This is the Rust/Nix replacement for
@@ -98,6 +99,20 @@
         hydraJobs = {
           inherit crossword-server dockerImage;
           web = crossword-web;
+        };
+
+        # buildbot-nix evaluates `.#checks.<system>` per PR and reports a GitHub
+        # commit status for each — this is what replaces the GHA "Nix Build &
+        # Checks" job. Mirrors the four deliverables that job built, plus the
+        # deployable image so PRs catch image-build breakage before a v* tag.
+        checks = {
+          inherit
+            crossword-server
+            crossword-web
+            crossword-tools
+            crossword-desktop
+            dockerImage
+            ;
         };
 
         # App development happens in the Rust workspace: `nix develop ./client`.

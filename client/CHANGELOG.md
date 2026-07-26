@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.28](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.27...v0.1.28) - 2026-07-26
+
+### Added
+
+- *(auth)* confirm-password field on signup
+
+### Fixed
+
+- *(server)* stop CDNs pairing new wasm glue with stale snippets
+
+### Other
+
+- changelog for v0.1.27 [skip ci]
+
+
 ## [0.1.27](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.26...v0.1.27) - 2026-07-26
 
 ### Fixed

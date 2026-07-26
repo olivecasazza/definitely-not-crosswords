@@ -1378,6 +1378,13 @@ const GAME_CSS: &str = r#"
 .cw-bubble.cw-incorrect { background: rgba(255,140,140,0.18); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
 .cw-bubble.cw-correct { background: rgba(168,230,207,0.18); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
 
+/* Desktop tiling stretches every panel to the full workspace height, which left
+   Active Clue as a ~900px column holding one clue and a row of letter boxes.
+   Size it to its content instead. */
+@media (min-width: 761px) {
+  .ws.tiling .panel-active-clue { align-self: flex-start; height: auto; }
+}
+
 /* Mobile (<760px) stacks panels and lets the page scroll, so panel-kit sizes
    the Board panel `height:auto` — and `container-type: size` tells it the board
    contributes no height, collapsing the panel to its 180px floor. Drop the

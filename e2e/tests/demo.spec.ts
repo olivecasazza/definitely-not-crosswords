@@ -443,6 +443,14 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     await humanClick(page, page.locator('header a.navlink[href="/stats"]'));
     await expect(page).toHaveURL(/\/stats/, { timeout: 15_000 });
 
+    // The docked phone follows to its own score screen — the mobile stats
+    // surface is part of the product and never made the recording before.
+    // Direct nav, like signInDirect: mobile tucks the link behind a menu.
+    await p2.goto("/stats");
+    await expect(p2.getByText("Leaderboard").first()).toBeVisible({
+      timeout: 20_000,
+    });
+
     // Leaderboard — podium/table (or its empty state) renders.
     await expect(page.getByText("Leaderboard").first()).toBeVisible();
     await dwell(page, 2600, 3600);
@@ -452,6 +460,10 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     const career = page.getByText("Career").first();
     await career.scrollIntoViewIfNeeded();
     await expect(career).toBeVisible();
+    // Phone scrolls to its own Career panel on the same beat, so the dock
+    // shows the mobile score layout rather than a static leaderboard.
+    const phoneCareer = p2.getByText("Career").first();
+    if (await phoneCareer.count()) await phoneCareer.scrollIntoViewIfNeeded();
     if (await page.getByText("Global Rank").count()) {
       await expect(page.getByText("Global Rank")).toBeVisible();
       await dwell(page, 2600, 3600);

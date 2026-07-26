@@ -1,7 +1,6 @@
 {{- if .Values.ingress.enabled -}}
 {{- $fullName := include "definitely-not-crosswords.fullname" . -}}
 {{- $svcPort := .Values.service.port -}}
-{{- $wsPort := .Values.service.wsPort -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -38,8 +37,13 @@ spec:
               service:
                 name: {{ $fullName }}
                 port:
-                  # If the path is /trpc-ws or similar, route to ws port, else http port
-                  number: {{ if contains "ws" .path }}{{ $wsPort }}{{ else }}{{ $svcPort }}{{ end }}
+                  # One port for everything — the Rust server serves HTTP, /api
+                  # and the tRPC WebSocket on service.port. The old conditional
+                  # sent "ws" paths to .Values.service.wsPort, which nothing has
+                  # ever set, so `number:` rendered empty and BOTH environments'
+                  # Helm upgrades failed on the /api/trpc-ws path with
+                  # "port name or number is required".
+                  number: {{ $svcPort }}
           {{- end }}
     {{- end }}
 {{- end }}

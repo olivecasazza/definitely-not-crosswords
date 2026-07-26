@@ -18,3 +18,17 @@ git_tag_enable = true
 git_tag_name = "v{{ version }}"
 changelog_update = true
 changelog_path = "CHANGELOG.md"
+# release-plz scopes a package's changelog to commits touching that package's
+# directory. crossword-server is the only crate with changelog_update, so
+# without this every release only ever saw `backend/server/**` — frontend,
+# build and infra work never appeared (v0.1.25 omitted the web cache-bust fix
+# entirely). Pull the whole workspace into the one changelog we publish.
+changelog_include = [
+  "crossword-core",
+  "crossword-web",
+  "crossword-desktop",
+  "crossword-db",
+  "crossword-auth",
+  "crossword-events",
+  "crossword-tools",
+]

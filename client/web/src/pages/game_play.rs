@@ -1316,7 +1316,11 @@ const GAME_CSS: &str = r#"
 .cw-join-card p { margin: 0; font-size: 12px; }
 .cw-join-card .error { font-size: 11px; font-family: var(--mono); }
 .cw-board { display: grid; gap: 3px; max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; }
-.cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); }
+/* min-width/min-height:0 is load-bearing: grid items default to `auto`, whose
+   automatic minimum size floors each 1fr track at the cell's content size. The
+   tracks then blow past the board's own width and `.cw-board-area`'s
+   `overflow:hidden` clips the last columns/rows off. */
+.cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); min-width: 0; min-height: 0; }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid rgba(39,39,42,0.25); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
 .cw-letter:hover { border-color: var(--border-hover); }
@@ -1373,4 +1377,22 @@ const GAME_CSS: &str = r#"
 .cw-bubble.cw-placeholder { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--pastel-yellow); }
 .cw-bubble.cw-incorrect { background: rgba(255,140,140,0.18); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
 .cw-bubble.cw-correct { background: rgba(168,230,207,0.18); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
+
+/* Desktop tiling stretches every panel to the full workspace height, which left
+   Active Clue as a ~900px column holding one clue and a row of letter boxes.
+   Size it to its content instead. */
+@media (min-width: 761px) {
+  .ws.tiling .panel-active-clue { align-self: flex-start; height: auto; }
+}
+
+/* Mobile (<760px) stacks panels and lets the page scroll, so panel-kit sizes
+   the Board panel `height:auto` — and `container-type: size` tells it the board
+   contributes no height, collapsing the panel to its 180px floor. Drop the
+   height chain here so the board is sized by WIDTH alone and the panel grows to
+   fit it: `inline-size` containment keeps 100cqw meaningful while letting 100cqh
+   fall back to the viewport, where it never binds. */
+@media (max-width: 760px) {
+  .cw-board-col { height: auto; }
+  .cw-board-area { flex: none; container-type: inline-size; }
+}
 "#;

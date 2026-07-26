@@ -181,5 +181,12 @@ jobs:
           if [ -z "$PR_NUMBER" ]; then
             PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
           fi
-          gh pr merge $PR_NUMBER -R ${{ github.repository }} --auto --squash
-          echo "✅ Dynamic auto-merge enabled for this PR (squash method)."
+          # Needs the repo's "Allow auto-merge" setting. It was off, so this step
+          # red-X'd every PR while the code itself was green. Don't fail CI over a
+          # repo setting — report it and move on; the PR is still mergeable by hand.
+          if gh pr merge "$PR_NUMBER" -R ${{ github.repository }} --auto --squash; then
+            echo "✅ Auto-merge enabled for PR #$PR_NUMBER (squash)."
+          else
+            echo "::warning::Could not enable auto-merge for PR #$PR_NUMBER — check that"
+            echo "::warning::Settings → General → 'Allow auto-merge' is enabled. Merge manually."
+          fi

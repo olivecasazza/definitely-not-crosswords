@@ -439,6 +439,8 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     // --- focus driver: focus the input matching focused_index ---
+    //     (keeping the board on screen while typing is CSS — see the
+    //     scroll-margin-top rule in GAME_CSS.)
     use_effect(move || {
         let idx = *focused_index.read();
         let refs = input_refs.read();
@@ -1394,5 +1396,16 @@ const GAME_CSS: &str = r#"
 @media (max-width: 760px) {
   .cw-board-col { height: auto; }
   .cw-board-area { flex: none; container-type: inline-size; }
+
+  /* Mobile stacks Active Clue BELOW the board, so focusing a letter input
+     scrolled the board off the top and the player typed blind. scroll-margin
+     makes the browser's own focus scroll overshoot by a board's height, so the
+     grid and the inputs are both on camera. Beats a scrollIntoView effect: no
+     timing race with the focus scroll, and a web_sys binding for it once broke
+     wasm instantiation outright (f362a0c).
+     ponytail: 62vh ≈ board (up to 100vw ≈ 59vh) + players strip on a phone.
+     If the board ever gets taller than the viewport, pin the clue panel
+     instead. */
+  .cw-letter-input { scroll-margin-top: 62vh; }
 }
 "#;

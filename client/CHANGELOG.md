@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.26](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.25...v0.1.26) - 2026-07-26
+
+### Fixed
+
+- *(game)* board grid clipping + compact Active Clue panel + mobile stats in demo (#42)
+- *(game)* keep the board on camera while typing on mobile
+- *(ci)* include the whole workspace in the release changelog
+- *(ci)* generate release notes from the tag range, not the whole history
+
+
 ## [0.1.25](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.24...v0.1.25) - 2026-07-25
 
 ### Added

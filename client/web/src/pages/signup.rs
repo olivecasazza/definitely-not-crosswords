@@ -36,11 +36,13 @@ pub fn Signup() -> Element {
     let username = use_signal(|| String::new());
     let email = use_signal(|| String::new());
     let password = use_signal(|| String::new());
+    let confirm = use_signal(|| String::new());
 
     let name_touched = use_signal(|| false);
     let username_touched = use_signal(|| false);
     let email_touched = use_signal(|| false);
     let password_touched = use_signal(|| false);
+    let confirm_touched = use_signal(|| false);
 
     let loading = use_signal(|| false);
     let error = use_signal(|| String::new());
@@ -57,6 +59,7 @@ pub fn Signup() -> Element {
     let username_val = username.read().clone();
     let email_val = email.read().clone();
     let password_val = password.read().clone();
+    let confirm_val = confirm.read().clone();
 
     let name_error = if name_val.trim().is_empty() {
         "Full Name is required.".to_string()
@@ -90,10 +93,21 @@ pub fn Signup() -> Element {
         String::new()
     };
 
+    // There is no password-reset flow, so a typo here locks the account out for
+    // good. Confirming is the cheap guard against that.
+    let confirm_error = if confirm_val.is_empty() {
+        "Please re-enter your password.".to_string()
+    } else if confirm_val != password_val {
+        "Passwords do not match.".to_string()
+    } else {
+        String::new()
+    };
+
     let is_invalid = !name_error.is_empty()
         || !username_error.is_empty()
         || !email_error.is_empty()
         || !password_error.is_empty()
+        || !confirm_error.is_empty()
         || !*username_unique.read()
         || !*email_unique.read()
         || *checking_username.read()
@@ -166,10 +180,12 @@ pub fn Signup() -> Element {
         let username = username.clone();
         let email = email.clone();
         let password = password.clone();
+        let confirm = confirm.clone();
         let mut name_touched = name_touched.clone();
         let mut username_touched = username_touched.clone();
         let mut email_touched = email_touched.clone();
         let mut password_touched = password_touched.clone();
+        let mut confirm_touched = confirm_touched.clone();
         let loading = loading.clone();
         let error = error.clone();
         let success = success.clone();
@@ -184,6 +200,7 @@ pub fn Signup() -> Element {
             username_touched.set(true);
             email_touched.set(true);
             password_touched.set(true);
+            confirm_touched.set(true);
 
             if is_invalid {
                 return;
@@ -197,6 +214,7 @@ pub fn Signup() -> Element {
             let mut username = username.clone();
             let mut email = email.clone();
             let mut password = password.clone();
+            let mut confirm = confirm.clone();
             let mut loading = loading.clone();
             let mut error = error.clone();
             let mut success = success.clone();
@@ -223,6 +241,7 @@ pub fn Signup() -> Element {
                             username.set(String::new());
                             email.set(String::new());
                             password.set(String::new());
+                            confirm.set(String::new());
                         }
                     }
                     Err(e) => {
@@ -402,6 +421,32 @@ pub fn Signup() -> Element {
                                         class: "error",
                                         style: "font-size: .69rem; font-family: monospace; margin: 0;",
                                         "{password_error}"
+                                    }
+                                }
+                            }
+
+                            // Confirm password field
+                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
+                                label {
+                                    r#for: "confirm-password",
+                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
+                                    "Confirm Password"
+                                }
+                                input {
+                                    id: "confirm-password",
+                                    class: "app-input",
+                                    style: "width: 100%; padding: .75rem 1rem;",
+                                    r#type: "password",
+                                    placeholder: "••••••••",
+                                    value: "{confirm}",
+                                    oninput: move |e| confirm.clone().set(e.value()),
+                                    onblur: move |_| confirm_touched.clone().set(true),
+                                }
+                                if *confirm_touched.read() && !confirm_error.is_empty() {
+                                    p {
+                                        class: "error",
+                                        style: "font-size: .69rem; font-family: monospace; margin: 0;",
+                                        "{confirm_error}"
                                     }
                                 }
                             }

@@ -114,6 +114,63 @@ jobs:
             --manifest-path client/Cargo.toml \
             --git-token "$GIT_TOKEN"
 
+      # release-plz can't work out where the previous release ended for this repo
+      # (publish = false → no registry package; the Cargo workspace is in client/
+      # while .git is a level up → git_only is out too), so it hands git-cliff the
+      # whole repo history and every release re-published the SAME block —
+      # identical 26 lines from v0.1.14 to v0.1.25, while frontend/build work
+      # never appeared at all. git-cliff over `<prev-tag>..<new-tag>` is correct,
+      # so we generate the notes here, once the tag exists.
+      # Best-effort: a failure here must not fail a release that already shipped.
+      - name: Rewrite release notes + changelog from the tag range
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch origin --tags --force
+          new=$(git tag --sort=-v:refname --list 'v*' | sed -n 1p)
+          prev=$(git tag --sort=-v:refname --list 'v*' | sed -n 2p)
+          # Only act when THIS run cut the tag (tag points at HEAD). Ordinary
+          # pushes to main leave the newest tag behind HEAD — nothing to do.
+          if [ -z "$new" ] || [ -z "$prev" ] || \
+             [ "$(git rev-parse "$new^{commit}")" != "$(git rev-parse HEAD)" ]; then
+            echo "No tag cut this run (new=${new:-none}); skipping."; exit 0
+          fi
+          curl -fsSL https://github.com/orhun/git-cliff/releases/download/v2.10.1/git-cliff-2.10.1-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C /tmp --strip-components=1 git-cliff-2.10.1/git-cliff
+          /tmp/git-cliff --config .github/cliff.toml --tag "$new" "$prev..$new" -o /tmp/notes.md
+          sed -i '/./,$!d' /tmp/notes.md  # drop the template's leading blank lines
+          if [ ! -s /tmp/notes.md ]; then echo "no notable commits in $prev..$new"; exit 0; fi
+          echo "--- notes for $new ($prev..$new) ---"; cat /tmp/notes.md
+          gh release edit "$new" --notes-file /tmp/notes.md
+
+          # Prepend the same section to the changelog and push it to main.
+          compare="https://github.com/${GITHUB_REPOSITORY}/compare/$prev...$new"
+          {
+            printf '## [%s](%s) - %s\n\n' "${new#v}" "$compare" "$(date -u +%F)"
+            cat /tmp/notes.md
+            printf '\n'
+          } > /tmp/section.md
+          python3 - "$new" <<'PY'
+          import sys, pathlib
+          p = pathlib.Path("client/CHANGELOG.md")
+          text = p.read_text()
+          section = pathlib.Path("/tmp/section.md").read_text()
+          marker = "## [Unreleased]\n"
+          if f"## [{sys.argv[1].lstrip('v')}]" in text:
+              print("changelog already has this version; leaving it alone")
+          elif marker in text:
+              p.write_text(text.replace(marker, marker + "\n" + section, 1))
+          else:
+              print("no [Unreleased] marker; leaving changelog alone")
+          PY
+          if ! git diff --quiet client/CHANGELOG.md; then
+            git add client/CHANGELOG.md
+            git commit -m "chore: changelog for $new [skip ci]"
+            git push origin HEAD:main
+          fi
+
       # release-plz opens a NEW timestamped branch every run and never deletes
       # the old ones. The repo's delete-branch-on-merge covers merged PRs; this
       # sweeps the rest: any release-plz-* branch older than 7 days with no

@@ -16,19 +16,11 @@ name = "crossword-server"
 git_release_enable = true
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
-changelog_update = true
-changelog_path = "CHANGELOG.md"
-# release-plz scopes a package's changelog to commits touching that package's
-# directory. crossword-server is the only crate with changelog_update, so
-# without this every release only ever saw `backend/server/**` — frontend,
-# build and infra work never appeared (v0.1.25 omitted the web cache-bust fix
-# entirely). Pull the whole workspace into the one changelog we publish.
-changelog_include = [
-  "crossword-core",
-  "crossword-web",
-  "crossword-desktop",
-  "crossword-db",
-  "crossword-auth",
-  "crossword-events",
-  "crossword-tools",
-]
+# The changelog is NOT release-plz's job here — see the "Rewrite release notes"
+# step in .github/workflows/release-plz.yml and .github/cliff.toml. release-plz
+# can't locate the previous release for this repo (publish = false so there's no
+# registry package, and the Cargo workspace sits in client/ while .git is one
+# level up, which also rules out git_only), so it fed git-cliff the entire repo
+# history and every release re-published the same block. git-cliff run over
+# `<prev-tag>..<new-tag>` gets it right, so CI does that after the tag exists.
+changelog_update = false

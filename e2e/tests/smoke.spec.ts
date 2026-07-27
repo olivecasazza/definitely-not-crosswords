@@ -34,7 +34,10 @@ test("navigate to signup and see the registration form", async ({ page }) => {
   await page.getByRole("link", { name: /create account/i }).first().click();
   await expect(page).toHaveURL(/\/auth\/signup/);
   await expect(page.locator('input[type="email"]')).toBeVisible();
-  await expect(page.locator('input[type="password"]')).toBeVisible();
+  // Address these by id: signup has TWO password inputs (password + confirm),
+  // so a bare input[type="password"] is a strict-mode violation.
+  await expect(page.locator("input#password")).toBeVisible();
+  await expect(page.locator("input#confirm-password")).toBeVisible();
   // The submit button reads "Sign Up" (the "Create Account" heading is an h1).
   await expect(page.getByRole("button", { name: /sign up/i })).toBeVisible();
 });

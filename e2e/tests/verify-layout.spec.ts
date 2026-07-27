@@ -44,12 +44,29 @@ async function expectGridNotClipped(page: Page, label: string) {
   const m = await page.evaluate(() => {
     const b = document.querySelector(".cw-board") as HTMLElement | null;
     if (!b) return null;
-    return { sw: b.scrollWidth, sh: b.scrollHeight, cw: b.clientWidth, ch: b.clientHeight };
+    const cs = getComputedStyle(b);
+    return {
+      sw: b.scrollWidth,
+      sh: b.scrollHeight,
+      cw: b.clientWidth,
+      ch: b.clientHeight,
+      cols: cs.gridTemplateColumns.split(/\s+/).length,
+      rows: cs.gridTemplateRows.split(/\s+/).length,
+    };
   });
   expect(m, `${label}: .cw-board rendered`).not.toBeNull();
+  // Tolerate sub-pixel rounding, not real clipping. `1fr` tracks on a
+  // non-square grid rarely divide evenly — e.g. 20 rows in a 605px box is
+  // 27.4px each, and the fractions accumulate to ~2px of reported overflow
+  // while nothing is actually hidden. A genuine clip loses at least a whole
+  // cell (the bug this guards was 732 vs 605 — four columns), so half a cell
+  // separates the two cleanly and stays meaningful at any board size.
+  const tolX = Math.max(2, m!.cw / m!.cols / 2);
+  const tolY = Math.max(2, m!.ch / m!.rows / 2);
   expect(
-    m!.sw <= m!.cw + 1 && m!.sh <= m!.ch + 1,
-    `${label}: grid tracks overflow the board box (content ${m!.sw}x${m!.sh} vs box ${m!.cw}x${m!.ch}) — columns/rows are being clipped`,
+    m!.sw <= m!.cw + tolX && m!.sh <= m!.ch + tolY,
+    `${label}: grid tracks overflow the board box by more than half a cell ` +
+      `(content ${m!.sw}x${m!.sh} vs box ${m!.cw}x${m!.ch}, ${m!.cols}x${m!.rows} cells) — columns/rows are being clipped`,
   ).toBe(true);
 }
 

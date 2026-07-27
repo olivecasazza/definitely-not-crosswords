@@ -15,7 +15,8 @@ use sha2::Sha256;
 type Response = axum::response::Response;
 
 pub async fn lemonsqueezy(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
-    let Ok(secret) = std::env::var("LEMONSQUEEZY_WEBHOOK_SECRET").map(|s| s.trim().to_string()) else {
+    let Ok(secret) = std::env::var("LEMONSQUEEZY_WEBHOOK_SECRET").map(|s| s.trim().to_string())
+    else {
         // Not configured — refuse rather than accept unverified events.
         return err(500, "LEMONSQUEEZY_WEBHOOK_SECRET is not set");
     };
@@ -54,7 +55,9 @@ pub async fn lemonsqueezy(State(st): State<AppState>, headers: HeaderMap, body: 
     // Unrecognized event / status → leave the subscription untouched (never grant
     // Pro by default). Ack with 200 so LS doesn't retry an event we intentionally skip.
     let Some(status) = resolve_status(event_name, attrs) else {
-        tracing::info!("lemonsqueezy webhook: ignoring unmapped event {event_name} for user {user_id}");
+        tracing::info!(
+            "lemonsqueezy webhook: ignoring unmapped event {event_name} for user {user_id}"
+        );
         return ok();
     };
     // customer_id arrives as a JSON number; store as text (matches Prisma schema).

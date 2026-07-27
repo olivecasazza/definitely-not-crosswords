@@ -67,8 +67,7 @@ fn verify_password(plain: &str, stored: Option<&str>) -> bool {
 }
 
 fn parse_config(raw: &str) -> Result<SeedConfig> {
-    let parsed: Value =
-        serde_json::from_str(raw).context("E2E_USERS_JSON must be valid JSON")?;
+    let parsed: Value = serde_json::from_str(raw).context("E2E_USERS_JSON must be valid JSON")?;
     let (arr, team_name) = match &parsed {
         Value::Array(a) => (a.clone(), None),
         Value::Object(o) => {
@@ -182,7 +181,10 @@ async fn upsert_user(pool: &sqlx::PgPool, user: &TestUser) -> Result<String> {
                 .await?;
                 println!("Reconciled e2e user {} ({}).", user.name, user.email);
             } else {
-                println!("E2E user {} ({}) already up to date.", user.name, user.email);
+                println!(
+                    "E2E user {} ({}) already up to date.",
+                    user.name, user.email
+                );
             }
             Ok(id)
         }

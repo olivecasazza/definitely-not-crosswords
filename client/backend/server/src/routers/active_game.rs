@@ -448,7 +448,10 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     }
 
     // A clear is `{ number: null }`; a focus carries number + direction.
-    let number = input.get("number").and_then(|v| v.as_i64()).map(|n| n as i32);
+    let number = input
+        .get("number")
+        .and_then(|v| v.as_i64())
+        .map(|n| n as i32);
     let direction = input
         .get("direction")
         .and_then(|v| v.as_str())
@@ -461,11 +464,13 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     };
 
     // Display name for the players strip; same fallback as the leaderboard.
-    let name_row = sqlx::query(r#"SELECT COALESCE(name, 'Anonymous Player') AS name FROM "User" WHERE id = $1"#)
-        .bind(&user.id)
-        .fetch_one(&ctx.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let name_row = sqlx::query(
+        r#"SELECT COALESCE(name, 'Anonymous Player') AS name FROM "User" WHERE id = $1"#,
+    )
+    .bind(&user.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
     let name: String = name_row.get("name");
 
     ctx.events.publish(crossword_db::AppEvent::GamePresence {

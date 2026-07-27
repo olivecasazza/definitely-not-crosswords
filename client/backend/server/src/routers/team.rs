@@ -267,12 +267,14 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // observe count < maxSize and all insert past capacity (TOCTOU).
     let mut tx = ctx.pool.begin().await.map_err(|e| e.to_string())?;
 
-    let row = sqlx::query(r#"SELECT visibility::text AS visibility, "maxSize" FROM "Team" WHERE id = $1 FOR UPDATE"#)
-        .bind(team_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Team not found.".to_string())?;
+    let row = sqlx::query(
+        r#"SELECT visibility::text AS visibility, "maxSize" FROM "Team" WHERE id = $1 FOR UPDATE"#,
+    )
+    .bind(team_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "Team not found.".to_string())?;
 
     let visibility: String = row.get("visibility");
     let max_size: i32 = row.get("maxSize");
@@ -340,7 +342,9 @@ async fn leave(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .await
             .map_err(|e| e.to_string())?;
     if owner_id.as_deref() == Some(user.id.as_str()) {
-        return Err("The team owner can't leave. Transfer ownership or delete the team first.".into());
+        return Err(
+            "The team owner can't leave. Transfer ownership or delete the team first.".into(),
+        );
     }
 
     sqlx::query(r#"DELETE FROM "TeamMember" WHERE "teamId" = $1 AND "userId" = $2"#)
@@ -522,12 +526,13 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     // Lock the team row, then recount under the lock so concurrent accepts/joins
     // can't push membership past maxSize (TOCTOU).
-    let max_size: i32 = sqlx::query_scalar(r#"SELECT "maxSize" FROM "Team" WHERE id = $1 FOR UPDATE"#)
-        .bind(&team_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Team not found.".to_string())?;
+    let max_size: i32 =
+        sqlx::query_scalar(r#"SELECT "maxSize" FROM "Team" WHERE id = $1 FOR UPDATE"#)
+            .bind(&team_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Team not found.".to_string())?;
 
     let member_count: i64 =
         sqlx::query_scalar(r#"SELECT COUNT(*) FROM "TeamMember" WHERE "teamId" = $1"#)

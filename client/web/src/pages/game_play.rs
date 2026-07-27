@@ -251,7 +251,8 @@ pub fn GamePlay(id: String) -> Element {
     let mut input_refs = use_signal(Vec::<Option<Rc<MountedData>>>::new);
 
     // keep subscription handles alive for the component lifetime.
-    let _subs = use_signal(|| Option::<(net::Subscription, net::Subscription, net::Subscription)>::None);
+    let _subs =
+        use_signal(|| Option::<(net::Subscription, net::Subscription, net::Subscription)>::None);
 
     let id_for_load = id.clone();
 

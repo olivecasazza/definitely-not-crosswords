@@ -348,7 +348,14 @@ pub async fn run_generation(
         Ok(gen) => {
             let title = title.unwrap_or_else(|| gen.title.clone());
             match finalize_success(
-                &pool, &job_id, &title, &gen, &raw_params, &log, started_at, &user.id,
+                &pool,
+                &job_id,
+                &title,
+                &gen,
+                &raw_params,
+                &log,
+                started_at,
+                &user.id,
             )
             .await
             {

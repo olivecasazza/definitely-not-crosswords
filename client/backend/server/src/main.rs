@@ -133,25 +133,39 @@ async fn main() -> anyhow::Result<()> {
     // SPA fallback: unknown paths return index.html for client-side routing.
     let app = match std::env::var("WEB_DIST") {
         Ok(dir) if !dir.is_empty() => {
-            let index = format!("{dir}/index.html");
-            let serve = tower_http::services::ServeDir::new(&dir)
-                .fallback(tower_http::services::ServeFile::new(index));
-            // `must-revalidate` on the whole bundle. index.html carries a
-            // content hash on the glue (`crossword-web.js?v=…`), but the
-            // wasm-bindgen `snippets/*` the glue imports are hardcoded relative
-            // paths with no query — nothing busts them. A CDN that cached them
-            // from an older release then pairs OLD snippets with the NEW glue
-            // and the app dies on import with "does not provide an export named
-            // …", serving a blank page. That took prod down on the v0.1.0 →
-            // v0.1.26 promotion (Cloudflare had 60-day-old snippets).
-            let serve = tower::ServiceBuilder::new()
+            // Assets live under /_assets/<content-hash>/ (see client/flake.nix),
+            // so bytes at a given URL never change — cache them forever.
+            let assets = tower::ServiceBuilder::new()
                 .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
                     axum::http::header::CACHE_CONTROL,
-                    axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+                    axum::http::HeaderValue::from_static("public, max-age=31536000, immutable"),
                 ))
-                .service(serve);
+                .service(tower_http::services::ServeDir::new(format!(
+                    "{dir}/_assets"
+                )));
+
+            // index.html is the POINTER to the current bundle and must never be
+            // reused. `no-cache` is NOT enough here: every file in a nix store
+            // path has mtime 1970-01-01T00:00:01 and ServeDir sends
+            // Last-Modified with no ETag, so every release advertises an
+            // identical validator — a revalidation of changed content answers
+            // 304 and refreshes the stale entry's TTL indefinitely. `no-store`
+            // means it is never stored, so it is never conditionally
+            // revalidated. (A bogus 304 under /_assets is harmless by contrast:
+            // that content genuinely never changes.)
+            let index_html = std::fs::read_to_string(format!("{dir}/index.html"))
+                .expect("WEB_DIST is set but index.html is missing");
             tracing::info!("serving frontend bundle from {dir}");
-            app.fallback_service(serve)
+            // SPA fallback: unknown paths return index.html for client-side routing.
+            app.nest_service("/_assets", assets).fallback(move || {
+                let body = index_html.clone();
+                async move {
+                    (
+                        [(axum::http::header::CACHE_CONTROL, "no-store")],
+                        axum::response::Html(body),
+                    )
+                }
+            })
         }
         _ => app,
     };
@@ -309,7 +323,9 @@ async fn session(State(st): State<AppState>, headers: HeaderMap) -> Json<Value> 
     .await
     .ok()
     .flatten();
-    let name: Option<String> = row.as_ref().and_then(|r| r.get::<Option<String>, _>("name"));
+    let name: Option<String> = row
+        .as_ref()
+        .and_then(|r| r.get::<Option<String>, _>("name"));
     let email_verified: bool = row
         .as_ref()
         .map(|r| r.get::<bool, _>("email_verified"))

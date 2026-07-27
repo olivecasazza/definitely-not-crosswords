@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.29...v0.1.30) - 2026-07-27
+
+### Fixed
+
+- *(ci)* don't fail the build when auto-merge can't be enabled
+- *(web)* content-address the wasm bundle so assets can't go stale
+
+### Other
+
+- changelog for v0.1.29 [skip ci]
+- *(buildbot)* expose .#checks + add buildbot-nix per-repo config (#45)
+
+
 ## [0.1.29](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.28...v0.1.29) - 2026-07-26
 
 ### Fixed

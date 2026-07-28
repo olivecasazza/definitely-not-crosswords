@@ -1,5 +1,6 @@
 //! Per-request context handed to every router handler.
 
+use crate::mailer::Mailer;
 use crossword_auth::AuthContext;
 use crossword_db::AuthUser;
 use crossword_events::EventBus;
@@ -10,6 +11,8 @@ pub struct Ctx {
     pub auth: AuthContext,
     /// Publish AppEvents for live subscriptions (onAddActions/onGameCompleted).
     pub events: EventBus,
+    /// Outbound email (verification / password reset links).
+    pub mailer: Mailer,
 }
 
 impl Ctx {

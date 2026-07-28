@@ -184,12 +184,6 @@ pub fn Login() -> Element {
         }
     };
 
-    let handle_keycloak = move |_| {
-        if let Some(win) = web_sys::window() {
-            let _ = win.location().set_href("/api/auth/signin/keycloak");
-        }
-    };
-
     // Dev bypass: signs in via the backend's `local-dev` credentials provider
     // (email-only admin, registered only in non-production). No-op in prod.
     let handle_dev_bypass = {
@@ -351,33 +345,37 @@ pub fn Login() -> Element {
                             disabled: *loading.read() || is_invalid,
                             if *loading.read() { "Signing in..." } else { "Sign In" }
                         }
-                    }
 
-                    // Divider
-                    div {
-                        style: "display: flex; align-items: center; gap: .75rem; margin: 1.25rem 0;",
-                        div { style: "flex: 1; height: 1px; background: var(--border-app);" }
-                        span {
+                        Link {
+                            to: crate::Route::ResetPassword {},
                             class: "muted",
-                            style: "font-size: .75rem; font-family: monospace;",
-                            "or"
+                            style: "font-size: .75rem; font-family: monospace; text-align: center; text-decoration: underline;",
+                            "Forgot your password?"
                         }
-                        div { style: "flex: 1; height: 1px; background: var(--border-app);" }
-                    }
-
-                    // Keycloak SSO
-                    button {
-                        r#type: "button",
-                        class: "app-btn",
-                        style: "width: 100%; padding: .75rem 1rem; font-weight: 600; font-size: .875rem; text-transform: uppercase; letter-spacing: .05em;",
-                        onclick: handle_keycloak.clone(),
-                        "Continue with SSO"
                     }
 
                     // Local-only dev bypass: the backend unregisters the local-dev
                     // route outside local, and this button is hidden via the
                     // devLoginBypass feature flag from /api/config.
+                    //
+                    // There is no SSO button here: the Rust backend never ported
+                    // next-auth's OAuth sign-in flow, so "Continue with SSO" only
+                    // ever navigated to /api/auth/signin/keycloak — an unrouted
+                    // path the SPA answered with its 404 page. Credentials login
+                    // is the only real path. Re-add SSO alongside a genuine
+                    // authorize/callback route + JWKS verification, not before.
                     if state.feature(|f| f.dev_login_bypass) {
+                        // Divider
+                        div {
+                            style: "display: flex; align-items: center; gap: .75rem; margin: 1.25rem 0;",
+                            div { style: "flex: 1; height: 1px; background: var(--border-app);" }
+                            span {
+                                class: "muted",
+                                style: "font-size: .75rem; font-family: monospace;",
+                                "or"
+                            }
+                            div { style: "flex: 1; height: 1px; background: var(--border-app);" }
+                        }
                         button {
                             r#type: "button",
                             class: "app-btn",

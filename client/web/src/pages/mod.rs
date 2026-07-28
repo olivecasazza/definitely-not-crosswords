@@ -12,6 +12,7 @@ pub mod games;
 pub mod home;
 pub mod login;
 pub mod profile;
+pub mod reset_password;
 pub mod signup;
 pub mod stats;
 pub mod verify_email;

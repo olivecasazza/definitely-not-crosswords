@@ -20,6 +20,8 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
         "user.isUsernameUnique" => Some(is_username_unique(input, ctx).await),
         "user.isEmailUnique" => Some(is_email_unique(input, ctx).await),
         "user.verifyEmail" => Some(verify_email(input, ctx).await),
+        "user.requestPasswordReset" => Some(request_password_reset(input, ctx).await),
+        "user.resetPassword" => Some(reset_password(input, ctx).await),
         "user.getProfile" => Some(get_profile(input, ctx).await),
         "user.updateProfile" => Some(update_profile(input, ctx).await),
         "user.deleteAccount" => Some(delete_account(input, ctx).await),
@@ -129,10 +131,121 @@ async fn signup(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // NOTE: do NOT return `token_str` here. The verification token must only ever
     // reach the address being verified (via email), otherwise possession of the
     // email is never proven and anyone can self-verify an address they don't own.
+    //
+    // Sent inline (~1 API call of latency); errors are logged inside the mailer
+    // and never fail the signup — login is not gated on verification.
+    ctx.mailer.send_verification(&email, &token_str).await;
+
     Ok(json!({
         "success": true,
         "userId": id,
     }))
+}
+
+/// user.requestPasswordReset({ email }) — public. Always returns success so the
+/// response never reveals whether an account exists (no enumeration). When the
+/// account does exist: replace any previous reset token and email a fresh 1h link.
+async fn request_password_reset(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let email = input["email"]
+        .as_str()
+        .ok_or("missing email")?
+        .trim()
+        .to_lowercase();
+
+    let exists: bool =
+        sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM "User" WHERE email = $1)"#)
+            .bind(&email)
+            .fetch_one(&ctx.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    if exists {
+        // One live reset link per account: a re-request invalidates the old one.
+        sqlx::query(
+            r#"DELETE FROM "VerificationToken" WHERE identifier = $1 AND token LIKE 'reset_%'"#,
+        )
+        .bind(&email)
+        .execute(&ctx.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // `reset_` prefix namespaces these away from signup's `token_` rows, so
+        // a (24h) verification token can never be replayed as a password reset.
+        let token_str = format!(
+            "reset_{}",
+            uuid::Uuid::new_v4().to_string().replace('-', "")
+        );
+        sqlx::query(
+            r#"INSERT INTO "VerificationToken" (identifier, token, expires)
+               VALUES ($1, $2, now() + interval '1 hour')"#,
+        )
+        .bind(&email)
+        .bind(&token_str)
+        .execute(&ctx.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        ctx.mailer.send_password_reset(&email, &token_str).await;
+    }
+    // ponytail: no rate limit — the mailer's provider quota is the backstop;
+    // add a per-email cooldown here if abuse ever shows up in the logs.
+
+    Ok(json!({ "success": true }))
+}
+
+/// user.resetPassword({ token, password }) — public. Consumes a `reset_` token,
+/// sets the new password, and marks the email verified (possession proven).
+async fn reset_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let token = input["token"].as_str().ok_or("missing token")?;
+    let password = input["password"].as_str().ok_or("missing password")?;
+    if password.len() < 8 {
+        return Err("Password must be at least 8 characters.".to_string());
+    }
+    if !token.starts_with("reset_") {
+        return Err("Invalid or expired reset link.".to_string());
+    }
+
+    let row = sqlx::query(
+        r#"SELECT identifier, (expires < now()) AS expired
+           FROM "VerificationToken" WHERE token = $1"#,
+    )
+    .bind(token)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some(row) = row else {
+        return Err("Invalid or expired reset link.".to_string());
+    };
+    let email: String = row.get("identifier");
+    if row.get::<bool, _>("expired") {
+        sqlx::query(r#"DELETE FROM "VerificationToken" WHERE token = $1"#)
+            .bind(token)
+            .execute(&ctx.pool)
+            .await
+            .ok();
+        return Err("Invalid or expired reset link.".to_string());
+    }
+
+    let hashed = hash_password(password.to_string()).await?;
+    sqlx::query(
+        r#"UPDATE "User"
+           SET password = $1, "emailVerified" = COALESCE("emailVerified", now())
+           WHERE email = $2"#,
+    )
+    .bind(&hashed)
+    .bind(&email)
+    .execute(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    sqlx::query(r#"DELETE FROM "VerificationToken" WHERE token = $1"#)
+        .bind(token)
+        .execute(&ctx.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(json!({ "success": true }))
 }
 
 async fn is_username_unique(input: &Value, ctx: &Ctx) -> Result<Value, String> {

@@ -43,6 +43,8 @@ pub enum Route {
     Signup {},
     #[route("/auth/verify-email")]
     VerifyEmail {},
+    #[route("/auth/reset-password")]
+    ResetPassword {},
     #[route("/admin")]
     AdminIndex {},
     #[route("/admin/generator")]
@@ -67,6 +69,7 @@ pub use pages::games::Games;
 pub use pages::home::Home;
 pub use pages::login::Login;
 pub use pages::profile::Profile;
+pub use pages::reset_password::ResetPassword;
 pub use pages::signup::Signup;
 pub use pages::stats::Stats;
 pub use pages::verify_email::VerifyEmail;

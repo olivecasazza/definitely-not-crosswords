@@ -184,6 +184,21 @@ spec:
                   name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
                   key: DATABASE_URL
                   {{- end }}
+            {{- if .Values.mail.existingSecret }}
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mail.existingSecret }}
+                  key: RESEND_API_KEY
+            {{- end }}
+            {{- if .Values.mail.from }}
+            - name: MAIL_FROM
+              value: {{ .Values.mail.from | quote }}
+            {{- end }}
+            {{- if .Values.mail.origin }}
+            - name: APP_ORIGIN
+              value: {{ .Values.mail.origin | quote }}
+            {{- end }}
             {{- if .Values.billing.proDiscountCode }}
             # Auto-applied to Pro checkouts (staging sets this so Pro is $1).
             - name: PRO_CHECKOUT_DISCOUNT_CODE

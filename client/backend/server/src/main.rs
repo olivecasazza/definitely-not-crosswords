@@ -12,6 +12,7 @@
 mod auth_routes;
 mod checkout;
 mod ctx;
+mod mailer;
 mod routers;
 mod webhook;
 
@@ -40,6 +41,7 @@ struct AppState {
     pool: PgPool,
     auth: AuthService,
     events: EventBus,
+    mailer: mailer::Mailer,
     /// Deploy environment: "local" | "staging" | "production" (from APP_ENV).
     /// The wasm bundle is shared across envs, so the frontend learns the env at
     /// runtime from `/api/config` rather than a build-time constant.
@@ -125,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         auth,
         events,
+        mailer: mailer::Mailer::from_env(&env),
         env,
     });
 
@@ -353,6 +356,7 @@ async fn trpc_get(
         pool: st.pool.clone(),
         auth: st.auth.authenticate(&req_auth(&headers)),
         events: st.events.clone(),
+        mailer: st.mailer.clone(),
     };
     envelope(routers::dispatch(&proc, &input, &ctx).await)
 }
@@ -368,6 +372,7 @@ async fn trpc_post(
         pool: st.pool.clone(),
         auth: st.auth.authenticate(&req_auth(&headers)),
         events: st.events.clone(),
+        mailer: st.mailer.clone(),
     };
     envelope(routers::dispatch(&proc, &input, &ctx).await)
 }

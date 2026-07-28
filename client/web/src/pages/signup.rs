@@ -93,8 +93,8 @@ pub fn Signup() -> Element {
         String::new()
     };
 
-    // There is no password-reset flow, so a typo here locks the account out for
-    // good. Confirming is the cheap guard against that.
+    // A typo here means a trip through the email reset flow — confirming is
+    // the cheap guard against that.
     let confirm_error = if confirm_val.is_empty() {
         "Please re-enter your password.".to_string()
     } else if confirm_val != password_val {
@@ -294,7 +294,15 @@ pub fn Signup() -> Element {
                         div {
                             class: "success",
                             style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid rgba(168,230,207,0.2); border-radius: .5rem; background: rgba(168,230,207,0.06); display: flex; flex-direction: column; gap: .5rem;",
-                            p { style: "margin: 0;", "Registration successful! Please check your email for a verification link." }
+                            // Login isn't gated on verification, so make both
+                            // halves clear: link sent, but sign-in works already.
+                            p { style: "margin: 0;", "Account created! We've sent a verification link to your email — you can sign in right away." }
+                            Link {
+                                to: crate::Route::Login {},
+                                class: "app-btn app-btn-active",
+                                style: "text-align: center; margin-top: .25rem;",
+                                "Sign In"
+                            }
                         }
                     }
 

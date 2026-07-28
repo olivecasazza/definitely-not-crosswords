@@ -73,6 +73,15 @@ auth:
   origin: "https://definitely-not-crosswords.local"
   nextAuthSecret: "supersecretsecret"
 
+# Outbound email (verification + password-reset links). Off by default: with no
+# API key the server logs mail bodies instead of sending. `existingSecret` must
+# hold key RESEND_API_KEY. Link origin is derived from APP_ENV in the server;
+# set `origin` only to override it.
+mail:
+  existingSecret: ""
+  from: ""    # e.g. 'Definitely Not Crosswords <noreply@casazza.io>'
+  origin: ""  # e.g. https://crosswords-staging.casazza.io
+
 # Billing (Lemon Squeezy Pro checkout).
 billing:
   lemonSqueezy:

@@ -299,6 +299,9 @@ async fn config(State(st): State<AppState>) -> Json<Value> {
     let env = st.env.as_str();
     Json(json!({
         "environment": env,
+        // Workspace version (bumped by release-plz). The e2e canary polls this
+        // after a release to know when Flux has actually rolled the new image.
+        "version": env!("CARGO_PKG_VERSION"),
         "features": {
             // The dev-admin login button only works where the backend registers
             // the local-dev route — local docker-compose.

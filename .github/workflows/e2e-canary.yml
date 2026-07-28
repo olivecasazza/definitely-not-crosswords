@@ -37,7 +37,35 @@ jobs:
       E2E_EMAIL_2: ${{ secrets.E2E_EMAIL_2 }}
       E2E_PASSWORD_2: ${{ secrets.E2E_PASSWORD_2 }}
     steps:
+      # Always test with main's specs. A `release` event checks out the TAG by
+      # default, which replays weeks-old specs against today's staging — that's
+      # what turned every release-triggered run red (the canary fixes only
+      # existed on main). The specs describe the deployed site, not the tag.
       - uses: actions/checkout@v4
+        with:
+          ref: main
+      # A release event fires when the GitHub release is cut — but staging only
+      # updates minutes later (buildbot builds + pushes to GAR, then Flux's
+      # ImagePolicy rolls it out). Gate on /api/config's version so the demo is
+      # recorded against the release it claims to show. This is why the check
+      # lives here and not in buildbot: buildbot's pipeline ends at the GAR
+      # push; only the deployed app knows when Flux has actually applied it.
+      - name: Wait for staging to serve the released version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # ##*v (longest match) survives both tag shapes: "v0.1.31" and
+          # "crossword-server-v0.1.31" -> 0.1.31 ("#*v" would stop at the v in
+          # "server" and leave "er-v0.1.31").
+          want="${TAG##*v}"
+          for i in $(seq 1 60); do
+            got=$(curl -sf "$E2E_BASE_URL/api/config" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+            [ "$got" = "$want" ] && { echo "staging is on $got"; exit 0; }
+            echo "staging on ${got:-unknown}, want $want — retry $i/60"
+            sleep 20
+          done
+          echo "::error::staging never reached $want after 20m"; exit 1
       - name: Install deps
         working-directory: e2e
         run: npm ci

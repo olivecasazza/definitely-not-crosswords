@@ -13,6 +13,10 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
 /// gameList.get({ email }) — returns published unstarted Games, the caller's
 /// ActiveGames, and their CompletedGames, each tagged with a `type` discriminator
 /// matching the Prisma model name (Game / ActiveGame / CompletedGame).
+///
+/// Every row also carries lobby metadata the list UI shows: clue count, player
+/// count, and a timestamp (created / last-played / completed). All of it is
+/// aggregated inside the three existing queries — no per-row follow-up query.
 async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // Scope to the authenticated caller — ignore any client-supplied email to
     // prevent enumerating another user's game activity (IDOR).
@@ -20,14 +24,20 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     // Active games the user is a member of, joined with their parent Game's title.
     // DISTINCT guards against multiple GameMember rows per (user, game).
+    // `updatedAt` is the last-played stamp; player/clue counts come from
+    // correlated aggregates so the row count stays 1-per-game.
     let active_rows = sqlx::query(
         r#"
-        SELECT DISTINCT ag.id, ag."gameId" AS game_id, g.title AS game_title
+        SELECT DISTINCT ag.id, ag."gameId" AS game_id, g.title AS game_title,
+               to_char(ag."updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at,
+               (SELECT COUNT(*) FROM "Question" q WHERE q."gameId" = g.id) AS clues,
+               (SELECT COUNT(*) FROM "GameMember" m WHERE m."activeGameId" = ag.id) AS players
         FROM "ActiveGame" ag
         JOIN "Game" g ON g.id = ag."gameId"
         JOIN "GameMember" gm ON gm."activeGameId" = ag.id
         JOIN "User" u ON u.id = gm."userId"
         WHERE u.email = $1
+        ORDER BY at DESC
         "#,
     )
     .bind(email)
@@ -35,15 +45,25 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .await
     .map_err(|e| e.to_string())?;
 
-    // Completed games the user is a member of.
+    // Completed games the user is a member of, plus the caller's own score.
     let completed_rows = sqlx::query(
         r#"
-        SELECT DISTINCT cg.id, cg."gameId" AS game_id, g.title AS game_title
+        SELECT DISTINCT cg.id, cg."gameId" AS game_id, g.title AS game_title,
+               to_char(cg."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at,
+               (SELECT COUNT(*) FROM "Question" q WHERE q."gameId" = g.id) AS clues,
+               (SELECT COUNT(*) FROM "GameMember" m WHERE m."completedGameId" = cg.id) AS players,
+               -- MemberScore has no unique on "memberId", so scope to this
+               -- CompletedGame's stats row and LIMIT 1: a bare scalar subquery
+               -- would error out ("more than one row") and fail the whole lobby.
+               (SELECT ms.score FROM "MemberScore" ms
+                 WHERE ms."memberId" = gm.id AND ms."gameStatsId" = cg."gameStatsId"
+                 LIMIT 1) AS score
         FROM "CompletedGame" cg
         JOIN "Game" g ON g.id = cg."gameId"
         JOIN "GameMember" gm ON gm."completedGameId" = cg.id
         JOIN "User" u ON u.id = gm."userId"
         WHERE u.email = $1
+        ORDER BY at DESC
         "#,
     )
     .bind(email)
@@ -64,10 +84,13 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // (id != ALL(empty array) is TRUE for every row, which is the correct "exclude nothing" behaviour).
     let game_rows = sqlx::query(
         r#"
-        SELECT id, title
-        FROM "Game"
-        WHERE published = true
-          AND id != ALL($1::text[])
+        SELECT g.id, g.title, g.source::text AS source,
+               to_char(g."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at,
+               (SELECT COUNT(*) FROM "Question" q WHERE q."gameId" = g.id) AS clues
+        FROM "Game" g
+        WHERE g.published = true
+          AND g.id != ALL($1::text[])
+        ORDER BY g."createdAt" DESC
         "#,
     )
     .bind(exclude_ids.as_slice())
@@ -84,6 +107,9 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
             "type": "Game",
             "id": r.get::<String, _>("id"),
             "title": r.get::<String, _>("title"),
+            "source": r.get::<String, _>("source"),
+            "at": r.get::<Option<String>, _>("at"),
+            "clues": r.get::<i64, _>("clues"),
         }));
     }
     for r in &completed_rows {
@@ -91,6 +117,10 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
             "type": "CompletedGame",
             "id": r.get::<String, _>("id"),
             "game": { "title": r.get::<String, _>("game_title") },
+            "at": r.get::<Option<String>, _>("at"),
+            "clues": r.get::<i64, _>("clues"),
+            "players": r.get::<i64, _>("players"),
+            "score": r.get::<Option<i32>, _>("score"),
         }));
     }
     for r in &active_rows {
@@ -98,6 +128,9 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
             "type": "ActiveGame",
             "id": r.get::<String, _>("id"),
             "game": { "title": r.get::<String, _>("game_title") },
+            "at": r.get::<Option<String>, _>("at"),
+            "clues": r.get::<i64, _>("clues"),
+            "players": r.get::<i64, _>("players"),
         }));
     }
 

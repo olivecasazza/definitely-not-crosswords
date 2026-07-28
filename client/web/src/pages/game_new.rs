@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
 
+use crate::components::game_list::status;
 use crate::net;
 use crate::Route;
 
@@ -66,12 +67,11 @@ pub fn GameNew(id: String) -> Element {
     let ws = use_workspace("game_new_layout", default_layout);
     crate::store::sync_panel_mode(ws.mode);
 
+    let mut details_res = details_res;
     let body = move |kind: Panel, _max: bool| -> Element {
         let details_snapshot = details_res.read_unchecked();
         match (&*details_snapshot, kind) {
-            (None, _) => rsx! {
-                div { class: "muted", style: "padding: 2rem; font-family: monospace; font-size: .75rem;", "Loading..." }
-            },
+            (None, _) => status("muted", "Loading…", true),
             (Some(Err(e)), Panel::Puzzle) => rsx! {
                 div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;",
                     h1 {
@@ -80,12 +80,13 @@ pub fn GameNew(id: String) -> Element {
                     }
                     p { class: "muted", style: "font-size: .875rem;", "This puzzle could not be found or is not available to start." }
                     p { class: "error", style: "font-size: .75rem; font-family: monospace;", "{e}" }
-                    Link { to: Route::Games {}, class: "app-btn", style: "width: max-content;", "Back to Games" }
+                    div { class: "row",
+                        button { class: "app-btn", onclick: move |_| details_res.restart(), "Retry" }
+                        Link { to: Route::Games {}, class: "app-btn", "Back to Games" }
+                    }
                 }
             },
-            (Some(Err(_)), Panel::Start) => rsx! {
-                div { class: "muted", style: "padding: 2rem; font-size: .875rem;", "Unavailable" }
-            },
+            (Some(Err(_)), Panel::Start) => status("muted", "Unavailable", false),
             (Some(Ok(details)), Panel::Puzzle) => {
                 let status_label = if details.active_game_id.is_some() {
                     "Active"
@@ -109,39 +110,19 @@ pub fn GameNew(id: String) -> Element {
                                     "{details.title}"
                                 }
                             }
-                            span {
-                                style: "padding: .375rem .75rem; border-radius: .375rem; border: 1px solid var(--border-app); background: var(--bg-cell-empty); font-size: .75rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); white-space: nowrap;",
-                                "{details.source.to_lowercase()}"
-                            }
+                            span { class: "gn-chip", "{details.source.to_lowercase()}" }
                         }
-                        // Stats grid
-                        div { style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem;",
-                            div {
-                                style: "border: 1px solid var(--border-app); background: var(--bg-cell-empty); border-radius: .5rem; padding: 1rem;",
-                                p {
-                                    class: "muted",
-                                    style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 .25rem 0;",
-                                    "Clues"
+                        // Stats grid — one tile shape, three values.
+                        div { class: "gn-stats",
+                            for (label, value) in [
+                                ("Clues", details.question_count.to_string()),
+                                ("Grid", format!("{0} x {0}", details.grid_size)),
+                                ("Status", status_label.to_string()),
+                            ] {
+                                div { key: "{label}", class: "gn-tile",
+                                    p { class: "gn-tile-label muted", "{label}" }
+                                    p { class: "gn-tile-value", "{value}" }
                                 }
-                                p { style: "font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 0;", "{details.question_count}" }
-                            }
-                            div {
-                                style: "border: 1px solid var(--border-app); background: var(--bg-cell-empty); border-radius: .5rem; padding: 1rem;",
-                                p {
-                                    class: "muted",
-                                    style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 .25rem 0;",
-                                    "Grid"
-                                }
-                                p { style: "font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 0;", "{details.grid_size} x {details.grid_size}" }
-                            }
-                            div {
-                                style: "border: 1px solid var(--border-app); background: var(--bg-cell-empty); border-radius: .5rem; padding: 1rem;",
-                                p {
-                                    class: "muted",
-                                    style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 .25rem 0;",
-                                    "Status"
-                                }
-                                p { style: "font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 0;", "{status_label}" }
                             }
                         }
                     }
@@ -224,6 +205,7 @@ pub fn GameNew(id: String) -> Element {
     };
 
     rsx! {
+        style { {NEW_CSS} }
         div {
             class: ws.root_class(),
             tabindex: "0",
@@ -234,3 +216,16 @@ pub fn GameNew(id: String) -> Element {
         }
     }
 }
+
+const NEW_CSS: &str = "
+.gn-chip { padding: .375rem .75rem; border: 1px solid var(--border-app); background: var(--bg-cell-empty);
+  font-size: var(--fs-xs); font-family: var(--mono, monospace); text-transform: uppercase;
+  letter-spacing: .05em; color: var(--text-secondary); white-space: nowrap; }
+.gn-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
+.gn-tile { border: 1px solid var(--border-app); background: var(--bg-cell-empty); padding: 1rem; }
+.gn-tile-label { font-size: var(--fs-2xs); font-family: var(--mono, monospace); text-transform: uppercase;
+  letter-spacing: .05em; margin: 0 0 .25rem 0; }
+.gn-tile-value { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 0; }
+/* Tiles stack rather than squeeze on a phone. */
+@media (max-width: 760px) { .gn-stats { grid-template-columns: 1fr 1fr; } }
+";

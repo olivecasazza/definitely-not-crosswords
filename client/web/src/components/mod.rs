@@ -3,6 +3,7 @@
 pub mod admin_nav;
 pub mod brand;
 pub mod footer;
+pub mod game_list;
 pub mod generation_progress;
 pub mod header;
 pub mod identicon;

@@ -144,6 +144,9 @@ a { color: inherit; text-decoration: none; }
 .row { display: flex; gap: .75rem; align-items: center; }
 .col { display: flex; flex-direction: column; gap: .75rem; }
 .muted { color: var(--text-secondary); }
+/* Centred loading / empty / error message, used by every list and detail panel. */
+.game-status { padding: 2.5rem 1.5rem; text-align: center; font-size: var(--fs-xs);
+  font-family: var(--mono, monospace); line-height: 1.6; }
 .error { color: var(--color-error); }
 .success { color: var(--color-success); }
 "#;

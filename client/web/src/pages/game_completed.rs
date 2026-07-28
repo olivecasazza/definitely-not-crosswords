@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::rc::Rc;
 
+use crate::components::game_list::status;
 use crate::components::identicon::Identicon;
 use crate::net;
 use crate::store::use_app_state;
@@ -61,11 +62,15 @@ fn format_date(s: &str) -> String {
     s.split('T').next().unwrap_or(s).to_string()
 }
 
+/// Podium colours come from the palette tokens in `styles.rs` so they flip with
+/// the theme instead of hardcoding hex per rank.
 fn rank_badge_style(index: usize) -> &'static str {
     match index {
-        0 => "background: var(--pastel-yellow); color: #0f172a; border-color: var(--pastel-yellow);",
-        1 => "background: #cbd5e1; color: #0f172a; border-color: #cbd5e1;",
-        2 => "background: #d97706; color: #f8fafc; border-color: #d97706;",
+        0 => "background: var(--pastel-yellow); color: var(--contrast-ink); border-color: var(--pastel-yellow);",
+        1 => "background: var(--podium-silver); color: var(--contrast-ink); border-color: var(--podium-silver);",
+        // Bronze keeps a fixed near-white ink — a theme-flipping colour would go
+        // dark-on-dark-orange in light mode.
+        2 => "background: var(--podium-bronze); color: #f8fafc; border-color: var(--podium-bronze);",
         _ => "background: var(--bg-cell-empty); color: var(--text-secondary); border-color: var(--border-app);",
     }
 }
@@ -106,7 +111,7 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
 pub fn GameCompleted(id: String) -> Element {
     let state = use_app_state();
 
-    let data_res = {
+    let mut data_res = {
         let id = id.clone();
         use_resource(move || {
             let id = id.clone();
@@ -136,16 +141,17 @@ pub fn GameCompleted(id: String) -> Element {
         match kind {
             Panel::Rankings => {
                 match data_snap.as_ref() {
-                    None => rsx! {
-                        div { class: "muted", style: "padding: 2rem; text-align: center; font-family: monospace; font-size: .75rem;", "Analyzing results..." }
-                    },
+                    None => status("muted", "Analyzing results…", true),
                     Some(Err(e)) => rsx! {
                         div { style: "display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem;",
                             div { class: "app-card", style: "max-width: 28rem; width: 100%; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; font-family: monospace;",
                                 span { class: "error", style: "font-size: .875rem; font-weight: 700; text-transform: uppercase;", "Error Loading Match Details" }
                                 p { class: "muted", style: "font-size: .75rem;", "The requested game could not be found." }
                                 p { class: "error", style: "font-size: .75rem;", "{e}" }
-                                Link { to: Route::Games {}, class: "app-btn", style: "text-align: center; margin-top: .5rem;", "Back to Lobby" }
+                                div { class: "row",
+                                    button { class: "app-btn", onclick: move |_| data_res.restart(), "Retry" }
+                                    Link { to: Route::Games {}, class: "app-btn", "Back to Lobby" }
+                                }
                             }
                         }
                     },
@@ -245,7 +251,7 @@ pub fn GameCompleted(id: String) -> Element {
                                                                 style: "font-size: .875rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: .375rem;",
                                                                 "{display_name}"
                                                                 if is_me {
-                                                                    span { style: "font-size: .5rem; font-weight: 700; letter-spacing: .1em; color: var(--pastel-yellow); border: 1px solid rgba(254,234,153,0.4); padding: 0 .25rem; border-radius: .125rem; text-transform: uppercase;", "YOU" }
+                                                                    span { style: "font-size: .5rem; font-weight: 700; letter-spacing: .1em; color: var(--pastel-yellow); border: 1px solid rgba(254,234,153,0.4); padding: 0 .25rem; text-transform: uppercase;", "YOU" }
                                                                 }
                                                                 if score_record.member.is_owner {
                                                                     span { style: "font-size: .5rem; color: var(--text-secondary); opacity: .6;", "👑" }
@@ -287,12 +293,8 @@ pub fn GameCompleted(id: String) -> Element {
 
             Panel::Summary => {
                 match data_snap.as_ref() {
-                    None => rsx! {
-                        div { class: "muted", style: "padding: 2rem; text-align: center; font-family: monospace; font-size: .75rem;", "Analyzing results..." }
-                    },
-                    Some(Err(_)) | Some(Ok(None)) => rsx! {
-                        div { class: "muted", style: "padding: 2rem; text-align: center; font-family: monospace; font-size: .75rem;", "—" }
-                    },
+                    None => status("muted", "Analyzing results…", true),
+                    Some(Err(_)) | Some(Ok(None)) => status("muted", "—", false),
                     Some(Ok(Some(data))) => {
                         let total_questions =
                             data.game.questions.as_ref().map(|q| q.len()).unwrap_or(0);
@@ -322,7 +324,7 @@ pub fn GameCompleted(id: String) -> Element {
                                     div { style: "display: flex; flex-direction: column; gap: 1rem;",
                                         div { style: "display: flex; justify-content: space-between; align-items: center; font-size: .75rem;",
                                             span { class: "muted", style: "text-transform: uppercase;", "Source Mode" }
-                                            span { style: "font-weight: 700; text-transform: uppercase; background: var(--bg-cell-empty); border: 1px solid var(--border-app); padding: .125rem .5rem; border-radius: .25rem; font-size: .625rem;", "{data.game.source}" }
+                                            span { style: "font-weight: 700; text-transform: uppercase; background: var(--bg-cell-empty); border: 1px solid var(--border-app); padding: .125rem .5rem; font-size: .625rem;", "{data.game.source}" }
                                         }
                                         div { style: "display: flex; justify-content: space-between; align-items: center; font-size: .75rem;",
                                             span { class: "muted", style: "text-transform: uppercase;", "Total Clues" }
@@ -408,7 +410,6 @@ const COMPLETED_CSS: &str = r#"
 .cg-rank-badge {
     width: 2rem;
     height: 2rem;
-    border-radius: .5rem;
     border: 1px solid;
     font-weight: 700;
     display: flex;

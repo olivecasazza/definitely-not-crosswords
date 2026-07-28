@@ -59,13 +59,15 @@ jobs:
           # "crossword-server-v0.1.31" -> 0.1.31 ("#*v" would stop at the v in
           # "server" and leave "er-v0.1.31").
           want="${TAG##*v}"
-          for i in $(seq 1 60); do
+          # 45m: a cold nix build of the server image (ort/onnx) runs 30m+
+          # before GAR even sees the tag, then Flux needs a scan interval.
+          for i in $(seq 1 135); do
             got=$(curl -sf "$E2E_BASE_URL/api/config" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
             [ "$got" = "$want" ] && { echo "staging is on $got"; exit 0; }
-            echo "staging on ${got:-unknown}, want $want — retry $i/60"
+            echo "staging on ${got:-unknown}, want $want — retry $i/135"
             sleep 20
           done
-          echo "::error::staging never reached $want after 20m"; exit 1
+          echo "::error::staging never reached $want after 45m"; exit 1
       - name: Install deps
         working-directory: e2e
         run: npm ci

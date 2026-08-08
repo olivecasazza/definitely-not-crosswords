@@ -95,14 +95,14 @@ async function signIn(page: Page, email: string, password: string) {
 /** Land on a playable board: resume ACTIVE, else start an UNSTARTED game. */
 async function openGame(page: Page): Promise<string | null> {
   await page.goto("/games");
-  await expect(page.getByText("Available").first()).toBeVisible();
+  await expect(page.getByText("Library").first()).toBeVisible();
   const card = (label: string) =>
     page
       .locator('div[style*="cursor: pointer"]')
-      .filter({ hasText: label })
+      .and(page.locator(`[aria-label*="${label}"]`))
       .first();
-  const active = card("ACTIVE");
-  const unstarted = card("UNSTARTED");
+  const active = card("— IN PROGRESS");
+  const unstarted = card("— NEW");
   // The lobby loads async — wait for either card before deciding there's no
   // playable data (an instant count() races the query and false-skips).
   try {

@@ -102,24 +102,14 @@ async function signInDirect(page: Page, email: string, password: string) {
 }
 
 /**
- * Keep the phone's view pinned to its board panel so the spectator cam shows
- * the PC's live updates. On the 390×844 stacked mobile layout the Active Clue
- * panel a player just edited sits above the board; without scrolling back, the
- * board drifts out of frame and partner updates happen off-camera.
+ * Bring the board panel on camera. Used to pin the phone's view while the
+ * OTHER player acts (so partner updates land on-camera), and by solveClue to
+ * return to the board after a guess. No-op when the board is already in frame
+ * (always, on the PC layout).
  */
-async function keepPhoneOnBoard(p2: Page) {
-  const board = p2.locator(".cw-board-area");
+async function focusBoard(page: Page) {
+  const board = page.locator(".cw-board-area");
   if (await board.count()) await board.scrollIntoViewIfNeeded();
-}
-
-/**
- * Show the phone's own typing: scroll its Active Clue panel (where the inputs
- * live) into view. Pair with keepPhoneOnBoard afterwards so the PiP returns to
- * the board to catch the PC's live updates.
- */
-async function keepPhoneOnClue(p2: Page) {
-  const clue = p2.locator(".cw-clue").first();
-  if (await clue.count()) await clue.scrollIntoViewIfNeeded();
 }
 
 /**
@@ -141,6 +131,10 @@ async function selectClue(page: Page, clue: Clue) {
     .first();
   await humanClick(page, row);
   await expect(page.locator(".cw-letter-input")).toHaveCount(clue.answer.length);
+  // Camera follows the action: the row click can leave the viewport on the
+  // clue list (mobile stacked layout), with the entry inputs off-frame. Bring
+  // them on-screen before typing. No-op on PC where they're already visible.
+  await page.locator(".cw-letter-input").first().scrollIntoViewIfNeeded();
 }
 
 /** A word the same length as the answer that is definitely wrong. */
@@ -173,6 +167,8 @@ async function solveClue(page: Page, clue: Clue) {
   expect(typed.toUpperCase()).toBe(clue.answer.toUpperCase());
   await dwell(page, 300, 800); // a beat to "read it back"
   await submitGuess(page);
+  // ...then back up to the board so the landed answer is on camera.
+  await focusBoard(page);
 }
 
 test("authenticated product tour", async ({ page, browser }, testInfo) => {
@@ -205,7 +201,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
           await expect(p2.locator("#main")).not.toBeEmpty();
           await signInDirect(p2, (EMAIL2 ?? EMAIL)!, (PASSWORD2 ?? PASSWORD)!);
           await p2.goto("/games");
-          await expect(p2.getByText("Available").first()).toBeVisible();
+          await expect(p2.getByText("Library").first()).toBeVisible();
           await dwell(p2);
         })(),
       ]);
@@ -217,22 +213,23 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
   await test.step("Games lobby", async () => {
     await humanClick(page, page.locator('header a.navlink[href="/games"]'));
     await expect(page).toHaveURL(/\/games/, { timeout: 15_000 });
-    // Feature gate: the three lobby panels render (even when empty).
-    await expect(page.getByText("Available").first()).toBeVisible();
-    await expect(page.getByText("Completed").first()).toBeVisible();
+    // Feature gate: the redesigned lobby panels render (even when empty).
+    await expect(page.getByText("Library").first()).toBeVisible();
+    await expect(page.getByText(/continue playing/i).first()).toBeVisible();
     await wander(page);
     await dwell(page, 2600, 3600);
 
-    // Game rows are clickable cards (onclick handlers, not links). Prefer
-    // resuming an ACTIVE game (straight to the board); otherwise start an
-    // UNSTARTED one (via the pre-game card). Fresh starts can be slow.
+    // Library rows are clickable cards (role=button, aria-label carries the
+    // status: "{title} — NEW / IN PROGRESS / SOLVED"). Prefer resuming an
+    // in-progress game (straight to the board); otherwise start a NEW one
+    // (via the pre-game card). Fresh starts can be slow.
     const card = (label: string) =>
       page
         .locator('div[style*="cursor: pointer"]')
-        .filter({ hasText: label })
+        .and(page.locator(`[aria-label*="${label}"]`))
         .first();
-    const active = card("ACTIVE");
-    const unstarted = card("UNSTARTED");
+    const active = card("— IN PROGRESS");
+    const unstarted = card("— NEW");
     if (await active.count()) {
       await humanClick(page, active);
       // Resume lands directly on the play URL.
@@ -290,7 +287,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
           .click()
           .catch(() => {});
       }
-      await keepPhoneOnBoard(p2);
+      await focusBoard(p2);
     })();
   });
   const completing = clues.length > 0 && clues.length <= COMPLETION_MAX_CLUES;
@@ -369,7 +366,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       await expect(p2.locator(".cw-letter").first()).toBeVisible({
         timeout: 30_000,
       });
-      await keepPhoneOnBoard(p2);
+      await focusBoard(p2);
       const invite = page.locator(".cw-invite-btn");
       await expect(invite).toBeVisible();
       await humanClick(page, invite);
@@ -390,10 +387,8 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
         const partner = soloClues.find((c) => !playedClues.has(clueKey(c)));
         if (!partner) return; // nothing left that wouldn't finish the puzzle
         const correctBefore = await page.locator(".cw-correct").count();
-        // Phone is about to type — bring its Active Clue panel on-camera so
-        // the viewer sees the phone's own input. Scrolls back to the board
-        // after, so the PC's live updates stay visible.
-        await keepPhoneOnClue(p2);
+        // solveClue's own camera work shows the phone's typing (entry row on
+        // selection, board after the guess) — no choreography needed here.
         const solving = solveClue(p2, partner);
         if (secondAccount) {
           await expect(
@@ -405,7 +400,6 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
         }
         await solving;
         playedClues.add(clueKey(partner));
-        await keepPhoneOnBoard(p2);
 
         // Player two's correct letters must land on the recorded board.
         await expect
@@ -423,7 +417,9 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       for (const clue of clues) {
         if (playedClues.has(clueKey(clue))) continue;
         await solveClue(page, clue);
-        await keepPhoneOnBoard(p2);
+        // PC is the one acting — pin the phone's camera to its board so the
+        // partner's letters land on the PiP, not off-frame.
+        await focusBoard(p2);
       }
       // The last correct guess completes the game and lands on the results.
       await expect(page).toHaveURL(/\/game\/[^/]+\/completed/, {

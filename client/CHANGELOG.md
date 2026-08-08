@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.33](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.32...v0.1.33) - 2026-08-08
+
+### Added
+
+- *(web)* show Free/Pro pricing before sign-in
+
+### Fixed
+
+- *(ci)* give the release canary 45m for the image build + rollout
+
+### Other
+
+- changelog for v0.1.32 [skip ci]
+
+
 ## [0.1.32](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.31...v0.1.32) - 2026-07-28
 
 ### Added

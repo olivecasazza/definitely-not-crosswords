@@ -1,7 +1,7 @@
 use crate::components::generation_progress::{GenerationProgress, Progress};
 use crate::net::{mutation, query, subscribe, Subscription};
 use crate::Route;
-use crossword_core::fmt::format_datetime;
+use crossword_core::fmt::{format_datetime, rel_time};
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
@@ -80,11 +80,12 @@ fn do_load_jobs(
     mut jobs: Signal<Vec<JobRow>>,
     mut jobs_loading: Signal<bool>,
     mut jobs_error: Signal<String>,
+    take: i64,
 ) {
     jobs_loading.set(true);
     jobs_error.set(String::new());
     spawn_local(async move {
-        match query("generator.listJobs", Some(json!({"take": 25}))).await {
+        match query("generator.listJobs", Some(json!({"take": take}))).await {
             Ok(v) => {
                 let parsed: Vec<JobRow> = serde_json::from_value(v).unwrap_or_default();
                 jobs.set(parsed);
@@ -108,7 +109,7 @@ impl PanelKind for Panel {
     fn title(self) -> &'static str {
         match self {
             Panel::Parameters => "Parameters",
-            Panel::Progress => "Progress",
+            Panel::Progress => "Run",
             Panel::Jobs => "Jobs",
         }
     }
@@ -128,11 +129,15 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
 #[component]
 pub fn AdminGenerator() -> Element {
     let nav = use_navigator();
+    let state = crate::store::use_app_state();
 
     let mut form = use_signal(GenForm::default);
     let mut jobs = use_signal(Vec::<JobRow>::new);
     let mut jobs_loading = use_signal(|| false);
     let mut jobs_error = use_signal(String::new);
+    let mut jobs_take = use_signal(|| 25i64);
+    let mut job_search = use_signal(String::new);
+    let mut status_filter = use_signal(String::new);
 
     let mut gen_log = use_signal(Vec::<Value>::new);
     let mut gen_progress = use_signal(|| None::<Progress>);
@@ -155,8 +160,9 @@ pub fn AdminGenerator() -> Element {
 
     // ── initial load ──────────────────────────────────────────────────────────
 
+    // Reactive on `jobs_take`: bumping it (Load more) refetches with the new size.
     use_effect(move || {
-        do_load_jobs(jobs, jobs_loading, jobs_error);
+        do_load_jobs(jobs, jobs_loading, jobs_error, *jobs_take.read());
     });
 
     // ── workspace ─────────────────────────────────────────────────────────────
@@ -253,7 +259,7 @@ pub fn AdminGenerator() -> Element {
                                                 if let Some(t) = data["title"].as_str() {
                                                     gen_game_title.set(Some(t.to_string()));
                                                 }
-                                                do_load_jobs(jobs, jobs_loading, jobs_error);
+                                                do_load_jobs(jobs, jobs_loading, jobs_error, *jobs_take.peek());
                                             }
                                             "failed" => {
                                                 gen_status.set("failed".to_string());
@@ -270,6 +276,28 @@ pub fn AdminGenerator() -> Element {
                         }
                     }
 
+                    // preset chips — client-side sugar over the grid dimensions
+                    div { class: "row", style: "gap:0.5rem;flex-wrap:wrap",
+                        for (name, w, h, min_len, max_len) in [
+                            ("Mini 5×5", 5i64, 5i64, 3i64, 5i64),
+                            ("Daily 15×15", 15, 15, 3, 12),
+                            ("Sunday 21×21", 21, 21, 3, 12),
+                        ] {
+                            button {
+                                class: "app-btn",
+                                style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                                onclick: move |_| {
+                                    let mut f = form.write();
+                                    f.width = w;
+                                    f.height = h;
+                                    f.min_word_length = min_len;
+                                    f.max_word_length = max_len;
+                                },
+                                {name}
+                            }
+                        }
+                    }
+
                     // numeric params grid
                     div { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:0.75rem",
                         for (label, value, min_val, max_val, setter) in [
@@ -279,6 +307,7 @@ pub fn AdminGenerator() -> Element {
                             ("Max Len", form.read().max_word_length, 2, 50, 3),
                             ("Answers", form.read().target_words, 1, 250, 4),
                             ("Runs", form.read().runs, 1, 100, 5),
+                            ("Attempts", form.read().max_attempts, 1, 1000, 6),
                         ] {
                             label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
                                 {label}
@@ -299,6 +328,7 @@ pub fn AdminGenerator() -> Element {
                                                 3 => f.max_word_length = n,
                                                 4 => f.target_words = n,
                                                 5 => f.runs = n,
+                                                6 => f.max_attempts = n,
                                                 _ => {}
                                             }
                                         }
@@ -310,161 +340,110 @@ pub fn AdminGenerator() -> Element {
                 }
             },
 
-            Panel::Progress => rsx! {
-                div { class: "col", style: "gap:1rem;padding:1rem;height:100%;overflow-y:auto",
-                    // ── live progress ─────────────────────────────────────────
-                    if status != "idle" {
-                        GenerationProgress {
-                            log: gen_log.read().clone(),
-                            progress: gen_progress.read().clone(),
-                            running: is_running,
-                            status: status.clone(),
-                            elapsed_secs: *elapsed_secs.read(),
-                        }
+            Panel::Progress => {
+                // Idle summary of the most recent job from the already-fetched list.
+                // ISO stamp parsed via the JS Date, same idiom as games.rs `age()`.
+                let last_run = jobs.read().first().map(|j| {
+                    let ms = js_sys::Date::parse(&j.created_at);
+                    let when = if ms.is_nan() {
+                        format_datetime(&j.created_at)
                     } else {
-                        div { class: "muted", style: "font-size:0.875rem;text-align:center;padding:2rem 0",
-                            "Generation output will appear here."
-                        }
-                    }
-
-                    // ── gen error ─────────────────────────────────────────────
-                    if !gen_error.read().is_empty() {
-                        div { class: "app-card error", style: "padding:1rem;font-size:0.875rem",
-                            {gen_error.read().clone()}
-                        }
-                    }
-
-                    // ── completed game CTA ────────────────────────────────────
-                    if let (Some(gid), Some(gtitle)) = (gen_game_id.read().clone(), gen_game_title.read().clone()) {
-                        div { class: "app-card", style: "padding:1rem;border-color:var(--color-success)",
-                            div { class: "row", style: "justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap",
-                                div { class: "col", style: "gap:0.25rem",
-                                    div { style: "font-size:0.875rem;font-weight:600", {gtitle.clone()} }
-                                    if !publish_error.read().is_empty() {
-                                        div { class: "error", style: "font-size:0.75rem", {publish_error.read().clone()} }
-                                    }
+                        rel_time(js_sys::Date::now(), ms)
+                    };
+                    format!("Last: {} · \"{}\" · {}", j.status, j.topic, when)
+                });
+                rsx! {
+                    div { class: "col", style: "gap:1rem;padding:1rem;height:100%;overflow-y:auto",
+                        // ── live progress ─────────────────────────────────────────
+                        if status != "idle" {
+                            GenerationProgress {
+                                log: gen_log.read().clone(),
+                                progress: gen_progress.read().clone(),
+                                running: is_running,
+                                status: status.clone(),
+                                elapsed_secs: *elapsed_secs.read(),
+                            }
+                        } else if let Some(line) = last_run {
+                            div { class: "col muted", style: "gap:0.5rem;text-align:center;padding:2rem 0",
+                                div { style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                                    {line}
                                 }
-                                div { class: "row", style: "gap:0.5rem",
-                                    if !*gen_game_published.read() {
+                                div { style: "font-size:0.875rem", "Generation output will appear here." }
+                            }
+                        } else {
+                            div { class: "muted", style: "font-size:0.875rem;text-align:center;padding:2rem 0",
+                                "Generation output will appear here."
+                            }
+                        }
+
+                        // ── gen error ─────────────────────────────────────────────
+                        if !gen_error.read().is_empty() {
+                            div { class: "app-card error", style: "padding:1rem;font-size:0.875rem",
+                                {gen_error.read().clone()}
+                            }
+                        }
+
+                        // ── completed game CTA ────────────────────────────────────
+                        if let (Some(gid), Some(gtitle)) = (gen_game_id.read().clone(), gen_game_title.read().clone()) {
+                            div { class: "app-card", style: "padding:1rem;border-color:var(--color-success)",
+                                div { class: "row", style: "justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap",
+                                    div { class: "col", style: "gap:0.25rem",
+                                        div { style: "font-size:0.875rem;font-weight:600", {gtitle.clone()} }
+                                        if !publish_error.read().is_empty() {
+                                            div { class: "error", style: "font-size:0.75rem", {publish_error.read().clone()} }
+                                        }
+                                    }
+                                    div { class: "row", style: "gap:0.5rem",
+                                        if !*gen_game_published.read() {
+                                            button {
+                                                class: "app-btn app-btn-active",
+                                                style: "font-weight:bold",
+                                                disabled: *publishing.read(),
+                                                onclick: {
+                                                    let gid = gid.clone();
+                                                    move |_| {
+                                                        let game_id = gid.clone();
+                                                        publishing.set(true);
+                                                        publish_error.set(String::new());
+                                                        spawn_local(async move {
+                                                            match mutation("generator.publishGeneratedGame", Some(json!({"gameId": game_id}))).await {
+                                                                Ok(_) => {
+                                                                    gen_game_published.set(true);
+                                                                    do_load_jobs(jobs, jobs_loading, jobs_error, *jobs_take.peek());
+                                                                }
+                                                                Err(e) => publish_error.set(e),
+                                                            }
+                                                            publishing.set(false);
+                                                        });
+                                                    }
+                                                },
+                                                if *publishing.read() { "Publishing…" } else { "Publish" }
+                                            }
+                                        }
                                         button {
-                                            class: "app-btn app-btn-active",
-                                            style: "font-weight:bold",
-                                            disabled: *publishing.read(),
+                                            class: "app-btn",
                                             onclick: {
                                                 let gid = gid.clone();
                                                 move |_| {
-                                                    let game_id = gid.clone();
-                                                    publishing.set(true);
-                                                    publish_error.set(String::new());
-                                                    spawn_local(async move {
-                                                        match mutation("generator.publishGeneratedGame", Some(json!({"gameId": game_id}))).await {
-                                                            Ok(_) => {
-                                                                gen_game_published.set(true);
-                                                                do_load_jobs(jobs, jobs_loading, jobs_error);
-                                                            }
-                                                            Err(e) => publish_error.set(e),
-                                                        }
-                                                        publishing.set(false);
-                                                    });
+                                                    // Copy the game URL via the JS clipboard API (no extra Rust deps).
+                                                    let origin = web_sys::window()
+                                                        .and_then(|w| w.location().origin().ok())
+                                                        .unwrap_or_default();
+                                                    let url = format!("{origin}/game/{gid}/new");
+                                                    let script = format!(
+                                                        "navigator.clipboard && navigator.clipboard.writeText({})",
+                                                        serde_json::to_string(&url).unwrap_or_default()
+                                                    );
+                                                    dioxus::document::eval(&script);
+                                                    state.toast(crate::store::Severity::Success, "Link copied");
                                                 }
                                             },
-                                            if *publishing.read() { "Publishing…" } else { "Publish" }
+                                            "Copy game link"
                                         }
-                                    }
-                                    button {
-                                        class: "app-btn",
-                                        onclick: move |_| { nav.push(Route::Games {}); },
-                                        "View Games"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-
-            Panel::Jobs => rsx! {
-                div { style: "overflow:hidden;height:100%;display:flex;flex-direction:column",
-                    div { class: "row", style: "padding:1rem;border-bottom:1px solid var(--border-app);justify-content:space-between;align-items:center",
-                        h2 { style: "font-size:0.875rem;font-weight:bold;font-family:monospace;letter-spacing:0.05em",
-                            "GENERATION JOBS"
-                        }
-                        button {
-                            class: "app-btn",
-                            style: "font-size:0.75rem;font-family:monospace;text-transform:uppercase",
-                            disabled: *jobs_loading.read(),
-                            onclick: move |_| do_load_jobs(jobs, jobs_loading, jobs_error),
-                            if *jobs_loading.read() { "Refreshing" } else { "Refresh" }
-                        }
-                    }
-
-                    if !jobs_error.read().is_empty() {
-                        div { class: "error", style: "padding:0.75rem 1rem;font-size:0.875rem;border-bottom:1px solid var(--border-app)",
-                            {jobs_error.read().clone()}
-                        }
-                    }
-
-                    div { style: "overflow-x:auto;flex:1",
-                        table { style: "width:100%;text-align:left;font-size:0.875rem;border-collapse:collapse",
-                            thead {
-                                tr {
-                                    style: "font-size:0.75rem;text-transform:uppercase;font-family:monospace",
-                                    for col in ["Status", "Topic", "Grid", "Game", "Created"] {
-                                        th { class: "muted", style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app)", {col} }
-                                    }
-                                }
-                            }
-                            tbody {
-                                for job in jobs.read().iter() {
-                                    tr { style: "border-bottom:1px solid var(--border-app);font-family:monospace;font-size:0.75rem",
-                                        td { style: "padding:0.75rem 1rem",
-                                            {
-                                                let bg = match job.status.as_str() {
-                                                    "SUCCEEDED" => "background:var(--color-success);color:var(--contrast-ink)",
-                                                    "FAILED" => "background:var(--color-error);color:var(--contrast-ink)",
-                                                    _ => "background:var(--pastel-yellow);color:var(--contrast-ink)",
-                                                };
-                                                rsx! {
-                                                    span {
-                                                        style: "padding:0.125rem 0.5rem;font-size:0.625rem;font-weight:bold;text-transform:uppercase;{bg}",
-                                                        {job.status.clone()}
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        td { style: "padding:0.75rem 1rem;font-family:sans-serif;font-size:0.875rem;font-weight:500",
-                                            {job.topic.clone()}
-                                        }
-                                        td { class: "muted", style: "padding:0.75rem 1rem",
-                                            {format!("{}x{}", job.width, job.height)}
-                                        }
-                                        td { style: "padding:0.75rem 1rem",
-                                            if let Some(rg) = &job.result_game {
-                                                div { class: "col", style: "gap:0.125rem",
-                                                    span { style: "font-family:sans-serif;font-size:0.875rem;font-weight:500", {rg.title.clone()} }
-                                                    span { class: "muted", style: "font-size:0.625rem;font-weight:bold;text-transform:uppercase",
-                                                        if rg.published { "published" } else { "draft" }
-                                                    }
-                                                }
-                                            } else {
-                                                span { class: "muted", "—" }
-                                            }
-                                        }
-                                        td { class: "muted", style: "padding:0.75rem 1rem",
-                                            {format_datetime(&job.created_at)}
-                                        }
-                                    }
-                                }
-                                if *jobs_loading.read() && jobs.read().is_empty() {
-                                    tr {
-                                        td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "5",
-                                            "Loading generation jobs…"
-                                        }
-                                    }
-                                } else if jobs.read().is_empty() {
-                                    tr {
-                                        td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "5",
-                                            "No generation jobs found."
+                                        button {
+                                            class: "app-btn",
+                                            onclick: move |_| { nav.push(Route::Games {}); },
+                                            "View Games"
                                         }
                                     }
                                 }
@@ -472,7 +451,160 @@ pub fn AdminGenerator() -> Element {
                         }
                     }
                 }
-            },
+            }
+
+            Panel::Jobs => {
+                let search = job_search.read().to_lowercase();
+                let filter = status_filter.read().clone();
+                let filtered: Vec<JobRow> = jobs
+                    .read()
+                    .iter()
+                    .filter(|j| {
+                        (search.is_empty() || j.topic.to_lowercase().contains(&search))
+                            && (filter.is_empty() || j.status == filter)
+                    })
+                    .cloned()
+                    .collect();
+                let shown = filtered.len();
+                let any_loaded = !jobs.read().is_empty();
+                // Server returned a full page — there may be more to fetch.
+                let can_load_more = jobs.read().len() as i64 >= *jobs_take.read();
+                rsx! {
+                    div { style: "overflow:hidden;height:100%;display:flex;flex-direction:column",
+                        div { class: "row", style: "padding:1rem;border-bottom:1px solid var(--border-app);justify-content:space-between;align-items:center",
+                            h2 { style: "font-size:0.875rem;font-weight:bold;font-family:monospace;letter-spacing:0.05em",
+                                "GENERATION JOBS"
+                            }
+                            button {
+                                class: "app-btn",
+                                style: "font-size:0.75rem;font-family:monospace;text-transform:uppercase",
+                                disabled: *jobs_loading.read(),
+                                onclick: move |_| do_load_jobs(jobs, jobs_loading, jobs_error, *jobs_take.peek()),
+                                if *jobs_loading.read() { "Refreshing" } else { "Refresh" }
+                            }
+                        }
+
+                        if !jobs_error.read().is_empty() {
+                            div { class: "error", style: "padding:0.75rem 1rem;font-size:0.875rem;border-bottom:1px solid var(--border-app)",
+                                {jobs_error.read().clone()}
+                            }
+                        }
+
+                        // search + status filters (client-side, over the fetched page)
+                        div { class: "row", style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app);gap:0.5rem;align-items:center;flex-wrap:wrap",
+                            input {
+                                class: "app-input",
+                                style: "padding:0.375rem 0.5rem;font-size:0.875rem;flex:1;min-width:160px",
+                                r#type: "text",
+                                placeholder: "Search topics…",
+                                value: "{job_search}",
+                                oninput: move |e| job_search.set(e.value()),
+                            }
+                            span {
+                                class: "muted",
+                                style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:bold;text-transform:uppercase;letter-spacing:0.05em;padding:0.125rem 0.5rem;border:1px solid var(--border-app);white-space:nowrap",
+                                {format!("{shown} shown")}
+                            }
+                            for (chip_label, chip_val) in [
+                                ("All", ""),
+                                ("Succeeded", "SUCCEEDED"),
+                                ("Failed", "FAILED"),
+                                ("Running", "RUNNING"),
+                            ] {
+                                button {
+                                    class: if *status_filter.read() == chip_val { "app-btn app-btn-active" } else { "app-btn" },
+                                    style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                                    onclick: move |_| status_filter.set(chip_val.to_string()),
+                                    {chip_label}
+                                }
+                            }
+                        }
+
+                        div { style: "overflow-x:auto;flex:1",
+                            table { style: "width:100%;text-align:left;font-size:0.875rem;border-collapse:collapse",
+                                thead {
+                                    tr {
+                                        style: "font-size:0.75rem;text-transform:uppercase;font-family:monospace",
+                                        for col in ["Status", "Topic", "Grid", "Game", "Created"] {
+                                            th { class: "muted", style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app)", {col} }
+                                        }
+                                    }
+                                }
+                                tbody {
+                                    for job in filtered.iter() {
+                                        tr { style: "border-bottom:1px solid var(--border-app);font-family:monospace;font-size:0.75rem",
+                                            td { style: "padding:0.75rem 1rem",
+                                                {
+                                                    let bg = match job.status.as_str() {
+                                                        "SUCCEEDED" => "background:var(--color-success);color:var(--contrast-ink)",
+                                                        "FAILED" => "background:var(--color-error);color:var(--contrast-ink)",
+                                                        _ => "background:var(--pastel-yellow);color:var(--contrast-ink)",
+                                                    };
+                                                    rsx! {
+                                                        span {
+                                                            style: "padding:0.125rem 0.5rem;font-size:0.625rem;font-weight:bold;text-transform:uppercase;{bg}",
+                                                            {job.status.clone()}
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            td { style: "padding:0.75rem 1rem;font-family:sans-serif;font-size:0.875rem;font-weight:500",
+                                                {job.topic.clone()}
+                                            }
+                                            td { class: "muted", style: "padding:0.75rem 1rem",
+                                                {format!("{}x{}", job.width, job.height)}
+                                            }
+                                            td { style: "padding:0.75rem 1rem",
+                                                if let Some(rg) = &job.result_game {
+                                                    div { class: "col", style: "gap:0.125rem",
+                                                        span { style: "font-family:sans-serif;font-size:0.875rem;font-weight:500", {rg.title.clone()} }
+                                                        span { class: "muted", style: "font-size:0.625rem;font-weight:bold;text-transform:uppercase",
+                                                            if rg.published { "published" } else { "draft" }
+                                                        }
+                                                    }
+                                                } else {
+                                                    span { class: "muted", "—" }
+                                                }
+                                            }
+                                            td { class: "muted", style: "padding:0.75rem 1rem",
+                                                {format_datetime(&job.created_at)}
+                                            }
+                                        }
+                                    }
+                                    if *jobs_loading.read() && jobs.read().is_empty() {
+                                        tr {
+                                            td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "5",
+                                                "Loading generation jobs…"
+                                            }
+                                        }
+                                    } else if filtered.is_empty() {
+                                        tr {
+                                            td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "5",
+                                                if any_loaded { "No jobs match the current filters." } else { "No generation jobs found." }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if can_load_more {
+                            div { style: "padding:0.75rem 1rem;border-top:1px solid var(--border-app)",
+                                button {
+                                    class: "app-btn",
+                                    style: "width:100%;font-size:0.75rem;font-family:monospace;text-transform:uppercase",
+                                    disabled: *jobs_loading.read(),
+                                    onclick: move |_| {
+                                        let cur = *jobs_take.peek();
+                                        jobs_take.set(cur + 25);
+                                    },
+                                    if *jobs_loading.read() { "Loading" } else { "Load more" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     };
 

@@ -139,6 +139,46 @@ a { color: inherit; text-decoration: none; }
   .ws-root.mobile .ws.tiling { overflow: visible; height: auto; }
 }
 
+/* ── Shared UI atoms (components/ui.rs) ─────────────────────────────────── */
+.stat-tile { display: flex; flex-direction: column; gap: .25rem; padding: .75rem .9rem; min-width: 0; }
+.stat-tile-label { font-family: var(--mono, monospace); font-size: var(--fs-2xs);
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
+.stat-tile-value { font-family: var(--mono, monospace); font-size: var(--fs-xl); font-weight: 700;
+  font-variant-numeric: tabular-nums; line-height: 1.1; }
+.stat-tile-sub { font-size: var(--fs-2xs); }
+
+.section-tabs { display: flex; border: 1px solid var(--border-app); width: fit-content; max-width: 100%; }
+.section-tab { padding: .4rem .8rem; background: var(--bg-card); color: var(--text-secondary);
+  border: none; cursor: pointer; font-family: var(--mono, monospace); font-size: var(--fs-2xs);
+  text-transform: uppercase; letter-spacing: .05em; transition: color .15s ease, background .15s ease; }
+.section-tab:hover { color: var(--text-primary); }
+.section-tab + .section-tab { border-left: 1px solid var(--border-app); }
+.section-tab-active, .section-tab-active:hover { background: var(--pastel-yellow); color: var(--contrast-ink); }
+@media (max-width: 760px) { .section-tabs { width: 100%; display: flex; } .section-tab { flex: 1 1 0; } }
+
+.rank-badge { width: 2rem; height: 2rem; border: 1px solid; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: var(--fs-xs); font-family: var(--mono, monospace); flex-shrink: 0; }
+
+.square-pulse { display: grid; grid-template-columns: repeat(5, 6px); gap: 3px; width: fit-content; }
+.square-pulse-cell { width: 6px; height: 6px; background: var(--text-secondary);
+  animation: square-pulse 1.2s ease-in-out infinite; }
+@keyframes square-pulse { 0%, 100% { opacity: .15; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .square-pulse-cell { animation: none; opacity: .6; } }
+
+/* ── Toasts (components/ui.rs ToastHost) ────────────────────────────────── */
+.toast-host { position: fixed; top: 3.5rem; right: 1rem; z-index: 300;
+  display: flex; flex-direction: column; gap: .5rem; max-width: 22rem; pointer-events: none; }
+.toast { pointer-events: auto; cursor: pointer; background: var(--bg-card);
+  border: 1px solid var(--border-app); border-left: 3px solid var(--text-secondary);
+  padding: .6rem .9rem; font-family: var(--mono, monospace); font-size: var(--fs-xs); line-height: 1.5; }
+.toast-error { border-left-color: var(--color-error); }
+.toast-success { border-left-color: var(--color-success); }
+.toast-warning { border-left-color: var(--color-warning); }
+@media (max-width: 760px) {
+  .toast-host { top: auto; bottom: 1rem; left: 1rem; right: 1rem; max-width: none; }
+}
+
 /* Shared layout helpers used across pages (lazy stand-ins for Tailwind utils). */
 .container { max-width: 64rem; margin: 0 auto; padding: 1.5rem; }
 .row { display: flex; gap: .75rem; align-items: center; }

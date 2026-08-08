@@ -9,3 +9,4 @@ pub mod header;
 pub mod identicon;
 pub mod pro_upgrade;
 pub mod staging_banner;
+pub mod ui;

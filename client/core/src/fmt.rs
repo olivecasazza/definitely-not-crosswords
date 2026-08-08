@@ -17,6 +17,43 @@ pub fn rel_time(now_ms: f64, then_ms: f64) -> String {
     "just now".to_string()
 }
 
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// ISO-8601 date(time) → "Mar 4, 2026". Anything unparsable falls back to the
+/// input unchanged, so a bad server stamp degrades to ugly rather than wrong.
+pub fn format_date(iso: &str) -> String {
+    let date = iso.split('T').next().unwrap_or(iso);
+    let mut parts = date.splitn(3, '-');
+    let (y, m, d) = (parts.next(), parts.next(), parts.next());
+    match (
+        y,
+        m.and_then(|m| m.parse::<usize>().ok()),
+        d.and_then(|d| d.parse::<u32>().ok()),
+    ) {
+        (Some(y), Some(m), Some(d)) if (1..=12).contains(&m) => {
+            format!("{} {d}, {y}", MONTHS[m - 1])
+        }
+        _ => iso.to_string(),
+    }
+}
+
+/// ISO-8601 datetime → "Mar 4, 2026 12:34". Date-only inputs (or garbage)
+/// degrade to [`format_date`].
+pub fn format_datetime(iso: &str) -> String {
+    let time = iso
+        .split('T')
+        .nth(1)
+        .map(|t| t.get(..5).unwrap_or(t))
+        .unwrap_or("");
+    if time.is_empty() {
+        format_date(iso)
+    } else {
+        format!("{} {time}", format_date(iso))
+    }
+}
+
 /// `n` with a unit, pluralised the boring English way ("1 clue", "12 clues").
 pub fn plural(n: i64, unit: &str) -> String {
     if n == 1 {
@@ -41,6 +78,18 @@ mod tests {
         assert_eq!(rel_time(now, now - 3.0 * 86_400_000.0), "3d ago");
         // clock skew: server stamp ahead of the client clock
         assert_eq!(rel_time(now, now + 60_000.0), "just now");
+    }
+
+    #[test]
+    fn dates_render_human_and_degrade_to_input() {
+        assert_eq!(format_date("2026-03-04T12:34:56.000Z"), "Mar 4, 2026");
+        assert_eq!(format_date("2026-12-31"), "Dec 31, 2026");
+        assert_eq!(format_date("not-a-date"), "not-a-date");
+        assert_eq!(
+            format_datetime("2026-03-04T12:34:56.000Z"),
+            "Mar 4, 2026 12:34"
+        );
+        assert_eq!(format_datetime("2026-03-04"), "Mar 4, 2026");
     }
 
     #[test]

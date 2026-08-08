@@ -1,5 +1,5 @@
 use crate::components::admin_nav::AdminNav;
-use crate::net::{mutation, query};
+use crate::net::{mutation, query, trpc_err_msg};
 use crate::store::use_app_state;
 use crate::Route;
 use dioxus::prelude::*;
@@ -7,20 +7,6 @@ use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
-
-/// Extract a human-readable message from a tRPC error string.
-///
-/// `parse_batch_single` returns the full error JSON object as a string when the
-/// server responds with `[{"error":{...}}]`. Try to pull `error.message`; fall
-/// back to the raw string for plain network/parse errors.
-fn trpc_err_msg(e: String) -> String {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&e) {
-        if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
-            return msg.to_string();
-        }
-    }
-    e
-}
 
 #[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -549,7 +535,6 @@ pub fn AdminDiscounts() -> Element {
     }
 
     rsx! {
-        style { {PAGE_CSS} }
         div { class: "col", style: "height:100%",
             AdminNav {}
             div {
@@ -563,7 +548,3 @@ pub fn AdminDiscounts() -> Element {
         }
     }
 }
-
-const PAGE_CSS: &str = "
-.ad-workspace { flex: 1; min-height: 0; }
-";

@@ -41,6 +41,20 @@ fn status_error(status: u16) -> Option<String> {
     }
 }
 
+/// Extract a human-readable message from a tRPC error string.
+///
+/// `parse_batch_single` returns the full error JSON object as a string when the
+/// server responds with `[{"error":{...}}]`. Try to pull `error.message`; fall
+/// back to the raw string for plain network/parse errors.
+pub fn trpc_err_msg(e: String) -> String {
+    if let Ok(v) = serde_json::from_str::<Value>(&e) {
+        if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+            return msg.to_string();
+        }
+    }
+    e
+}
+
 /// A tRPC query. `input` is the raw procedure input (None for no-arg procs).
 pub async fn query(proc: &str, input: Option<Value>) -> Result<Value, String> {
     let url = rpc::query_url(&http_base(), proc, input.as_ref());

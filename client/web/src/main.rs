@@ -11,7 +11,9 @@ mod pages;
 mod store;
 mod styles;
 
-use components::{footer::AppFooter, header::AppHeader, staging_banner::StagingBanner};
+use components::{
+    footer::AppFooter, header::AppHeader, staging_banner::StagingBanner, ui::ToastHost,
+};
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, Storage};
 use panel_kit::CSS as PANEL_CSS;
@@ -104,6 +106,7 @@ fn Shell() -> Element {
             StagingBanner {}
             AppHeader {}
             main { class: "app-main", Outlet::<Route> {} }
+            ToastHost {}
             AppFooter {}
         }
     }

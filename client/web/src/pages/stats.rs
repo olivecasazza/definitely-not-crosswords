@@ -6,9 +6,11 @@ use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::components::identicon::Identicon;
+use crate::components::ui::{self, RankBadge};
 use crate::net;
 use crate::store::use_app_state;
 use crate::Route;
+use crossword_core::fmt::format_date;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,19 +110,6 @@ struct H2HMatch {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn date_short(s: &str) -> String {
-    s.split('T').next().unwrap_or(s).to_string()
-}
-
-fn rank_badge_style(index: usize) -> &'static str {
-    match index {
-        0 => "background: var(--pastel-yellow); color: var(--contrast-ink); border-color: var(--pastel-yellow);",
-        1 => "background: var(--podium-silver); color: var(--contrast-ink); border-color: var(--podium-silver);",
-        2 => "background: var(--podium-bronze); color: #f8fafc; border-color: var(--podium-bronze);",
-        _ => "background: var(--bg-cell-empty); color: var(--text-secondary); border-color: var(--border-app);",
-    }
-}
 
 /// Width percent for a comparison bar (returns 0.0-100.0).
 fn bar_pct(a: i64, b: i64) -> f64 {
@@ -358,7 +347,7 @@ pub fn Stats() -> Element {
                                                             rsx! {
                                                                 tr { class: "{row_cls}",
                                                                     td {
-                                                                        span { class: "st-rank-badge", style: "{rank_badge_style(i)}", "{i+1}" }
+                                                                        RankBadge { index: i, label: (i + 1).to_string() }
                                                                     }
                                                                     td {
                                                                         span { style: "display: flex; align-items: center; gap: .375rem;",
@@ -458,7 +447,7 @@ pub fn Stats() -> Element {
                                                     div { style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem;",
                                                         div { style: "display: flex; flex-direction: column; min-width: 0;",
                                                             span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{game.title}" }
-                                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {date_short(&game.created_at)}" }
+                                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {format_date(&game.created_at)}" }
                                                         }
                                                         div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0; font-family: monospace;",
                                                             div { style: "display: flex; flex-direction: column;",
@@ -651,7 +640,7 @@ pub fn Stats() -> Element {
                                                             div { class: "app-card", style: "padding: 1rem 1.25rem; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-family: monospace;",
                                                                 div { style: "display: flex; flex-direction: column; min-width: 0;",
                                                                     span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{m.title}" }
-                                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {date_short(&m.created_at)}" }
+                                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {format_date(&m.created_at)}" }
                                                                 }
                                                                 div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0;",
                                                                     div { style: "display: flex; flex-direction: column;",
@@ -892,7 +881,7 @@ pub fn Stats() -> Element {
                                     for (i, t) in teams.iter().enumerate() {
                                         {
                                             let t = t.clone();
-                                            let badge = rank_badge_style(i);
+                                            let badge = ui::rank_badge_style(i);
                                             let joinable = signed_in && t.visibility == "PUBLIC" && t.member_count < t.max_size;
                                             let is_private = t.visibility == "PRIVATE";
                                             rsx! {
@@ -951,69 +940,6 @@ pub fn Stats() -> Element {
 }
 
 const STATS_CSS: &str = r#"
-.st-page {
-    flex: 1;
-    width: 100%;
-    max-width: 64rem;
-    margin: 0 auto;
-    padding: 2rem 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-    overflow-y: auto;
-}
-.st-header {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    border-bottom: 1px solid var(--border-app);
-    padding-bottom: 1.5rem;
-}
-@media (min-width: 640px) {
-    .st-header {
-        flex-direction: row;
-        align-items: center;
-        justify-content: space-between;
-    }
-}
-.st-title {
-    font-size: 1.5rem;
-    font-weight: 900;
-    font-family: monospace;
-    text-transform: uppercase;
-    letter-spacing: .1em;
-    color: var(--color-primary, var(--text-primary));
-    margin: 0;
-}
-.st-tabs {
-    display: flex;
-    background: var(--bg-cell-empty);
-    border: 1px solid var(--border-app);
-    border-radius: .5rem;
-    padding: .25rem;
-    gap: 0;
-    width: max-content;
-    font-family: monospace;
-    font-size: .75rem;
-}
-.st-tab {
-    padding: .375rem .75rem;
-    border-radius: .375rem;
-    text-transform: uppercase;
-    letter-spacing: .05em;
-    font-weight: 700;
-    transition: all .15s ease;
-    background: transparent;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-}
-.st-tab:hover { color: var(--text-primary); }
-.st-tab-active {
-    background: var(--bg-card);
-    border: 1px solid var(--border-app);
-    color: var(--text-primary);
-}
 .st-loading {
     padding: 2rem;
     text-align: center;
@@ -1081,17 +1007,6 @@ const STATS_CSS: &str = r#"
 .st-table-row:hover { background: rgba(63,63,70,0.15); }
 .st-table-row-me { background: rgba(254,234,153,0.02); font-weight: 700; }
 .st-table-row td { padding: .875rem 1rem; }
-.st-rank-badge {
-    display: inline-flex;
-    width: 1.5rem;
-    height: 1.5rem;
-    border-radius: .25rem;
-    border: 1px solid;
-    font-weight: 700;
-    align-items: center;
-    justify-content: center;
-    font-size: .625rem;
-}
 .st-stat-card {
     padding: 1rem;
     display: flex;

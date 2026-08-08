@@ -60,7 +60,7 @@ fn event_to_line(event: &Value, first_at: i64) -> LogLine {
             } else {
                 format!("■ {label}: {msg}")
             };
-            (text, "text-[var(--text-primary)]")
+            (text, "gp-strong")
         }
         "log" => {
             let msg = event["message"].as_str().unwrap_or("").to_string();
@@ -314,5 +314,16 @@ const PROGRESS_CSS: &str = r#"
 }
 .gp-msg {
     word-break: break-all;
+}
+.gp-strong {
+    color: var(--text-primary);
+}
+/* Indeterminate bar fade — referenced by the inline `animation:pulse` above. */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .45; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .gp-bar-fill { animation: none !important; }
 }
 "#;

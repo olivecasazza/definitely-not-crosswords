@@ -3,6 +3,7 @@ use crate::components::generation_progress::{GenerationProgress, Progress};
 use crate::net::{mutation, query, subscribe, Subscription};
 use crate::store::use_app_state;
 use crate::Route;
+use crossword_core::fmt::format_datetime;
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
@@ -61,14 +62,6 @@ struct ResultGame {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-fn format_datetime(s: &str) -> String {
-    if s.len() >= 19 {
-        s[..19].replace('T', " ")
-    } else {
-        s.to_string()
-    }
-}
 
 fn form_to_json(f: &GenForm) -> Value {
     json!({

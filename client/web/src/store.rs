@@ -89,6 +89,31 @@ pub struct Features {
     pub staging_banner: bool,
 }
 
+/// Severity of a [`Toast`]; picks the accent border colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Severity {
+    Success,
+    Warning,
+    Error,
+}
+
+impl Severity {
+    pub fn class(self) -> &'static str {
+        match self {
+            Severity::Success => "toast-success",
+            Severity::Warning => "toast-warning",
+            Severity::Error => "toast-error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Toast {
+    pub id: u64,
+    pub severity: Severity,
+    pub msg: String,
+}
+
 #[derive(Clone, Copy)]
 pub struct AppState {
     /// `None` = still loading; `Some(None)` = signed out; `Some(Some(u))` = user.
@@ -96,6 +121,8 @@ pub struct AppState {
     pub sub: Signal<Option<SubStatus>>,
     /// `None` until `/api/config` resolves; features default to off meanwhile.
     pub config: Signal<Option<AppConfig>>,
+    /// Live toasts, rendered by `components::ui::ToastHost` in the shell.
+    pub toasts: Signal<Vec<Toast>>,
 }
 
 impl AppState {
@@ -118,6 +145,21 @@ impl AppState {
     pub fn is_loading(&self) -> bool {
         self.session.read().is_none()
     }
+    /// Queue a toast; auto-dismisses after 5s (click dismisses sooner).
+    pub fn toast(&self, severity: Severity, msg: impl Into<String>) {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut toasts = self.toasts;
+        toasts.write().push(Toast {
+            id,
+            severity,
+            msg: msg.into(),
+        });
+        spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(5_000).await;
+            toasts.write().retain(|t| t.id != id);
+        });
+    }
 }
 
 /// Provide [`AppState`] and kick off the session fetch. Call once in the root.
@@ -126,6 +168,7 @@ pub fn provide_app_state() -> AppState {
         session: Signal::new(None),
         sub: Signal::new(None),
         config: Signal::new(None),
+        toasts: Signal::new(Vec::new()),
     });
     use_hook(|| {
         let mut session = state.session;
@@ -133,15 +176,36 @@ pub fn provide_app_state() -> AppState {
         let mut config = state.config;
         spawn_local(async move {
             // Config drives feature flags (banner, dev bypass) — fetch it first.
-            config.set(Some(fetch_config().await.unwrap_or_default()));
-            let user = fetch_session().await;
+            match fetch_config().await {
+                Ok(c) => config.set(Some(c)),
+                Err(_) => {
+                    config.set(Some(AppConfig::default()));
+                    state.toast(
+                        Severity::Warning,
+                        "Couldn't load app settings — some features may be unavailable.",
+                    );
+                }
+            }
+            let user = match fetch_session().await {
+                Ok(user) => user,
+                Err(_) => {
+                    state.toast(
+                        Severity::Error,
+                        "Couldn't check your sign-in status. Refresh to retry.",
+                    );
+                    None
+                }
+            };
             let signed_in = user.is_some();
             session.set(Some(user));
             // Only hit the authed /api/subscription endpoint when signed in —
             // otherwise it 401s and clutters the console.
             if signed_in {
-                if let Some(s) = fetch_sub().await {
-                    sub.set(Some(s));
+                match fetch_sub().await {
+                    Ok(s) => sub.set(Some(s)),
+                    Err(_) => {
+                        state.toast(Severity::Warning, "Couldn't load your subscription status.")
+                    }
                 }
             }
         });
@@ -153,27 +217,27 @@ pub fn use_app_state() -> AppState {
     use_context::<AppState>()
 }
 
-async fn fetch_session() -> Option<User> {
+async fn fetch_session() -> Result<Option<User>, String> {
     let resp = gloo_net::http::Request::get("/api/auth/session")
         .send()
         .await
-        .ok()?;
-    let parsed: SessionResponse = resp.json().await.ok()?;
-    parsed.user
+        .map_err(|e| e.to_string())?;
+    let parsed: SessionResponse = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(parsed.user)
 }
 
-async fn fetch_sub() -> Option<SubStatus> {
+async fn fetch_sub() -> Result<SubStatus, String> {
     let resp = gloo_net::http::Request::get("/api/subscription")
         .send()
         .await
-        .ok()?;
-    resp.json().await.ok()
+        .map_err(|e| e.to_string())?;
+    resp.json().await.map_err(|e| e.to_string())
 }
 
-async fn fetch_config() -> Option<AppConfig> {
+async fn fetch_config() -> Result<AppConfig, String> {
     let resp = gloo_net::http::Request::get("/api/config")
         .send()
         .await
-        .ok()?;
-    resp.json().await.ok()
+        .map_err(|e| e.to_string())?;
+    resp.json().await.map_err(|e| e.to_string())
 }

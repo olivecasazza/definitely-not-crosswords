@@ -6,9 +6,11 @@ use std::rc::Rc;
 
 use crate::components::game_list::status;
 use crate::components::identicon::Identicon;
+use crate::components::ui::RankBadge;
 use crate::net;
 use crate::store::use_app_state;
 use crate::Route;
+use crossword_core::fmt::format_date;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,24 +57,6 @@ struct GameMember {
 struct MemberUser {
     name: Option<String>,
     email: Option<String>,
-}
-
-fn format_date(s: &str) -> String {
-    // minimal: take the date part from ISO string
-    s.split('T').next().unwrap_or(s).to_string()
-}
-
-/// Podium colours come from the palette tokens in `styles.rs` so they flip with
-/// the theme instead of hardcoding hex per rank.
-fn rank_badge_style(index: usize) -> &'static str {
-    match index {
-        0 => "background: var(--pastel-yellow); color: var(--contrast-ink); border-color: var(--pastel-yellow);",
-        1 => "background: var(--podium-silver); color: var(--contrast-ink); border-color: var(--podium-silver);",
-        // Bronze keeps a fixed near-white ink — a theme-flipping colour would go
-        // dark-on-dark-orange in light mode.
-        2 => "background: var(--podium-bronze); color: #f8fafc; border-color: var(--podium-bronze);",
-        _ => "background: var(--bg-cell-empty); color: var(--text-secondary); border-color: var(--border-app);",
-    }
 }
 
 fn rank_name(index: usize) -> &'static str {
@@ -238,11 +222,7 @@ pub fn GameCompleted(id: String) -> Element {
                                                 div { class: "{card_style}",
                                                     // Rank badge + avatar + name
                                                     div { style: "display: flex; align-items: center; gap: 1rem; min-width: 0;",
-                                                        div {
-                                                            class: "cg-rank-badge",
-                                                            style: "{rank_badge_style(index)}",
-                                                            "{rank_n}"
-                                                        }
+                                                        RankBadge { index, label: rank_n }
                                                         div { class: "cg-avatar",
                                                             Identicon { seed: display_name.to_string(), size: 30 }
                                                         }
@@ -406,17 +386,6 @@ const COMPLETED_CSS: &str = r#"
 .cg-rank-card-me {
     border-color: rgba(254,234,153,0.4);
     background: rgba(254,234,153,0.02);
-}
-.cg-rank-badge {
-    width: 2rem;
-    height: 2rem;
-    border: 1px solid;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: .75rem;
-    flex-shrink: 0;
 }
 .cg-avatar {
     width: 2.25rem;

@@ -30,7 +30,7 @@ pub fn Identicon(seed: String, size: u32) -> Element {
             // Opaque dark fill gives the circle its own chrome standalone (header,
             // stats) and keeps the yellow "on" dots readable — a transparent bg
             // would let them vanish over the profile circle's yellow gradient.
-            style: "width:{size}px; height:{size}px; border-radius:50%; overflow:hidden; \
+            style: "width:{size}px; height:{size}px; overflow:hidden; \
                     display:inline-flex; align-items:center; justify-content:center; background:var(--bg-cell-empty);",
             svg {
                 width: "{size}",

@@ -290,7 +290,7 @@ pub fn Login() -> Element {
                         if !error.read().is_empty() {
                             div {
                                 class: "error",
-                                style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid rgba(255,140,140,0.2); border-radius: .5rem; background: rgba(255,140,140,0.06);",
+                                style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid color-mix(in srgb, var(--pastel-red) 20%, transparent); background: color-mix(in srgb, var(--pastel-red) 6%, transparent);",
                                 "{error}"
                             }
                         }

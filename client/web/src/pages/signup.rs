@@ -296,7 +296,7 @@ pub fn Signup() -> Element {
                     if *success.read() {
                         div {
                             class: "success",
-                            style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid rgba(168,230,207,0.2); border-radius: .5rem; background: rgba(168,230,207,0.06); display: flex; flex-direction: column; gap: .5rem;",
+                            style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid color-mix(in srgb, var(--pastel-green) 20%, transparent); background: color-mix(in srgb, var(--pastel-green) 6%, transparent); display: flex; flex-direction: column; gap: .5rem;",
                             // Login isn't gated on verification, so make both
                             // halves clear: link sent, but sign-in works already.
                             p { style: "margin: 0;", "Account created! We've sent a verification link to your email — you can sign in right away." }
@@ -319,7 +319,7 @@ pub fn Signup() -> Element {
                             if !error.read().is_empty() {
                                 div {
                                     class: "error",
-                                    style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid rgba(255,140,140,0.2); border-radius: .5rem; background: rgba(255,140,140,0.06);",
+                                    style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid color-mix(in srgb, var(--pastel-red) 20%, transparent); background: color-mix(in srgb, var(--pastel-red) 6%, transparent);",
                                     "{error}"
                                 }
                             }

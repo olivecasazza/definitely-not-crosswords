@@ -112,7 +112,6 @@ pub fn VerifyEmail() -> Element {
                                 div {
                                     style: "
                                         width: 3rem; height: 3rem;
-                                        border-radius: 50%;
                                         border: 2px solid var(--border-app);
                                         border-top-color: var(--pastel-yellow);
                                         animation: spin 0.8s linear infinite;
@@ -131,9 +130,9 @@ pub fn VerifyEmail() -> Element {
                                 // Success icon circle
                                 div {
                                     style: "
-                                        width: 4rem; height: 4rem; border-radius: 50%;
+                                        width: 4rem; height: 4rem;
                                         border: 2px solid var(--pastel-green);
-                                        background: rgba(168,230,207,0.1);
+                                        background: color-mix(in srgb, var(--pastel-green) 10%, transparent);
                                         display: flex; align-items: center; justify-content: center;
                                         color: var(--pastel-green);
                                     ",
@@ -176,9 +175,9 @@ pub fn VerifyEmail() -> Element {
                                 // Error icon circle
                                 div {
                                     style: "
-                                        width: 4rem; height: 4rem; border-radius: 50%;
+                                        width: 4rem; height: 4rem;
                                         border: 2px solid var(--pastel-red);
-                                        background: rgba(255,140,140,0.1);
+                                        background: color-mix(in srgb, var(--pastel-red) 10%, transparent);
                                         display: flex; align-items: center; justify-content: center;
                                         color: var(--pastel-red);
                                     ",

@@ -308,7 +308,9 @@ pub fn Stats() -> Element {
                                             // 3rd
                                             if entries.len() >= 3 {
                                                 div { class: "app-card st-podium-card",
-                                                    div { class: "st-podium-badge", style: "background: var(--podium-bronze); color: #f8fafc; border-color: var(--podium-bronze);", "3" }
+                                                    // Bronze keeps a fixed near-white ink — a theme-flipping colour would
+                                                // go dark-on-dark-orange in light mode (matches components/ui.rs).
+                                                div { class: "st-podium-badge", style: "background: var(--podium-bronze); color: #f8fafc; border-color: var(--podium-bronze);", "3" }
                                                     span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary);", "{entries[2].name}" }
                                                     span { style: "font-size: .625rem; color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[2].total_score} pts" }
                                                     span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "{entries[2].games_played} games · {entries[2].accuracy}% Acc" }
@@ -354,7 +356,7 @@ pub fn Stats() -> Element {
                                                                             Identicon { seed: entry.id.clone(), size: 20 }
                                                                             "{entry.name}"
                                                                             if is_me {
-                                                                                span { style: "font-size: .5rem; font-weight: 900; border: 1px solid rgba(254,234,153,0.3); color: var(--pastel-yellow); padding: 0 .25rem; border-radius: .125rem; text-transform: uppercase;", "YOU" }
+                                                                                span { style: "font-size: .5rem; font-weight: 900; border: 1px solid color-mix(in srgb, var(--pastel-yellow) 30%, transparent); color: var(--pastel-yellow); padding: 0 .25rem; text-transform: uppercase;", "YOU" }
                                                                             }
                                                                         }
                                                                     }
@@ -534,7 +536,7 @@ pub fn Stats() -> Element {
                                 div { style: "display: flex; flex-direction: column; gap: 2rem;",
 
                                     // Record banner
-                                    div { class: "app-card", style: "padding: 1.5rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: .75rem; border-color: rgba(254,234,153,0.2);",
+                                    div { class: "app-card", style: "padding: 1.5rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: .75rem; border-color: color-mix(in srgb, var(--pastel-yellow) 20%, transparent);",
                                         h3 { class: "muted", style: "font-size: .625rem; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; margin: 0;", "CO-OP MATCH RECORD" }
                                         div { style: "display: flex; align-items: center; gap: 1rem; font-size: 1.5rem; font-weight: 900;",
                                             span { style: "color: var(--pastel-green);", "{h2h.record.wins} W" }
@@ -568,7 +570,7 @@ pub fn Stats() -> Element {
                                                         let pct = bar_pct(h2h.scores.user_total, h2h.scores.opponent_total);
                                                         rsx! {
                                                             div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-yellow);" }
-                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: #64748b;" }
+                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: var(--text-secondary);" }
                                                         }
                                                     }
                                                 }
@@ -591,7 +593,7 @@ pub fn Stats() -> Element {
                                                         let pct = bar_pct(h2h.scores.user_avg, h2h.scores.opponent_avg);
                                                         rsx! {
                                                             div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-yellow);" }
-                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: #64748b;" }
+                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: var(--text-secondary);" }
                                                         }
                                                     }
                                                 }
@@ -611,7 +613,7 @@ pub fn Stats() -> Element {
                                                         let pct = bar_pct(h2h.accuracy.user, h2h.accuracy.opponent);
                                                         rsx! {
                                                             div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-green);" }
-                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: #64748b;" }
+                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: var(--text-secondary);" }
                                                         }
                                                     }
                                                 }
@@ -972,7 +974,6 @@ const STATS_CSS: &str = r#"
 .st-podium-badge {
     width: 2.5rem;
     height: 2.5rem;
-    border-radius: .5rem;
     border: 1px solid;
     font-weight: 700;
     display: flex;
@@ -999,13 +1000,13 @@ const STATS_CSS: &str = r#"
     font-family: monospace;
 }
 .st-table-row {
-    border-bottom: 1px solid rgba(63,63,70,0.5);
+    border-bottom: 1px solid color-mix(in srgb, var(--border-hover) 50%, transparent);
     font-size: .75rem;
     font-family: monospace;
     transition: all .15s ease;
 }
-.st-table-row:hover { background: rgba(63,63,70,0.15); }
-.st-table-row-me { background: rgba(254,234,153,0.02); font-weight: 700; }
+.st-table-row:hover { background: color-mix(in srgb, var(--border-hover) 15%, transparent); }
+.st-table-row-me { background: color-mix(in srgb, var(--pastel-yellow) 2%, transparent); font-weight: 700; }
 .st-table-row td { padding: .875rem 1rem; }
 .st-stat-card {
     padding: 1rem;
@@ -1025,7 +1026,6 @@ const STATS_CSS: &str = r#"
     width: 100%;
     background: var(--bg-cell-empty);
     border: 1px solid var(--border-app);
-    border-radius: 9999px;
     overflow: hidden;
     display: flex;
 }

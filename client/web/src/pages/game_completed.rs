@@ -159,9 +159,9 @@ pub fn GameCompleted(id: String) -> Element {
                                 // Victory banner
                                 div {
                                     class: "app-card",
-                                    style: "padding: 2rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: .75rem; border-color: rgba(168,230,207,0.3);",
+                                    style: "padding: 2rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: .75rem; border-color: color-mix(in srgb, var(--pastel-green) 30%, transparent);",
                                     div {
-                                        style: "width: 4rem; height: 4rem; border-radius: 50%; background: rgba(168,230,207,0.1); border: 1px solid rgba(168,230,207,0.3); display: flex; align-items: center; justify-content: center; font-size: 2rem;",
+                                        style: "width: 4rem; height: 4rem; background: color-mix(in srgb, var(--pastel-green) 10%, transparent); border: 1px solid color-mix(in srgb, var(--pastel-green) 30%, transparent); display: flex; align-items: center; justify-content: center; font-size: 2rem;",
                                         "🎉"
                                     }
                                     h1 {
@@ -231,7 +231,7 @@ pub fn GameCompleted(id: String) -> Element {
                                                                 style: "font-size: .875rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: .375rem;",
                                                                 "{display_name}"
                                                                 if is_me {
-                                                                    span { style: "font-size: .5rem; font-weight: 700; letter-spacing: .1em; color: var(--pastel-yellow); border: 1px solid rgba(254,234,153,0.4); padding: 0 .25rem; text-transform: uppercase;", "YOU" }
+                                                                    span { style: "font-size: .5rem; font-weight: 700; letter-spacing: .1em; color: var(--pastel-yellow); border: 1px solid color-mix(in srgb, var(--pastel-yellow) 40%, transparent); padding: 0 .25rem; text-transform: uppercase;", "YOU" }
                                                                 }
                                                                 if score_record.member.is_owner {
                                                                     span { style: "font-size: .5rem; color: var(--text-secondary); opacity: .6;", "👑" }
@@ -326,7 +326,7 @@ pub fn GameCompleted(id: String) -> Element {
                                         Link {
                                             to: Route::Stats {},
                                             class: "app-btn",
-                                            style: "display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .625rem 1rem; text-align: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-yellow); border-color: rgba(254,234,153,0.3);",
+                                            style: "display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .625rem 1rem; text-align: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-yellow); border-color: color-mix(in srgb, var(--pastel-yellow) 30%, transparent);",
                                             "Career Stats Dashboard"
                                         }
                                         Link {
@@ -341,7 +341,7 @@ pub fn GameCompleted(id: String) -> Element {
                                 // Scoring info
                                 div {
                                     class: "app-card",
-                                    style: "padding: 1.25rem; border-color: rgba(254,234,153,0.1); background: rgba(254,234,153,0.02); font-family: monospace; font-size: .625rem; line-height: 1.6; color: var(--text-secondary); display: flex; gap: .5rem;",
+                                    style: "padding: 1.25rem; border-color: color-mix(in srgb, var(--pastel-yellow) 10%, transparent); background: color-mix(in srgb, var(--pastel-yellow) 2%, transparent); font-family: monospace; font-size: .625rem; line-height: 1.6; color: var(--text-secondary); display: flex; gap: .5rem;",
                                     span { style: "font-size: .875rem;", "💡" }
                                     div {
                                         span { style: "color: var(--text-primary); font-weight: 700; text-transform: uppercase; display: block; margin-bottom: .25rem;", "Scoring Mechanics" }
@@ -384,13 +384,12 @@ const COMPLETED_CSS: &str = r#"
     transition: all .2s ease;
 }
 .cg-rank-card-me {
-    border-color: rgba(254,234,153,0.4);
-    background: rgba(254,234,153,0.02);
+    border-color: color-mix(in srgb, var(--pastel-yellow) 40%, transparent);
+    background: color-mix(in srgb, var(--pastel-yellow) 2%, transparent);
 }
 .cg-avatar {
     width: 2.25rem;
     height: 2.25rem;
-    border-radius: 50%;
     background: var(--bg-cell-empty);
     border: 1px solid var(--border-app);
     display: flex;

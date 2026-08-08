@@ -140,15 +140,15 @@ const HOME_CSS: &str = "
 .home-welcome { height: 100%; display: flex; flex-direction: column; align-items: center;
   justify-content: center; text-align: center; gap: 1rem; padding: 1.75rem 1.5rem; }
 .home-title { font-family: var(--mono, monospace); font-size: 1.4rem; font-weight: 800; margin: 0;
-  letter-spacing: -.01em; color: var(--text-primary, var(--fg, #ededed)); }
-.home-tagline { color: var(--text-secondary, var(--dim, #7a7a7a)); max-width: 28rem; margin: 0;
+  letter-spacing: -.01em; color: var(--text-primary, var(--fg)); }
+.home-tagline { color: var(--text-secondary, var(--dim)); max-width: 28rem; margin: 0;
   line-height: 1.6; font-size: .88rem; }
 .home-features { display: flex; flex-direction: column; gap: .65rem; margin-top: .75rem;
   width: 100%; max-width: 26rem; }
 .home-feature { display: flex; align-items: flex-start; gap: .65rem; text-align: left;
-  padding: .55rem .7rem; border: 1px solid var(--border-app, var(--line2, #3a3a3a));
+  padding: .55rem .7rem; border: 1px solid var(--border-app, var(--line2));
   background: var(--bg-card, transparent); }
-.home-feature-icon { font-size: .8rem; color: var(--pastel-yellow, #ffbd2e); line-height: 1.4;
+.home-feature-icon { font-size: .8rem; color: var(--pastel-yellow); line-height: 1.4;
   flex-shrink: 0; min-width: 1.2rem; text-align: center; }
 .home-feature-body { flex: 1; min-width: 0; }
 .home-feature-title { margin: 0; font-size: .82rem; font-weight: 700; color: var(--text-primary, var(--fg)); }

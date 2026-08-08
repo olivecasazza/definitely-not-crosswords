@@ -421,13 +421,13 @@ pub fn AdminGenerator() -> Element {
                                         td { style: "padding:0.75rem 1rem",
                                             {
                                                 let bg = match job.status.as_str() {
-                                                    "SUCCEEDED" => "background:var(--color-success);color:#0f172a",
-                                                    "FAILED" => "background:var(--color-error);color:#0f172a",
-                                                    _ => "background:var(--pastel-yellow,#fde68a);color:#0f172a",
+                                                    "SUCCEEDED" => "background:var(--color-success);color:var(--contrast-ink)",
+                                                    "FAILED" => "background:var(--color-error);color:var(--contrast-ink)",
+                                                    _ => "background:var(--pastel-yellow);color:var(--contrast-ink)",
                                                 };
                                                 rsx! {
                                                     span {
-                                                        style: "padding:0.125rem 0.5rem;border-radius:0.25rem;font-size:0.625rem;font-weight:bold;text-transform:uppercase;{bg}",
+                                                        style: "padding:0.125rem 0.5rem;font-size:0.625rem;font-weight:bold;text-transform:uppercase;{bg}",
                                                         {job.status.clone()}
                                                     }
                                                 }

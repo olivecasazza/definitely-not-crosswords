@@ -214,12 +214,12 @@ pub fn Profile() -> Element {
                             }
 
                             if !success_msg.read().is_empty() {
-                                div { class: "success", style: "font-size: .75rem; font-family: monospace; padding: .875rem; border-radius: .75rem; border: 1px solid rgba(168,230,207,0.2); background: rgba(168,230,207,0.06);",
+                                div { class: "success", style: "font-size: .75rem; font-family: monospace; padding: .875rem; border: 1px solid color-mix(in srgb, var(--pastel-green) 20%, transparent); background: color-mix(in srgb, var(--pastel-green) 6%, transparent);",
                                     "{success_msg}"
                                 }
                             }
                             if !error_msg.read().is_empty() {
-                                div { class: "error", style: "font-size: .75rem; font-family: monospace; padding: .875rem; border-radius: .75rem; border: 1px solid rgba(255,140,140,0.2); background: rgba(255,140,140,0.06);",
+                                div { class: "error", style: "font-size: .75rem; font-family: monospace; padding: .875rem; border: 1px solid color-mix(in srgb, var(--pastel-red) 20%, transparent); background: color-mix(in srgb, var(--pastel-red) 6%, transparent);",
                                     "{error_msg}"
                                 }
                             }
@@ -257,7 +257,7 @@ pub fn Profile() -> Element {
                         // Danger zone
                         div {
                             class: "app-card",
-                            style: "padding: 1.5rem 2rem; display: flex; flex-direction: column; gap: 1.5rem; border-color: rgba(255,140,140,0.15); background: rgba(255,140,140,0.03);",
+                            style: "padding: 1.5rem 2rem; display: flex; flex-direction: column; gap: 1.5rem; border-color: color-mix(in srgb, var(--pastel-red) 15%, transparent); background: color-mix(in srgb, var(--pastel-red) 3%, transparent);",
                             div {
                                 h3 { style: "font-size: 1.125rem; font-weight: 700; font-family: monospace; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-red); margin: 0 0 .25rem 0;", "Danger Zone" }
                                 p { class: "muted", style: "font-size: .75rem; font-family: monospace; margin: 0;", "Permanently remove your account and all associated data" }
@@ -272,7 +272,7 @@ pub fn Profile() -> Element {
                                 }
                             } else {
                                 div {
-                                    style: "padding: 1rem; border-radius: .75rem; border: 1px solid rgba(255,140,140,0.2); background: rgba(255,140,140,0.05); display: flex; flex-direction: column; gap: 1rem;",
+                                    style: "padding: 1rem; border: 1px solid color-mix(in srgb, var(--pastel-red) 20%, transparent); background: color-mix(in srgb, var(--pastel-red) 5%, transparent); display: flex; flex-direction: column; gap: 1rem;",
                                     h4 { style: "font-size: .875rem; font-weight: 700; color: var(--pastel-red); text-transform: uppercase; font-family: monospace; margin: 0;", "Are you absolutely sure?" }
                                     p { class: "muted", style: "font-size: .75rem; line-height: 1.6; margin: 0;",
                                         "This action is irreversible. All of your stats, generation jobs, and account references will be deleted forever."
@@ -280,7 +280,7 @@ pub fn Profile() -> Element {
                                     div { style: "display: flex; flex-wrap: wrap; gap: .75rem;",
                                         button {
                                             class: "app-btn app-btn-active",
-                                            style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; padding: .625rem 1rem; background: var(--pastel-red); border-color: var(--pastel-red); color: #0f172a;",
+                                            style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; padding: .625rem 1rem; background: var(--pastel-red); border-color: var(--pastel-red); color: var(--contrast-ink);",
                                             disabled: *deleting.read(),
                                             onclick: handle_delete.clone(),
                                             if *deleting.read() { "Deleting..." } else { "Yes, Delete Account" }
@@ -330,15 +330,14 @@ const PROFILE_CSS: &str = r#"
 .pf-avatar-circle {
     width: 6rem;
     height: 6rem;
-    border-radius: 50%;
-    background: linear-gradient(to top right, var(--pastel-yellow), rgba(254,234,153,0.3));
+    background: linear-gradient(to top right, var(--pastel-yellow), color-mix(in srgb, var(--pastel-yellow) 30%, transparent));
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
     font-size: 1.875rem;
     color: var(--contrast-ink);
-    border: 4px solid rgba(255,255,255,0.05);
+    border: 4px solid color-mix(in srgb, var(--text-primary) 5%, transparent);
     text-transform: uppercase;
     user-select: none;
 }
@@ -348,7 +347,6 @@ const PROFILE_CSS: &str = r#"
     right: 0;
     width: 1.5rem;
     height: 1.5rem;
-    border-radius: 50%;
     background: var(--pastel-green);
     color: var(--contrast-ink);
     border: 2px solid var(--bg-card);

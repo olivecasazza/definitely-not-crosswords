@@ -1313,7 +1313,7 @@ const GAME_CSS: &str = r#"
 .cw-chip-clue { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .cw-invite-btn { margin-left: auto; padding: 4px 12px; font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .cw-invite-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
-.cw-join-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: rgba(9,9,11,0.55); backdrop-filter: blur(2px); }
+.cw-join-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: var(--scrim); backdrop-filter: blur(2px); }
 .cw-join-card { display: flex; flex-direction: column; gap: 12px; max-width: 22rem; padding: 24px 28px; text-align: center; background: var(--bg-card); border: 1px solid var(--border-app); }
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
 .cw-join-card p { margin: 0; font-size: 12px; }
@@ -1324,14 +1324,14 @@ const GAME_CSS: &str = r#"
    tracks then blow past the board's own width and `.cw-board-area`'s
    `overflow:hidden` clips the last columns/rows off. */
 .cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); min-width: 0; min-height: 0; }
-.cw-block { background: var(--bg-cell-empty); border: 1px solid rgba(39,39,42,0.25); opacity: 0.4; }
+.cw-block { background: var(--bg-cell-empty); border: 1px solid color-mix(in srgb, var(--border-app) 25%, transparent); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
 .cw-letter:hover { border-color: var(--border-hover); }
-.cw-focused { background: var(--pastel-yellow); color: #18181b; border: 1px solid var(--pastel-yellow); transform: scale(1.05); z-index: 2; }
-.cw-selected { background: rgba(254,234,153,0.18); color: var(--text-primary); border: 1px solid var(--pastel-yellow); }
+.cw-focused { background: var(--pastel-yellow); color: var(--contrast-ink); border: 1px solid var(--pastel-yellow); transform: scale(1.05); z-index: 2; }
+.cw-selected { background: color-mix(in srgb, var(--pastel-yellow) 18%, transparent); color: var(--text-primary); border: 1px solid var(--pastel-yellow); }
 .cw-placeholder { border: 2px solid var(--pastel-yellow); }
-.cw-incorrect { background: rgba(255,140,140,0.15); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
-.cw-correct { background: rgba(168,230,207,0.15); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
+.cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 15%, transparent); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
+.cw-correct { background: color-mix(in srgb, var(--pastel-green) 15%, transparent); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
 .cw-num { position: absolute; top: 2px; left: 3px; font-size: clamp(6px, 1.2vw, 9px); line-height: 1; color: var(--text-secondary); opacity: 0.85; font-weight: 700; pointer-events: none; }
 .cw-char { pointer-events: none; }
 
@@ -1345,15 +1345,15 @@ const GAME_CSS: &str = r#"
 .cw-empty-key-sep { font-size: var(--fs-2xs); color: var(--text-secondary); opacity: 0.7; }
 .cw-clue-head { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-app); padding-bottom: 8px; flex-wrap: wrap; }
 .cw-dir-badge { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em; padding: 2px 6px; border-radius: 0; border: 1px solid; }
-.cw-dir-across { background: rgba(254,234,153,0.1); color: var(--pastel-yellow); border-color: rgba(254,234,153,0.2); }
-.cw-dir-down { background: rgba(168,230,207,0.1); color: var(--pastel-green); border-color: rgba(168,230,207,0.2); }
+.cw-dir-across { background: color-mix(in srgb, var(--pastel-yellow) 10%, transparent); color: var(--pastel-yellow); border-color: color-mix(in srgb, var(--pastel-yellow) 20%, transparent); }
+.cw-dir-down { background: color-mix(in srgb, var(--pastel-green) 10%, transparent); color: var(--pastel-green); border-color: color-mix(in srgb, var(--pastel-green) 20%, transparent); }
 .cw-link-btn { margin-left: auto; background: none; border: none; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
 .cw-link-btn:hover { color: var(--text-primary); }
 .cw-clue-text { font-size: 15px; font-weight: 500; line-height: 1.5; color: var(--text-primary); }
 .cw-letters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 4px 0; }
 .cw-letter-input { width: 40px; height: 40px; text-align: center; font-size: 18px; font-weight: 700; text-transform: uppercase; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-primary); }
 .cw-letter-input:hover { border-color: var(--border-hover); }
-.cw-input-focused { border-color: var(--pastel-yellow); box-shadow: 0 0 12px rgba(254,234,153,0.25); }
+.cw-input-focused { border-color: var(--pastel-yellow); box-shadow: 0 0 12px color-mix(in srgb, var(--pastel-yellow) 25%, transparent); }
 .cw-clue-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: auto; }
 .cw-btn-cancel { font-family: var(--font-sans); padding: 8px 16px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; }
 .cw-btn-cancel:hover { color: var(--text-primary); border-color: var(--border-hover); }
@@ -1365,12 +1365,12 @@ const GAME_CSS: &str = r#"
 .cw-tabs { display: flex; gap: 4px; }
 .cw-tab { font-family: var(--font-sans); padding: 4px 12px; font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; }
 .cw-tab:hover { border-color: var(--border-hover); }
-.cw-tab-active-across { background: var(--pastel-yellow); color: #18181b; border-color: var(--pastel-yellow); font-weight: 700; }
-.cw-tab-active-down { background: var(--pastel-green); color: #18181b; border-color: var(--pastel-green); font-weight: 700; }
+.cw-tab-active-across { background: var(--pastel-yellow); color: var(--contrast-ink); border-color: var(--pastel-yellow); font-weight: 700; }
+.cw-tab-active-down { background: var(--pastel-green); color: var(--contrast-ink); border-color: var(--pastel-green); font-weight: 700; }
 .cw-clue-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
 .cw-clue-row { display: flex; gap: 10px; padding: 10px; border-radius: 0; border: 1px solid var(--border-app); cursor: pointer; }
 .cw-clue-row:hover { border-color: var(--border-hover); }
-.cw-clue-row-sel { background: rgba(254,234,153,0.04); border-color: rgba(254,234,153,0.4); }
+.cw-clue-row-sel { background: color-mix(in srgb, var(--pastel-yellow) 4%, transparent); border-color: color-mix(in srgb, var(--pastel-yellow) 40%, transparent); }
 .cw-clue-badge { width: 28px; height: 28px; flex-shrink: 0; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: var(--fs-md); background: var(--bg-cell-empty); color: var(--text-secondary); border: 1px solid var(--border-app); }
 .cw-clue-body { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .cw-clue-row-text { font-size: 13px; color: var(--text-secondary); line-height: 1.4; }
@@ -1378,8 +1378,8 @@ const GAME_CSS: &str = r#"
 .cw-bubble { width: 20px; height: 20px; border-radius: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .cw-bubble-empty { background: var(--bg-cell-empty); border: 1px solid var(--border-app); opacity: 0.3; }
 .cw-bubble.cw-placeholder { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--pastel-yellow); }
-.cw-bubble.cw-incorrect { background: rgba(255,140,140,0.18); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
-.cw-bubble.cw-correct { background: rgba(168,230,207,0.18); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
+.cw-bubble.cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 18%, transparent); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
+.cw-bubble.cw-correct { background: color-mix(in srgb, var(--pastel-green) 18%, transparent); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
 
 /* Desktop tiling stretches every panel to the full workspace height, which left
    Active Clue as a ~900px column holding one clue and a row of letter boxes.

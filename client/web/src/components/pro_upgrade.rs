@@ -20,7 +20,7 @@ const CSS: &str = r#"
   justify-content: space-between;
   padding: .875rem;
   border: 1px solid var(--border-app);
-  background: rgba(18,18,18,0.5);
+  background: color-mix(in srgb, var(--bg-app) 50%, transparent);
 }
 .pro-upgrade .plan-label {
   font-size: .625rem;
@@ -43,7 +43,7 @@ const CSS: &str = r#"
   font-weight: 700;
   text-transform: uppercase;
   background: var(--color-success);
-  color: #0f172a;
+  color: var(--contrast-ink);
 }
 .pro-upgrade .code-section {
   display: flex;
@@ -78,8 +78,8 @@ const CSS: &str = r#"
   font-size: .875rem;
   letter-spacing: .08em;
   text-transform: uppercase;
-  background: linear-gradient(to right, var(--pastel-yellow), rgba(254,234,153,0.7));
-  color: #0f172a;
+  background: linear-gradient(to right, var(--pastel-yellow), color-mix(in srgb, var(--pastel-yellow) 70%, transparent));
+  color: var(--contrast-ink);
   border: none;
   cursor: pointer;
   transition: transform .15s ease, opacity .15s ease;
@@ -96,9 +96,8 @@ const CSS: &str = r#"
   display: inline-block;
   width: 1rem;
   height: 1rem;
-  border: 2px solid #0f172a;
+  border: 2px solid var(--contrast-ink);
   border-top-color: transparent;
-  border-radius: 50%;
   animation: pu-spin .7s linear infinite;
 }
 "#;

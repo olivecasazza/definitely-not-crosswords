@@ -19,9 +19,9 @@ pub fn StagingBanner() -> Element {
     }
     rsx! {
         div {
-            style: "background:#fde68a;color:#0f172a;font-size:0.8rem;line-height:1.4;\
+            style: "background:var(--color-warning);color:var(--contrast-ink);font-size:0.8rem;line-height:1.4;\
                     padding:0.4rem 0.9rem;display:flex;gap:0.75rem;align-items:center;\
-                    justify-content:center;flex-wrap:wrap;border-bottom:1px solid #0f172a",
+                    justify-content:center;flex-wrap:wrap;border-bottom:1px solid var(--contrast-ink)",
             span {
                 b { "STAGING (beta) — " }
                 "Pro is $1 here, but this is a test environment: expect occasional data loss and unexpected changes. You're a beta tester. 🎈"

@@ -53,7 +53,7 @@ const ADMIN_NAV_CSS: &str = r#"
 .admin-nav-tabs { display: flex; flex-wrap: wrap; }
 .admin-tab { padding: 6px 14px; font-size: var(--fs-2xs); font-weight: 600; font-family: var(--font-sans); text-transform: uppercase; letter-spacing: 0.05em; border: none; border-right: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; transition: color .12s, background .12s; }
 .admin-tab:first-child { border-left: none; }
-.admin-tab:hover { color: var(--text-primary); background: rgba(255,255,255,0.03); }
-.admin-tab-active { background: var(--pastel-yellow); color: #18181b; }
-.admin-tab-active:hover { background: var(--pastel-yellow); color: #18181b; }
+.admin-tab:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.admin-tab-active { background: var(--pastel-yellow); color: var(--contrast-ink); }
+.admin-tab-active:hover { background: var(--pastel-yellow); color: var(--contrast-ink); }
 "#;

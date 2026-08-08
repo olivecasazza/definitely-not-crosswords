@@ -29,6 +29,9 @@ pub const DESIGN: &str = r#"
   --contrast-ink: #0f172a;
   --podium-silver: #cbd5e1;
   --podium-bronze: #d97706;
+  /* Modal/overlay scrim — deliberately theme-fixed: a dark veil reads
+     correctly over both themes. */
+  --scrim: rgba(0, 0, 0, .5);
 
   /* App fonts. --mono is defined in the panel-kit remap block below. */
   --font-sans: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;

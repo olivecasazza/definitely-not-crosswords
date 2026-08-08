@@ -413,7 +413,7 @@ pub fn AdminDiscounts() -> Element {
                                                 td { class: "muted", style: "padding:0.75rem 1rem", {expiry_str} }
                                                 td { style: "padding:0.75rem 1rem",
                                                     if test_mode {
-                                                        span { style: "border:1px solid var(--border-app);padding:0.125rem 0.5rem;border-radius:0.25rem;font-size:0.625rem;color:var(--text-secondary)",
+                                                        span { style: "border:1px solid var(--border-app);padding:0.125rem 0.5rem;font-size:0.625rem;color:var(--text-secondary)",
                                                             "Test"
                                                         }
                                                     } else {
@@ -423,9 +423,9 @@ pub fn AdminDiscounts() -> Element {
                                                 td { style: "padding:0.75rem 1rem",
                                                     span {
                                                         style: if is_active {
-                                                            "padding:0.125rem 0.5rem;border-radius:0.25rem;font-size:0.625rem;font-weight:bold;text-transform:uppercase;background:var(--color-success);color:#0f172a"
+                                                            "padding:0.125rem 0.5rem;font-size:0.625rem;font-weight:bold;text-transform:uppercase;background:var(--color-success);color:var(--contrast-ink)"
                                                         } else {
-                                                            "padding:0.125rem 0.5rem;border-radius:0.25rem;font-size:0.625rem;font-weight:bold;text-transform:uppercase;background:var(--border-app);color:var(--text-secondary)"
+                                                            "padding:0.125rem 0.5rem;font-size:0.625rem;font-weight:bold;text-transform:uppercase;background:var(--border-app);color:var(--text-secondary)"
                                                         },
                                                         if is_active { "Active" } else { "Inactive" }
                                                     }

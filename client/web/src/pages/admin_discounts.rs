@@ -81,6 +81,8 @@ pub fn AdminDiscounts() -> Element {
     let mut saving_ids = use_signal(Vec::<String>::new);
     let mut message = use_signal(String::new);
     let mut error_msg = use_signal(String::new);
+    // discount pending delete confirmation; Some => ConfirmModal is open
+    let mut pending_delete = use_signal(|| Option::<Discount>::None);
 
     // form fields
     let mut f_code = use_signal(String::new);
@@ -88,6 +90,7 @@ pub fn AdminDiscounts() -> Element {
     let mut f_amount_type = use_signal(|| "PERCENT".to_string());
     // raw string so empty = not provided
     let mut f_amount = use_signal(String::new);
+    let mut f_amount_err = use_signal(String::new);
     let mut f_duration = use_signal(|| "ONCE".to_string());
     let mut f_duration_months = use_signal(String::new);
     let mut f_max_redemptions = use_signal(String::new);
@@ -128,11 +131,16 @@ pub fn AdminDiscounts() -> Element {
 
         let raw_amount: f64 = match f_amount.read().parse() {
             Ok(v) => v,
-            Err(_) => return,
+            Err(_) => {
+                f_amount_err.set("Enter an amount greater than 0".to_string());
+                return;
+            }
         };
         if !raw_amount.is_finite() || raw_amount <= 0.0 {
+            f_amount_err.set("Enter an amount greater than 0".to_string());
             return;
         }
+        f_amount_err.set(String::new());
         // FIXED: front-end enters dollars, server wants cents
         let amount = if amount_type == "FIXED" {
             (raw_amount * 100.0).round() as i64
@@ -272,10 +280,18 @@ pub fn AdminDiscounts() -> Element {
                                 step: "1",
                                 required: true,
                                 value: "{f_amount}",
-                                oninput: move |e| f_amount.set(e.value()),
+                                oninput: move |e| {
+                                    f_amount.set(e.value());
+                                    f_amount_err.set(String::new());
+                                },
                             }
                             span { class: "muted", style: "font-size:0.75rem;white-space:nowrap",
                                 if f_amount_type.read().as_str() == "PERCENT" { "%" } else { "USD" }
+                            }
+                        }
+                        if !f_amount_err.read().is_empty() {
+                            span { class: "error", style: "font-size:var(--fs-2xs);text-transform:none",
+                                {f_amount_err.read().clone()}
                             }
                         }
                         if f_amount_type.read().as_str() == "FIXED" {
@@ -395,7 +411,7 @@ pub fn AdminDiscounts() -> Element {
                                         let dname = discount.name.clone();
 
                                         let did_active = did.clone();
-                                        let did_remove = did.clone();
+                                        let d_for_delete = discount.clone();
                                         let dcode_msg = dcode.clone();
 
                                         rsx! {
@@ -407,7 +423,28 @@ pub fn AdminDiscounts() -> Element {
                                                 td { class: "muted", style: "padding:0.75rem 1rem", {amount_str} }
                                                 td { class: "muted", style: "padding:0.75rem 1rem", {duration_str} }
                                                 td { class: "muted", style: "padding:0.75rem 1rem",
-                                                    {format!("{} / {}", times, max_red.map(|n| n.to_string()).unwrap_or_else(|| "∞".to_string()))}
+                                                    {
+                                                        match max_red {
+                                                            Some(max) => {
+                                                                let pct = if max > 0 {
+                                                                    ((times as f64 / max as f64) * 100.0).clamp(0.0, 100.0)
+                                                                } else {
+                                                                    0.0
+                                                                };
+                                                                rsx! {
+                                                                    div { class: "col", style: "gap:0.25rem;min-width:80px",
+                                                                        span { {format!("{times} / {max}")} }
+                                                                        div { style: "height:3px;width:100%;background:var(--bg-cell-empty)",
+                                                                            div { style: format!("height:100%;width:{pct:.0}%;background:var(--pastel-yellow)") }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            None => rsx! {
+                                                                span { {format!("{times} / ∞")} }
+                                                            },
+                                                        }
+                                                    }
                                                 }
                                                 td { class: "muted", style: "padding:0.75rem 1rem", {expiry_str} }
                                                 td { style: "padding:0.75rem 1rem",
@@ -466,26 +503,7 @@ pub fn AdminDiscounts() -> Element {
                                                                     class: "app-btn error",
                                                                     style: "font-size:0.75rem;padding:0.25rem 0.5rem",
                                                                     disabled: is_busy,
-                                                                    onclick: move |_| {
-                                                                        let id = did_remove.clone();
-                                                                        let code = dcode.clone();
-                                                                        saving_ids.write().push(id.clone());
-                                                                        message.set(String::new());
-                                                                        error_msg.set(String::new());
-                                                                        spawn_local(async move {
-                                                                            match mutation("discount.remove", Some(json!({"id": id}))).await {
-                                                                                Ok(_) => {
-                                                                                    message.set(format!("Deleted code {code}."));
-                                                                                    refresh();
-                                                                                }
-                                                                                Err(e) => {
-                                                                                    error_msg.set(trpc_err_msg(e));
-                                                                                    refresh();
-                                                                                }
-                                                                            }
-                                                                            saving_ids.write().retain(|x| x != &id);
-                                                                        });
-                                                                    },
+                                                                    onclick: move |_| pending_delete.set(Some(d_for_delete.clone())),
                                                                     "Delete"
                                                                 }
                                                             }
@@ -527,6 +545,43 @@ pub fn AdminDiscounts() -> Element {
                 onmouseup: move |_| ws.handle_mouse_up(),
                 {ws.render(body)}
                 {ws.dock()}
+            }
+            {
+                pending_delete.read().clone().map(|d| {
+                    let del_id = d.id.clone();
+                    let del_code = d.code.clone();
+                    let busy = saving_ids.read().contains(&del_id);
+                    rsx! {
+                        crate::components::ui::ConfirmModal {
+                            title: format!("Delete {del_code}?"),
+                            body: "This permanently deletes the code here and in Lemon Squeezy.".to_string(),
+                            confirm_label: "Delete".to_string(),
+                            busy,
+                            on_confirm: move |_| {
+                                let id = del_id.clone();
+                                let code = del_code.clone();
+                                saving_ids.write().push(id.clone());
+                                message.set(String::new());
+                                error_msg.set(String::new());
+                                spawn_local(async move {
+                                    match mutation("discount.remove", Some(json!({"id": id}))).await {
+                                        Ok(_) => {
+                                            message.set(format!("Deleted code {code}."));
+                                            refresh();
+                                        }
+                                        Err(e) => {
+                                            error_msg.set(trpc_err_msg(e));
+                                            refresh();
+                                        }
+                                    }
+                                    saving_ids.write().retain(|x| x != &id);
+                                    pending_delete.set(None);
+                                });
+                            },
+                            on_cancel: move |_| pending_delete.set(None),
+                        }
+                    }
+                })
             }
         }
     }

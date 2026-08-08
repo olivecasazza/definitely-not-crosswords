@@ -5,10 +5,11 @@ use serde_json::json;
 
 use wasm_bindgen_futures::spawn_local;
 
+use crate::components::game_list::error_status;
 use crate::components::identicon::Identicon;
 use crate::components::ui::{self, RankBadge};
 use crate::net;
-use crate::store::use_app_state;
+use crate::store::{use_app_state, Severity};
 use crate::Route;
 use crossword_core::fmt::format_date;
 
@@ -149,6 +150,17 @@ struct MyTeam {
     is_owner: bool,
 }
 
+/// Row from `team.list` — public teams only (PRIVATE never leaves the server).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicTeam {
+    id: String,
+    name: String,
+    member_count: i64,
+    max_size: i64,
+    visibility: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MyInvite {
@@ -244,7 +256,6 @@ pub fn Stats() -> Element {
     // private teams are invite-only.
     let team_name = use_signal(String::new);
     let team_private = use_signal(|| false);
-    let team_msg = use_signal(String::new);
     let team_refresh = use_signal(|| 0u32);
     // Per-team invite input text, keyed by team id.
     let invite_inputs = use_signal(std::collections::HashMap::<String, String>::new);
@@ -252,14 +263,18 @@ pub fn Stats() -> Element {
         let _ = team_refresh.read();
         net::query_as::<Vec<TeamBoardEntry>>("team.getTeamLeaderboard", None).await
     });
-    let my_teams_res = use_resource(move || async move {
+    let mut team_list_res = use_resource(move || async move {
+        let _ = team_refresh.read();
+        net::query_as::<Vec<PublicTeam>>("team.list", None).await
+    });
+    let mut my_teams_res = use_resource(move || async move {
         let _ = team_refresh.read();
         if state.user().is_none() {
             return None;
         }
         Some(net::query_as::<Vec<MyTeam>>("team.myTeams", None).await)
     });
-    let my_invites_res = use_resource(move || async move {
+    let mut my_invites_res = use_resource(move || async move {
         let _ = team_refresh.read();
         if state.user().is_none() {
             return None;
@@ -683,9 +698,14 @@ pub fn Stats() -> Element {
                 let signed_in = state.user().is_some();
                 let mut team_name = team_name;
                 let mut team_private = team_private;
-                let mut team_msg = team_msg;
                 let mut team_refresh = team_refresh;
                 let mut invite_inputs = invite_inputs;
+                // Teams the user already belongs to — hides "Join" in the directory.
+                let my_team_ids: std::collections::HashSet<String> =
+                    match &*my_teams_res.read_unchecked() {
+                        Some(Some(Ok(teams))) => teams.iter().map(|t| t.id.clone()).collect(),
+                        _ => Default::default(),
+                    };
                 rsx! {
                     div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
 
@@ -710,7 +730,7 @@ pub fn Stats() -> Element {
                                         onclick: move |_| {
                                             let name = team_name.peek().clone();
                                             if name.trim().len() < 2 {
-                                                team_msg.set("Team name must be at least 2 characters.".into());
+                                                state.toast(Severity::Error, "Team name must be at least 2 characters.");
                                                 return;
                                             }
                                             let visibility = if *team_private.peek() { "PRIVATE" } else { "PUBLIC" };
@@ -718,10 +738,10 @@ pub fn Stats() -> Element {
                                                 match net::mutation("team.create", Some(json!({ "name": name, "visibility": visibility }))).await {
                                                     Ok(_) => {
                                                         team_name.set(String::new());
-                                                        team_msg.set("Team created!".into());
+                                                        state.toast(Severity::Success, "Team created!");
                                                         let n = *team_refresh.peek(); team_refresh.set(n + 1);
                                                     }
-                                                    Err(e) => team_msg.set(trpc_err(&e)),
+                                                    Err(e) => state.toast(Severity::Error, trpc_err(&e)),
                                                 }
                                             });
                                         },
@@ -730,21 +750,25 @@ pub fn Stats() -> Element {
                                 }
                                 p { class: "muted", style: "font-size: .625rem; margin: 0;", "Free teams hold 4 · Pro teams hold 10." }
                             }
-                            if !team_msg.read().is_empty() {
-                                span { class: "muted", style: "font-size: .6875rem; font-family: monospace;", "{team_msg}" }
-                            }
                         }
 
                         // Pending invitations
                         if signed_in {
-                            if let Some(Some(Ok(invites))) = &*my_invites_res.read_unchecked() {
-                                if !invites.is_empty() {
+                            match &*my_invites_res.read_unchecked() {
+                                Some(Some(Err(e))) => rsx! {
+                                    div { style: "display: flex; flex-direction: column; gap: .5rem;",
+                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Invitations" }
+                                        {error_status(&trpc_err(e), move |_| my_invites_res.restart())}
+                                    }
+                                },
+                                Some(Some(Ok(invites))) if !invites.is_empty() => rsx! {
                                     div { style: "display: flex; flex-direction: column; gap: .5rem;",
                                         span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Invitations" }
                                         for inv in invites.clone() {
                                             {
                                                 let iid_a = inv.id.clone();
                                                 let iid_d = inv.id.clone();
+                                                let tname = inv.team_name.clone();
                                                 rsx! {
                                                     div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem;",
                                                         div { style: "display: flex; flex-direction: column;",
@@ -756,10 +780,11 @@ pub fn Stats() -> Element {
                                                                 class: "app-btn app-btn-active", style: "font-size: .65rem;",
                                                                 onclick: move |_| {
                                                                     let id = iid_a.clone();
+                                                                    let nm = tname.clone();
                                                                     spawn_local(async move {
                                                                         match net::mutation("team.respondToInvite", Some(json!({ "inviteId": id, "accept": true }))).await {
-                                                                            Ok(_) => { team_msg.set("Joined!".into()); let n = *team_refresh.peek(); team_refresh.set(n + 1); }
-                                                                            Err(e) => team_msg.set(trpc_err(&e)),
+                                                                            Ok(_) => { state.toast(Severity::Success, format!("Joined {nm}!")); let n = *team_refresh.peek(); team_refresh.set(n + 1); }
+                                                                            Err(e) => state.toast(Severity::Error, trpc_err(&e)),
                                                                         }
                                                                     });
                                                                 },
@@ -770,8 +795,10 @@ pub fn Stats() -> Element {
                                                                 onclick: move |_| {
                                                                     let id = iid_d.clone();
                                                                     spawn_local(async move {
-                                                                        let _ = net::mutation("team.respondToInvite", Some(json!({ "inviteId": id, "accept": false }))).await;
-                                                                        let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                                        match net::mutation("team.respondToInvite", Some(json!({ "inviteId": id, "accept": false }))).await {
+                                                                            Ok(_) => { state.toast(Severity::Success, "Invite declined."); let n = *team_refresh.peek(); team_refresh.set(n + 1); }
+                                                                            Err(e) => state.toast(Severity::Error, trpc_err(&e)),
+                                                                        }
                                                                     });
                                                                 },
                                                                 "Decline"
@@ -782,14 +809,21 @@ pub fn Stats() -> Element {
                                             }
                                         }
                                     }
-                                }
+                                },
+                                _ => rsx! {},
                             }
                         }
 
                         // My teams (invite, toggle visibility, leave)
                         if signed_in {
-                            if let Some(Some(Ok(teams))) = &*my_teams_res.read_unchecked() {
-                                if !teams.is_empty() {
+                            match &*my_teams_res.read_unchecked() {
+                                Some(Some(Err(e))) => rsx! {
+                                    div { style: "display: flex; flex-direction: column; gap: .5rem;",
+                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "My Teams" }
+                                        {error_status(&trpc_err(e), move |_| my_teams_res.restart())}
+                                    }
+                                },
+                                Some(Some(Ok(teams))) if !teams.is_empty() => rsx! {
                                     div { style: "display: flex; flex-direction: column; gap: .5rem;",
                                         span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "My Teams" }
                                         for t in teams.clone() {
@@ -799,6 +833,7 @@ pub fn Stats() -> Element {
                                                 let tid_inv = t.id.clone();
                                                 let tid_vis = t.id.clone();
                                                 let tid_input = t.id.clone();
+                                                let tname = t.name.clone();
                                                 let vis = t.visibility.clone();
                                                 let next_vis = if vis == "PRIVATE" { "PUBLIC" } else { "PRIVATE" };
                                                 let full = t.member_count >= t.max_size;
@@ -817,8 +852,10 @@ pub fn Stats() -> Element {
                                                                         onclick: move |_| {
                                                                             let id = tid_vis.clone();
                                                                             spawn_local(async move {
-                                                                                let _ = net::mutation("team.setVisibility", Some(json!({ "teamId": id, "visibility": next_vis }))).await;
-                                                                                let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                                                match net::mutation("team.setVisibility", Some(json!({ "teamId": id, "visibility": next_vis }))).await {
+                                                                                    Ok(_) => { state.toast(Severity::Success, format!("Team is now {next_vis}.")); let n = *team_refresh.peek(); team_refresh.set(n + 1); }
+                                                                                    Err(e) => state.toast(Severity::Error, trpc_err(&e)),
+                                                                                }
                                                                             });
                                                                         },
                                                                         "Make {next_vis}"
@@ -828,9 +865,12 @@ pub fn Stats() -> Element {
                                                                     class: "app-btn", style: "font-size: .65rem;",
                                                                     onclick: move |_| {
                                                                         let id = tid.clone();
+                                                                        let nm = tname.clone();
                                                                         spawn_local(async move {
-                                                                            let _ = net::mutation("team.leave", Some(json!({ "teamId": id }))).await;
-                                                                            let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                                            match net::mutation("team.leave", Some(json!({ "teamId": id }))).await {
+                                                                                Ok(_) => { state.toast(Severity::Success, format!("Left {nm}.")); let n = *team_refresh.peek(); team_refresh.set(n + 1); }
+                                                                                Err(e) => state.toast(Severity::Error, trpc_err(&e)),
+                                                                            }
                                                                         });
                                                                     },
                                                                     "Leave"
@@ -852,8 +892,8 @@ pub fn Stats() -> Element {
                                                                         if who.trim().is_empty() { return; }
                                                                         spawn_local(async move {
                                                                             match net::mutation("team.invite", Some(json!({ "teamId": id, "identifier": who }))).await {
-                                                                                Ok(_) => { team_msg.set("Invite sent.".into()); invite_inputs.write().remove(&id); let n = *team_refresh.peek(); team_refresh.set(n + 1); }
-                                                                                Err(e) => team_msg.set(trpc_err(&e)),
+                                                                                Ok(_) => { state.toast(Severity::Success, "Invite sent."); invite_inputs.write().remove(&id); let n = *team_refresh.peek(); team_refresh.set(n + 1); }
+                                                                                Err(e) => state.toast(Severity::Error, trpc_err(&e)),
                                                                             }
                                                                         });
                                                                     },
@@ -866,7 +906,8 @@ pub fn Stats() -> Element {
                                             }
                                         }
                                     }
-                                }
+                                },
+                                _ => rsx! {},
                             }
                         }
 
@@ -884,7 +925,7 @@ pub fn Stats() -> Element {
                                         {
                                             let t = t.clone();
                                             let badge = ui::rank_badge_style(i);
-                                            let joinable = signed_in && t.visibility == "PUBLIC" && t.member_count < t.max_size;
+                                            let joinable = signed_in && t.visibility == "PUBLIC" && t.member_count < t.max_size && !my_team_ids.contains(&t.id);
                                             let is_private = t.visibility == "PRIVATE";
                                             rsx! {
                                                 div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; gap: .75rem;",
@@ -903,10 +944,10 @@ pub fn Stats() -> Element {
                                                                 spawn_local(async move {
                                                                     match net::mutation("team.join", Some(json!({ "teamId": id }))).await {
                                                                         Ok(_) => {
-                                                                            team_msg.set(format!("Joined {nm}!"));
+                                                                            state.toast(Severity::Success, format!("Joined {nm}!"));
                                                                             let n = *team_refresh.peek(); team_refresh.set(n + 1);
                                                                         }
-                                                                        Err(e) => team_msg.set(trpc_err(&e)),
+                                                                        Err(e) => state.toast(Severity::Error, trpc_err(&e)),
                                                                     }
                                                                 });
                                                             },
@@ -914,6 +955,60 @@ pub fn Stats() -> Element {
                                                         }
                                                     } else if is_private {
                                                         span { class: "muted", style: "font-size: .58rem; text-transform: uppercase;", "private" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                            }
+                        }
+
+                        // Browse teams — public directory (team.list), joinable when open
+                        div { style: "display: flex; flex-direction: column; gap: .5rem;",
+                            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Browse Teams" }
+                            match &*team_list_res.read_unchecked() {
+                                None => rsx! { div { class: "muted st-loading", "Loading team directory..." } },
+                                Some(Err(e)) => rsx! { {error_status(&trpc_err(e), move |_| team_list_res.restart())} },
+                                Some(Ok(teams)) if teams.is_empty() => rsx! {
+                                    div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: .75rem; color: var(--text-secondary);", "No public teams to browse yet." }
+                                },
+                                Some(Ok(teams)) => rsx! {
+                                    for t in teams.iter() {
+                                        {
+                                            let t = t.clone();
+                                            let is_member = my_team_ids.contains(&t.id);
+                                            let full = t.member_count >= t.max_size;
+                                            let joinable = signed_in && t.visibility == "PUBLIC" && !full && !is_member;
+                                            rsx! {
+                                                div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; gap: .75rem;",
+                                                    div { style: "flex: 1; display: flex; flex-direction: column; min-width: 0;",
+                                                        span { style: "font-weight: 700; font-size: .8rem;", "{t.name}" }
+                                                        span { class: "muted", style: "font-size: .6rem; text-transform: uppercase;", "{t.member_count}/{t.max_size} members" }
+                                                    }
+                                                    span { class: "muted", style: "font-size: .58rem; text-transform: uppercase; border: 1px solid var(--border-app); padding: 0 .3rem;", "{t.visibility}" }
+                                                    if is_member {
+                                                        span { class: "muted", style: "font-size: .58rem; text-transform: uppercase;", "member" }
+                                                    } else if full {
+                                                        span { class: "muted", style: "font-size: .58rem; text-transform: uppercase;", "full" }
+                                                    } else if joinable {
+                                                        button {
+                                                            class: "app-btn", style: "font-size: .6875rem;",
+                                                            onclick: move |_| {
+                                                                let id = t.id.clone();
+                                                                let nm = t.name.clone();
+                                                                spawn_local(async move {
+                                                                    match net::mutation("team.join", Some(json!({ "teamId": id }))).await {
+                                                                        Ok(_) => {
+                                                                            state.toast(Severity::Success, format!("Joined {nm}!"));
+                                                                            let n = *team_refresh.peek(); team_refresh.set(n + 1);
+                                                                        }
+                                                                        Err(e) => state.toast(Severity::Error, trpc_err(&e)),
+                                                                    }
+                                                                });
+                                                            },
+                                                            "Join"
+                                                        }
                                                     }
                                                 }
                                             }

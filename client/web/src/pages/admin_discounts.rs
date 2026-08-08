@@ -1,4 +1,3 @@
-use crate::components::admin_nav::AdminNav;
 use crate::net::{mutation, query, trpc_err_msg};
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
@@ -521,7 +520,6 @@ pub fn AdminDiscounts() -> Element {
 
     rsx! {
         div { class: "col", style: "height:100%",
-            AdminNav {}
             div {
                 class: ws.root_class(),
                 tabindex: "0",

@@ -14,9 +14,7 @@ pub fn AppFooter() -> Element {
                 span { class: "app-version", "v{version}" }
             }
             nav { class: "site-footer-nav",
-                a { class: "muted", href: "https://github.com/ocasazza", "GitHub" }
-                a { class: "muted", href: "#", "Privacy" }
-                a { class: "muted", href: "#", "Terms" }
+                a { class: "muted", href: "https://github.com/olivecasazza/definitely-not-crosswords", "GitHub" }
             }
         }
         style { {FOOTER_CSS} }
@@ -41,4 +39,6 @@ const FOOTER_CSS: &str = "
 }
 .site-footer-nav a { text-decoration: none; }
 .site-footer-nav a:hover { color: var(--text-primary); }
+/* Mobile: the TabBar owns the bottom edge; version/GitHub move to Profile later. */
+@media (max-width: 760px) { .site-footer { display: none; } }
 ";

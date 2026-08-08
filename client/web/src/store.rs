@@ -114,6 +114,16 @@ pub struct Toast {
     pub msg: String,
 }
 
+/// The signed-in user's most recent in-progress game, cached once at store
+/// level from `gameList.get`. Powers the header ▶ Resume button (and later the
+/// Home/Games resume surfaces) without per-page refetching.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActiveGameSummary {
+    pub id: String,
+    pub title: String,
+    pub at: Option<String>,
+}
+
 #[derive(Clone, Copy)]
 pub struct AppState {
     /// `None` = still loading; `Some(None)` = signed out; `Some(Some(u))` = user.
@@ -123,6 +133,11 @@ pub struct AppState {
     pub config: Signal<Option<AppConfig>>,
     /// Live toasts, rendered by `components::ui::ToastHost` in the shell.
     pub toasts: Signal<Vec<Toast>>,
+    /// Most recent in-progress game; `None` while loading / signed out / none.
+    pub active_game: Signal<Option<ActiveGameSummary>>,
+    /// Whether the staging strip was dismissed (persisted; header shows the
+    /// BETA chip instead once true).
+    pub banner_dismissed: Signal<bool>,
 }
 
 impl AppState {
@@ -169,6 +184,10 @@ pub fn provide_app_state() -> AppState {
         sub: Signal::new(None),
         config: Signal::new(None),
         toasts: Signal::new(Vec::new()),
+        active_game: Signal::new(None),
+        banner_dismissed: Signal::new(
+            LocalStorage::get::<bool>("staging_dismissed").unwrap_or(false),
+        ),
     });
     use_hook(|| {
         let mut session = state.session;
@@ -207,10 +226,45 @@ pub fn provide_app_state() -> AppState {
                         state.toast(Severity::Warning, "Couldn't load your subscription status.")
                     }
                 }
+                let mut active_game = state.active_game;
+                active_game.set(fetch_active_game().await);
             }
         });
     });
     state
+}
+
+/// Latest ActiveGame row from `gameList.get` (best-effort; None on any error —
+/// the Resume affordances just don't render).
+async fn fetch_active_game() -> Option<ActiveGameSummary> {
+    let v = crate::net::query("gameList.get", None).await.ok()?;
+    let mut best: Option<(f64, ActiveGameSummary)> = None;
+    for item in v.as_array()? {
+        if item["type"] != "ActiveGame" {
+            continue;
+        }
+        let Some(id) = item["id"].as_str() else {
+            continue;
+        };
+        let at = item["at"].as_str().map(|s| s.to_string());
+        let ms = at
+            .as_deref()
+            .map(js_sys::Date::parse)
+            .filter(|m| !m.is_nan())
+            .unwrap_or(0.0);
+        let summary = ActiveGameSummary {
+            id: id.to_string(),
+            title: item["game"]["title"]
+                .as_str()
+                .unwrap_or("Untitled")
+                .to_string(),
+            at,
+        };
+        if best.as_ref().map(|(b, _)| ms > *b).unwrap_or(true) {
+            best = Some((ms, summary));
+        }
+    }
+    best.map(|(_, s)| s)
 }
 
 pub fn use_app_state() -> AppState {
@@ -232,6 +286,8 @@ pub async fn refresh_session(state: AppState) {
                 if let Ok(s) = fetch_sub().await {
                     sub.set(Some(s));
                 }
+                let mut active_game = state.active_game;
+                active_game.set(fetch_active_game().await);
             }
         }
         Err(_) => {

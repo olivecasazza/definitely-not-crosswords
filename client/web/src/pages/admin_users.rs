@@ -1,4 +1,3 @@
-use crate::components::admin_nav::AdminNav;
 use crate::net::{mutation, query};
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
@@ -374,7 +373,6 @@ pub fn AdminUsers() -> Element {
             tabindex: "0",
             onmousemove: move |e| ws.handle_mouse_move(&e),
             onmouseup: move |_| ws.handle_mouse_up(),
-            AdminNav {}
             {ws.render(body)}
             {ws.dock()}
         }

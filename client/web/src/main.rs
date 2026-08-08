@@ -12,7 +12,8 @@ mod store;
 mod styles;
 
 use components::{
-    footer::AppFooter, header::AppHeader, staging_banner::StagingBanner, ui::ToastHost,
+    admin_nav::AdminStrip, footer::AppFooter, header::AppHeader, staging_banner::StagingBanner,
+    tab_bar::TabBar, ui::ToastHost,
 };
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, Storage};
@@ -98,16 +99,29 @@ fn App() -> Element {
     }
 }
 
-/// Layout shell wrapping every route: sticky header, routed `Outlet`, footer.
+/// Layout shell wrapping every route: sticky header, admin strip on `/admin*`,
+/// routed `Outlet`, toasts, footer (desktop), tab bar (mobile).
 #[component]
 fn Shell() -> Element {
+    let route = use_route::<Route>();
+    let is_admin_route = matches!(
+        route,
+        Route::AdminIndex {}
+            | Route::AdminGenerator {}
+            | Route::AdminUsers {}
+            | Route::AdminDiscounts {}
+    );
     rsx! {
         div { class: "app-shell",
             StagingBanner {}
             AppHeader {}
+            if is_admin_route {
+                AdminStrip {}
+            }
             main { class: "app-main", Outlet::<Route> {} }
             ToastHost {}
             AppFooter {}
+            TabBar {}
         }
     }
 }

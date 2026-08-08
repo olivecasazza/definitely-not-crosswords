@@ -1,4 +1,3 @@
-use crate::components::admin_nav::AdminNav;
 use crate::Route;
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
@@ -67,7 +66,6 @@ pub fn AdminIndex() -> Element {
     };
 
     rsx! {
-        AdminNav {}
         div {
             class: ws.root_class(),
             tabindex: "0",

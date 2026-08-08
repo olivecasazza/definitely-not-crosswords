@@ -1,4 +1,3 @@
-use crate::components::admin_nav::AdminNav;
 use crate::components::generation_progress::{GenerationProgress, Progress};
 use crate::net::{mutation, query, subscribe, Subscription};
 use crate::Route;
@@ -478,7 +477,6 @@ pub fn AdminGenerator() -> Element {
     };
 
     rsx! {
-        AdminNav {}
         div {
             class: ws.root_class(),
             tabindex: "0",

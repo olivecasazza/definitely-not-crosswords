@@ -169,6 +169,37 @@ a { color: inherit; text-decoration: none; }
 @keyframes square-pulse { 0%, 100% { opacity: .15; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .square-pulse-cell { animation: none; opacity: .6; } }
 
+/* ── Modal + drawer (components/ui.rs) ──────────────────────────────────── */
+.modal-scrim, .drawer-scrim {
+  position: fixed; inset: 0; z-index: 200; background: var(--scrim);
+  display: flex; align-items: center; justify-content: center;
+}
+.confirm-modal {
+  border-color: var(--color-error); width: min(24rem, calc(100vw - 2rem));
+  padding: 1.1rem 1.25rem; display: flex; flex-direction: column; gap: .75rem;
+}
+.confirm-modal-title { margin: 0; font-family: var(--mono, monospace); font-size: var(--fs-md);
+  text-transform: uppercase; letter-spacing: .05em; }
+.confirm-modal-body { margin: 0; font-size: var(--fs-xs); line-height: 1.6; }
+.confirm-modal-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+.confirm-modal-danger { color: var(--color-error); border-color: var(--color-error); }
+.confirm-modal-danger:hover { background: color-mix(in srgb, var(--color-error) 12%, transparent); }
+.drawer-scrim { justify-content: flex-end; align-items: stretch; }
+.drawer {
+  width: min(380px, 92vw); background: var(--bg-card);
+  border-left: 1px solid var(--border-app); display: flex; flex-direction: column;
+}
+.drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .6rem .9rem; border-bottom: 1px solid var(--border-app);
+}
+.drawer-title { font-family: var(--mono, monospace); font-size: var(--fs-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em; }
+.drawer-close { background: none; border: none; color: var(--text-secondary); cursor: pointer;
+  font-size: var(--fs-md); padding: .15rem .35rem; }
+.drawer-close:hover { color: var(--text-primary); }
+.drawer-body { padding: .9rem; overflow-y: auto; display: flex; flex-direction: column; gap: .75rem; }
+
 /* ── Toasts (components/ui.rs ToastHost) ────────────────────────────────── */
 .toast-host { position: fixed; top: 3.5rem; right: 1rem; z-index: 300;
   display: flex; flex-direction: column; gap: .5rem; max-width: 22rem; pointer-events: none; }

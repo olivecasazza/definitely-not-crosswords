@@ -29,6 +29,68 @@ pub fn ToastHost() -> Element {
     }
 }
 
+/// The app's only modal — destructive confirms exclusively (editing uses
+/// drawers). Red border; the action + object are echoed in `title` (e.g.
+/// "Delete LAUNCH50?") so the second click is informed. `busy` disables the
+/// confirm button while the mutation is in flight.
+#[component]
+pub fn ConfirmModal(
+    title: String,
+    body: String,
+    confirm_label: String,
+    busy: bool,
+    on_confirm: EventHandler<()>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div { class: "modal-scrim", onclick: move |_| on_cancel.call(()),
+            div {
+                class: "app-card confirm-modal",
+                role: "alertdialog",
+                aria_modal: "true",
+                onclick: move |e| e.stop_propagation(),
+                h2 { class: "confirm-modal-title", "{title}" }
+                p { class: "muted confirm-modal-body", "{body}" }
+                div { class: "confirm-modal-actions",
+                    button { class: "app-btn", onclick: move |_| on_cancel.call(()), "Cancel" }
+                    button {
+                        class: "app-btn confirm-modal-danger",
+                        disabled: busy,
+                        onclick: move |_| on_confirm.call(()),
+                        "{confirm_label}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Right-side panel sliding over the workspace (admin pattern: detail /
+/// create forms). Scrim click or the ✕ closes; the caller owns open-state.
+#[component]
+pub fn Drawer(title: String, on_close: EventHandler<()>, children: Element) -> Element {
+    rsx! {
+        div { class: "drawer-scrim", onclick: move |_| on_close.call(()),
+            aside {
+                class: "drawer",
+                role: "dialog",
+                aria_modal: "true",
+                onclick: move |e| e.stop_propagation(),
+                div { class: "drawer-head",
+                    span { class: "drawer-title", "{title}" }
+                    button {
+                        class: "drawer-close",
+                        aria_label: "Close",
+                        onclick: move |_| on_close.call(()),
+                        "✕"
+                    }
+                }
+                div { class: "drawer-body", {children} }
+            }
+        }
+    }
+}
+
 /// Podium colours come from the palette tokens in `styles.rs` so they flip with
 /// the theme instead of hardcoding hex per rank.
 pub fn rank_badge_style(index: usize) -> &'static str {

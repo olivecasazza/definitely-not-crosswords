@@ -1,7 +1,5 @@
 use crate::components::admin_nav::AdminNav;
 use crate::net::{mutation, query, trpc_err_msg};
-use crate::store::use_app_state;
-use crate::Route;
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
@@ -77,14 +75,6 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
 
 #[component]
 pub fn AdminDiscounts() -> Element {
-    let state = use_app_state();
-    let nav = use_navigator();
-    // Client-side auth guard (backend still enforces admin capability).
-    use_effect(move || {
-        if !state.is_loading() && !state.is_admin() {
-            nav.push(Route::Login {});
-        }
-    });
     let mut discounts = use_signal(Vec::<Discount>::new);
     let mut loading = use_signal(|| true);
     let mut saving = use_signal(|| false);
@@ -222,6 +212,9 @@ pub fn AdminDiscounts() -> Element {
 
     let ws = use_workspace("admin_discounts_layout", default_layout);
     crate::store::sync_panel_mode(ws.mode);
+    if let Some(gate) = crate::store::use_auth_guard(crossword_core::auth::Role::Admin) {
+        return gate;
+    }
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
@@ -525,14 +518,6 @@ pub fn AdminDiscounts() -> Element {
             },
         }
     };
-
-    if !state.is_admin() {
-        return rsx! {
-            div { class: "muted", style: "padding:2rem;text-align:center;font-size:.75rem;font-family:monospace",
-                "Checking access…"
-            }
-        };
-    }
 
     rsx! {
         div { class: "col", style: "height:100%",

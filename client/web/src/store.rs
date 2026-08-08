@@ -6,7 +6,7 @@
 
 use crossword_core::auth::Role;
 use dioxus::prelude::*;
-use gloo_storage::{LocalStorage, Storage};
+use gloo_storage::{LocalStorage, SessionStorage, Storage};
 use panel_kit::Mode;
 use serde::Deserialize;
 use wasm_bindgen_futures::spawn_local;
@@ -215,6 +215,88 @@ pub fn provide_app_state() -> AppState {
 
 pub fn use_app_state() -> AppState {
     use_context::<AppState>()
+}
+
+/// Re-fetch session + subscription after an auth change (e.g. login) so the
+/// header and route guards update without a full page reload. Falls back to a
+/// hard reload if the session endpoint can't be reached — stale "signed out"
+/// chrome after a successful login is worse than a refresh.
+pub async fn refresh_session(state: AppState) {
+    let mut session = state.session;
+    let mut sub = state.sub;
+    match fetch_session().await {
+        Ok(user) => {
+            let signed_in = user.is_some();
+            session.set(Some(user));
+            if signed_in {
+                if let Ok(s) = fetch_sub().await {
+                    sub.set(Some(s));
+                }
+            }
+        }
+        Err(_) => {
+            if let Some(w) = web_sys::window() {
+                let _ = w.location().reload();
+            }
+        }
+    }
+}
+
+fn current_path() -> Option<String> {
+    let loc = web_sys::window()?.location();
+    let mut p = loc.pathname().ok()?;
+    if let Ok(q) = loc.search() {
+        p.push_str(&q);
+    }
+    Some(p)
+}
+
+/// Pop the stashed post-login destination, if any. Parses through the route
+/// table; the NotFound catch-all means any stashed string yields a route.
+pub fn take_return_to() -> Option<crate::Route> {
+    use std::str::FromStr;
+    let dest = SessionStorage::get::<String>("return_to").ok()?;
+    SessionStorage::delete("return_to");
+    crate::Route::from_str(&dest).ok()
+}
+
+/// Route guard (auth'd pages): `None` means render the page. `Some(el)` is
+/// what to render instead — a quiet "verifying" placeholder while the session
+/// loads, or nothing while bouncing an unauthorized visitor to Login (with the
+/// intended path stashed in sessionStorage["return_to"] for the post-login
+/// redirect). Call after the page's other hooks so the hook order is stable.
+pub fn use_auth_guard(required: Role) -> Option<Element> {
+    let state = use_app_state();
+    let nav = use_navigator();
+    if state.is_loading() {
+        return Some(rsx! {
+            div { class: "game-status muted", aria_busy: "true", "Verifying access…" }
+        });
+    }
+    let authorized = match required {
+        Role::Admin => state.is_admin(),
+        Role::User => state.user().is_some(),
+    };
+    if !authorized {
+        if let Some(p) = current_path() {
+            let _ = SessionStorage::set("return_to", p);
+        }
+        nav.push(crate::Route::Login {});
+        return Some(rsx! {});
+    }
+    None
+}
+
+/// Guest-only pages (login/signup): bounce visitors who are already signed in
+/// to their stashed destination, or Home. Verify-email and reset-password are
+/// NOT guest-only — a signed-in user legitimately lands there from email links.
+pub fn use_guest_only() {
+    let state = use_app_state();
+    let nav = use_navigator();
+    if !state.is_loading() && state.user().is_some() {
+        let dest = take_return_to().unwrap_or(crate::Route::Home {});
+        nav.push(dest);
+    }
 }
 
 async fn fetch_session() -> Result<Option<User>, String> {

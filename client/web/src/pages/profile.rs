@@ -84,7 +84,7 @@ pub fn Profile() -> Element {
                 updating.set(true);
                 success_msg.set(String::new());
                 error_msg.set(String::new());
-                match net::query_as::<serde_json::Value>(
+                match net::mutation_as::<serde_json::Value>(
                     "user.updateProfile",
                     Some(json!({ "email": email, "name": name })),
                 )
@@ -124,7 +124,7 @@ pub fn Profile() -> Element {
             spawn_local(async move {
                 deleting.set(true);
                 error_msg.set(String::new());
-                match net::query_as::<serde_json::Value>(
+                match net::mutation_as::<serde_json::Value>(
                     "user.deleteAccount",
                     Some(json!({ "email": email })),
                 )
@@ -147,6 +147,10 @@ pub fn Profile() -> Element {
 
     let ws = use_workspace("profile_layout", default_layout);
     crate::store::sync_panel_mode(ws.mode);
+    // After all hooks so the hook order is stable across guard states.
+    if let Some(gate) = crate::store::use_auth_guard(crossword_core::auth::Role::User) {
+        return gate;
+    }
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {

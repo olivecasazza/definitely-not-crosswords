@@ -1,7 +1,6 @@
 use crate::components::admin_nav::AdminNav;
 use crate::components::generation_progress::{GenerationProgress, Progress};
 use crate::net::{mutation, query, subscribe, Subscription};
-use crate::store::use_app_state;
 use crate::Route;
 use crossword_core::fmt::format_datetime;
 use dioxus::prelude::*;
@@ -129,14 +128,7 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
 
 #[component]
 pub fn AdminGenerator() -> Element {
-    let state = use_app_state();
     let nav = use_navigator();
-    // Client-side auth guard (backend still enforces admin capability).
-    use_effect(move || {
-        if !state.is_loading() && !state.is_admin() {
-            nav.push(Route::Login {});
-        }
-    });
 
     let mut form = use_signal(GenForm::default);
     let mut jobs = use_signal(Vec::<JobRow>::new);
@@ -172,6 +164,9 @@ pub fn AdminGenerator() -> Element {
 
     let ws = use_workspace("admin_generator_layout", default_layout);
     crate::store::sync_panel_mode(ws.mode);
+    if let Some(gate) = crate::store::use_auth_guard(crossword_core::auth::Role::Admin) {
+        return gate;
+    }
 
     let body = move |kind: Panel, _max: bool| -> Element {
         let status = gen_status.read().clone();
@@ -481,14 +476,6 @@ pub fn AdminGenerator() -> Element {
             },
         }
     };
-
-    if !state.is_admin() {
-        return rsx! {
-            div { class: "muted", style: "padding:2rem;text-align:center;font-size:.75rem;font-family:monospace",
-                "Checking access…"
-            }
-        };
-    }
 
     rsx! {
         AdminNav {}

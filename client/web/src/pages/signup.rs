@@ -32,6 +32,9 @@ use crate::components::brand::brand_panel;
 
 #[component]
 pub fn Signup() -> Element {
+    // Already signed in? Straight to the stashed destination (or Home).
+    crate::store::use_guest_only();
+
     let name = use_signal(|| String::new());
     let username = use_signal(|| String::new());
     let email = use_signal(|| String::new());
@@ -389,7 +392,7 @@ pub fn Signup() -> Element {
                                     class: "app-input",
                                     style: "width: 100%; padding: .75rem 1rem;",
                                     r#type: "email",
-                                    placeholder: "e.g. olive.casazza@gmail.com",
+                                    placeholder: "you@example.com",
                                     value: "{email}",
                                     oninput: move |e| email.clone().set(e.value()),
                                     onblur: on_email_blur.clone(),

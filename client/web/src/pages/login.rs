@@ -60,6 +60,11 @@ use crate::components::brand::brand_panel;
 
 #[component]
 pub fn Login() -> Element {
+    let nav = use_navigator();
+    let state = crate::store::use_app_state();
+    // Already signed in? Straight to the stashed destination (or Home).
+    crate::store::use_guest_only();
+
     let email = use_signal(|| String::new());
     let password = use_signal(|| String::new());
     let email_touched = use_signal(|| false);
@@ -173,10 +178,12 @@ pub fn Login() -> Element {
                             error.set("Invalid email or password.".to_string());
                             loading.set(false);
                         } else {
-                            // Full-page reload so the session is re-fetched from scratch.
-                            if let Some(win) = web_sys::window() {
-                                let _ = win.location().set_href("/");
-                            }
+                            // Refresh the shared session in place and router-nav
+                            // back to wherever the guard bounced us from.
+                            crate::store::refresh_session(state).await;
+                            let dest =
+                                crate::store::take_return_to().unwrap_or(crate::Route::Home {});
+                            nav.push(dest);
                         }
                     }
                 }
@@ -210,9 +217,11 @@ pub fn Login() -> Element {
                         return;
                     }
                 };
+                // No email: the backend's local-dev provider falls back to
+                // LOCAL_ADMIN_EMAIL, so the bypass identity stays server-owned.
                 let body = form_encode(&[
                     ("csrfToken", &csrf_token),
-                    ("email", "olive.casazza@gmail.com"),
+                    ("email", ""),
                     ("callbackUrl", "/"),
                     ("json", "true"),
                 ]);
@@ -232,8 +241,11 @@ pub fn Login() -> Element {
                         if errored {
                             error.set("Dev bypass unavailable (production build?).".into());
                             loading.set(false);
-                        } else if let Some(win) = web_sys::window() {
-                            let _ = win.location().set_href("/");
+                        } else {
+                            crate::store::refresh_session(state).await;
+                            let dest =
+                                crate::store::take_return_to().unwrap_or(crate::Route::Home {});
+                            nav.push(dest);
                         }
                     }
                     Err(e) => {
@@ -247,8 +259,6 @@ pub fn Login() -> Element {
 
     let ws = use_workspace("login_layout", default_layout);
     crate::store::sync_panel_mode(ws.mode);
-    // Gates the dev-admin bypass button (only shown in local dev).
-    let state = crate::store::use_app_state();
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
@@ -297,7 +307,7 @@ pub fn Login() -> Element {
                                 class: "app-input",
                                 style: "width: 100%; padding: .75rem 1rem;",
                                 r#type: "email",
-                                placeholder: "e.g. olive.casazza@gmail.com",
+                                placeholder: "you@example.com",
                                 value: "{email}",
                                 oninput: move |e| email.clone().set(e.value()),
                                 onblur: move |_| email_touched.clone().set(true),

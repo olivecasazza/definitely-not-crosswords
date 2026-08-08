@@ -519,6 +519,7 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     let cg_opt = sqlx::query(
         r#"
         SELECT cg.id,
+               cg."gameId" AS game_id,
                to_char(cg."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
                g.title,
                g.source::text AS source
@@ -538,6 +539,7 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     };
 
     let cg_id: String = cg_row.get("id");
+    let cg_game_id: String = cg_row.get("game_id");
     let created_at: String = cg_row.get("created_at");
     let game_title: String = cg_row.get("title");
     let game_source: String = cg_row.get("source");
@@ -587,6 +589,7 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     Ok(json!({
         "id":        cg_id,
+        "gameId":    cg_game_id,
         "createdAt": created_at,
         "game": {
             "title":     game_title,

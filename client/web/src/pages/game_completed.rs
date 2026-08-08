@@ -3,10 +3,11 @@ use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::rc::Rc;
+use wasm_bindgen_futures::spawn_local;
 
 use crate::components::game_list::status;
 use crate::components::identicon::Identicon;
-use crate::components::ui::RankBadge;
+use crate::components::ui::{RankBadge, StatTile};
 use crate::net;
 use crate::store::use_app_state;
 use crate::Route;
@@ -16,9 +17,23 @@ use crossword_core::fmt::format_date;
 #[serde(rename_all = "camelCase")]
 struct CompletedGameData {
     id: String,
+    /// Source `Game` id — powers the rematch button. Optional so responses from
+    /// an older server (which doesn't send it) still parse; we then hide rematch.
+    #[serde(default)]
+    game_id: Option<String>,
     created_at: String,
     game: GameInfo,
     game_stats: GameStats,
+}
+
+/// The slice of a `gameList.get` item the "Up next" card needs. Items are
+/// discriminated by `type`; we only deserialize `type == "Game"` (unstarted).
+#[derive(Debug, Clone, Deserialize)]
+struct NextUpGame {
+    id: String,
+    title: String,
+    #[serde(default)]
+    clues: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -71,14 +86,16 @@ fn rank_name(index: usize) -> &'static str {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum Panel {
     Rankings,
-    Summary,
+    // Alias keeps layouts persisted under the old "Summary" name deserializing.
+    #[serde(alias = "Summary")]
+    NextUp,
 }
 
 impl PanelKind for Panel {
     fn title(self) -> &'static str {
         match self {
             Panel::Rankings => "Rankings",
-            Panel::Summary => "Summary",
+            Panel::NextUp => "Next Up",
         }
     }
 }
@@ -87,7 +104,7 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
     let mut b = LayoutBuilder::new();
     vec![
         b.at(Panel::Rankings, 16.0, 16.0, 1240.0, 948.0),
-        b.at(Panel::Summary, 1272.0, 16.0, 632.0, 948.0),
+        b.at(Panel::NextUp, 1272.0, 16.0, 632.0, 948.0),
     ]
 }
 
@@ -112,6 +129,20 @@ pub fn GameCompleted(id: String) -> Element {
         })
     };
 
+    // First unstarted puzzle from the lobby list — best-effort: any failure or
+    // empty list simply hides the "Up next" card.
+    let next_res = use_resource(move || async move {
+        let raw = net::query("gameList.get", None).await.ok()?;
+        raw.as_array()?
+            .iter()
+            .find(|v| v.get("type").and_then(|t| t.as_str()) == Some("Game"))
+            .and_then(|v| serde_json::from_value::<NextUpGame>(v.clone()).ok())
+    });
+
+    let is_starting = use_signal(|| false);
+    let start_error = use_signal(String::new);
+    let nav = use_navigator();
+
     let ws = use_workspace("game_completed_layout", default_layout);
     crate::store::sync_panel_mode(ws.mode);
 
@@ -119,6 +150,7 @@ pub fn GameCompleted(id: String) -> Element {
     // read_unchecked (not peek) keeps the component subscribed to the resource signal.
     let data_snap: Rc<Option<Result<Option<CompletedGameData>, String>>> =
         Rc::new((*data_res.read_unchecked()).clone());
+    let next_up: Option<NextUpGame> = (*next_res.read_unchecked()).clone().flatten();
     let current_email: Option<String> = state.user().and_then(|u| u.email);
 
     let body = move |kind: Panel, _max: bool| -> Element {
@@ -255,7 +287,9 @@ pub fn GameCompleted(id: String) -> Element {
                                                                 span { style: "color: var(--pastel-red);", "{score_record.incorrect_guesses}" }
                                                             }
                                                         }
-                                                        div { style: "display: flex; flex-direction: column; text-align: right; border-left: 1px solid var(--border-app); padding-left: 1rem; min-width: 4.375rem;",
+                                                        div {
+                                                            style: "display: flex; flex-direction: column; text-align: right; border-left: 1px solid var(--border-app); padding-left: 1rem; min-width: 4.375rem;",
+                                                            title: "Scoring: each correct guess gives +10 pts, every incorrect guess subtracts -2 pts.",
                                                             span { class: "muted", style: "font-size: .625rem; text-transform: uppercase;", "Score" }
                                                             span { style: "font-size: 1rem; font-weight: 900; color: var(--pastel-yellow);", "{score_record.score}" }
                                                         }
@@ -271,10 +305,18 @@ pub fn GameCompleted(id: String) -> Element {
                 }
             }
 
-            Panel::Summary => {
+            Panel::NextUp => {
                 match data_snap.as_ref() {
                     None => status("muted", "Analyzing results…", true),
-                    Some(Err(_)) | Some(Ok(None)) => status("muted", "—", false),
+                    Some(Err(_)) | Some(Ok(None)) => rsx! {
+                        div { style: "display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem;",
+                            div { class: "app-card", style: "max-width: 28rem; width: 100%; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; font-family: monospace;",
+                                span { class: "error", style: "font-size: .875rem; font-weight: 700; text-transform: uppercase;", "Game Not Found" }
+                                p { class: "muted", style: "font-size: .75rem;", "This completed game could not be found." }
+                                Link { to: Route::Games {}, class: "app-btn", style: "text-align: center; margin-top: .5rem;", "← Back to Lobby" }
+                            }
+                        }
+                    },
                     Some(Ok(Some(data))) => {
                         let total_questions =
                             data.game.questions.as_ref().map(|q| q.len()).unwrap_or(0);
@@ -295,61 +337,90 @@ pub fn GameCompleted(id: String) -> Element {
                         } else {
                             0
                         };
+                        let rematch_id = data.game_id.clone();
 
                         rsx! {
                             div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
 
-                                div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; font-family: monospace;",
-                                    h3 { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border-app); padding-bottom: .75rem; margin: 0;", "Crossword Metrics" }
-                                    div { style: "display: flex; flex-direction: column; gap: 1rem;",
-                                        div { style: "display: flex; justify-content: space-between; align-items: center; font-size: .75rem;",
-                                            span { class: "muted", style: "text-transform: uppercase;", "Source Mode" }
-                                            span { style: "font-weight: 700; text-transform: uppercase; background: var(--bg-cell-empty); border: 1px solid var(--border-app); padding: .125rem .5rem; font-size: .625rem;", "{data.game.source}" }
+                                // Rematch — only when the server sent the source gameId
+                                // (older servers don't; hide rather than guess).
+                                if let Some(game_id) = rematch_id {
+                                    div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: .75rem; font-family: monospace;",
+                                        h3 { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: 0;", "Rematch" }
+                                        if !start_error.read().is_empty() {
+                                            p { class: "error", style: "font-size: .75rem; margin: 0;", "{start_error}" }
                                         }
-                                        div { style: "display: flex; justify-content: space-between; align-items: center; font-size: .75rem;",
-                                            span { class: "muted", style: "text-transform: uppercase;", "Total Clues" }
-                                            span { style: "font-weight: 700; color: var(--text-primary);", "{total_questions} Clues" }
-                                        }
-                                        div { style: "display: flex; justify-content: space-between; align-items: center; font-size: .75rem;",
-                                            span { class: "muted", style: "text-transform: uppercase;", "Total Guesses" }
-                                            span { style: "font-weight: 700; color: var(--text-primary);", "{total_guesses}" }
-                                        }
-                                        div { style: "display: flex; justify-content: space-between; align-items: center; font-size: .75rem;",
-                                            span { class: "muted", style: "text-transform: uppercase;", "Solve Precision" }
-                                            span { style: "font-weight: 700; color: var(--pastel-green);", "{solve_precision}%" }
-                                        }
-                                    }
-
-                                    div { style: "height: 1px; background: var(--border-app); width: 100%;" }
-
-                                    div { style: "display: flex; flex-direction: column; gap: .625rem;",
-                                        Link {
-                                            to: Route::Stats {},
-                                            class: "app-btn",
-                                            style: "display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .625rem 1rem; text-align: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-yellow); border-color: color-mix(in srgb, var(--pastel-yellow) 30%, transparent);",
-                                            "Career Stats Dashboard"
-                                        }
-                                        Link {
-                                            to: Route::Games {},
-                                            class: "app-btn",
-                                            style: "display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .625rem 1rem; text-align: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
-                                            "Back to Lobby"
+                                        button {
+                                            class: "app-btn app-btn-active",
+                                            style: "justify-content: center;",
+                                            disabled: *is_starting.read(),
+                                            onclick: move |_| {
+                                                let game_id = game_id.clone();
+                                                let mut is_starting = is_starting;
+                                                let mut start_error = start_error;
+                                                let nav = nav;
+                                                spawn_local(async move {
+                                                    is_starting.set(true);
+                                                    start_error.set(String::new());
+                                                    match net::mutation(
+                                                        "activeGame.start",
+                                                        Some(json!({ "gameId": game_id })),
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(res) => {
+                                                            if let Some(new_id) = res.get("id").and_then(|v| v.as_str()) {
+                                                                nav.push(Route::GamePlay { id: new_id.to_string() });
+                                                            } else {
+                                                                start_error.set("Unexpected response from server.".into());
+                                                            }
+                                                        }
+                                                        Err(e) => start_error.set(net::trpc_err_msg(e)),
+                                                    }
+                                                    is_starting.set(false);
+                                                });
+                                            },
+                                            if *is_starting.read() { "Starting…" } else { "Play this puzzle again" }
                                         }
                                     }
                                 }
 
-                                // Scoring info
-                                div {
-                                    class: "app-card",
-                                    style: "padding: 1.25rem; border-color: color-mix(in srgb, var(--pastel-yellow) 10%, transparent); background: color-mix(in srgb, var(--pastel-yellow) 2%, transparent); font-family: monospace; font-size: .625rem; line-height: 1.6; color: var(--text-secondary); display: flex; gap: .5rem;",
-                                    span { style: "font-size: .875rem;", "💡" }
-                                    div {
-                                        span { style: "color: var(--text-primary); font-weight: 700; text-transform: uppercase; display: block; margin-bottom: .25rem;", "Scoring Mechanics" }
-                                        "Each correct guess gives "
-                                        span { style: "color: var(--pastel-green); font-weight: 700;", "+10 pts" }
-                                        ". Every incorrect guess subtracts "
-                                        span { style: "color: var(--pastel-red); font-weight: 700;", "-2 pts" }
-                                        ". Aim for perfect precision!"
+                                // Up next — first unstarted puzzle from the lobby list.
+                                if let Some(next) = next_up.clone() {
+                                    Link {
+                                        to: Route::GameNew { id: next.id.clone() },
+                                        class: "app-card",
+                                        style: "padding: 1.25rem 1.5rem; display: flex; flex-direction: column; gap: .25rem; font-family: monospace; text-decoration: none; color: inherit;",
+                                        span { class: "muted", style: "font-size: .625rem; text-transform: uppercase; letter-spacing: .05em;", "Up Next" }
+                                        span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary);",
+                                            "{next.title} · {next.clues} clues"
+                                        }
+                                    }
+                                }
+
+                                // Metrics mini-card
+                                div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; font-family: monospace;",
+                                    h3 { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border-app); padding-bottom: .75rem; margin: 0;", "Crossword Metrics" }
+                                    div { style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem;",
+                                        StatTile { label: "Source".to_string(), value: data.game.source.clone() }
+                                        StatTile { label: "Clues".to_string(), value: total_questions.to_string() }
+                                        StatTile { label: "Precision".to_string(), value: format!("{solve_precision}%") }
+                                    }
+                                }
+
+                                // Links row
+                                div { style: "display: flex; gap: .75rem;",
+                                    Link {
+                                        to: Route::Stats {},
+                                        class: "app-btn",
+                                        style: "flex: 1; justify-content: center; text-align: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-yellow); border-color: color-mix(in srgb, var(--pastel-yellow) 30%, transparent);",
+                                        "Career Stats →"
+                                    }
+                                    Link {
+                                        to: Route::Games {},
+                                        class: "app-btn",
+                                        style: "flex: 1; justify-content: center; text-align: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
+                                        "← Back to Lobby"
                                     }
                                 }
                             }

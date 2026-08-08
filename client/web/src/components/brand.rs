@@ -35,7 +35,11 @@ pub fn BrandLogo(size: u32) -> Element {
     }
 }
 
-/// A centered brand panel: logo + title + subtitle. Used by the auth pages.
+/// A centered brand panel: logo + title + subtitle + plan pricing. Used by the
+/// auth pages — pricing lives here so it's visible before signing in.
+// ponytail: literals, not fetched. Lemon Squeezy variant 1718877 is the source of
+// truth for the price ($10/yr, verified against the LS API 2026-08-08) — this is a
+// copy, so change both together. Wire to /api/config if the price starts moving.
 pub fn brand_panel(subtitle: &str) -> Element {
     rsx! {
         div { style: "display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; gap:1rem; padding:1.5rem;",
@@ -43,6 +47,12 @@ pub fn brand_panel(subtitle: &str) -> Element {
             h1 { style: "font-family: var(--mono, monospace); font-size: 1.3rem; font-weight: 800; margin: 0;",
                 "definitely-not-crosswords" }
             p { class: "muted", style: "font-size: .8rem; line-height: 1.6; max-width: 16rem;", "{subtitle}" }
+            div { style: "display:flex; flex-direction:column; gap:.375rem; max-width:18rem; font-family: var(--mono, monospace); font-size:.6875rem; line-height:1.6;",
+                p { class: "muted", style: "margin:0;",
+                    "Free — solve unlimited puzzles, generate 5 a month, teams of 4." }
+                p { class: "muted", style: "margin:0;",
+                    "Pro — $10/year: unlimited generation, teams of 10. Cancel anytime." }
+            }
         }
     }
 }

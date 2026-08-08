@@ -52,6 +52,23 @@ DATABASE_URL=…  cargo run -p crossword-tools --bin seed_admin    # admin users
 
 `docker-compose.yaml` provides a local Postgres for development.
 
+## Plans & pricing
+
+| | Free | Pro |
+|---|---|---|
+| Price | $0 | **$10.00 USD / year** (recurring) |
+| Solving puzzles | unlimited | unlimited |
+| Generator runs | 5 / calendar month | unlimited |
+| Team size | 4 | 10 |
+
+The quota and team caps are enforced by `FREE_LIMIT` (`routers/subscription.rs`) and
+`FREE_MAX_SIZE` / `PRO_MAX_SIZE` (`routers/team.rs`). **The price itself is not
+configured here** — Lemon Squeezy is the source of truth (store `390247`, variant
+`1718877`, one annual subscription; no one-time SKUs). The literals in `pages/home.rs`
+(front door), `components/brand.rs` (login + signup panels), and this table are copies,
+so change the LS variant and all three.
+Staging runs the same variant with a 90%-off beta code, hence its `$1` banner.
+
 ## Build & deploy
 
 Everything builds with Nix:

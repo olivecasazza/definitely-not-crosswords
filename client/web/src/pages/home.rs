@@ -88,6 +88,15 @@ pub fn Home() -> Element {
                                     p { class: "home-feature-desc", "Track solve times. Compare head-to-head. Climb." }
                                 }
                             }
+                            // Pricing on the front door, visible without signing in.
+                            // Same literals as components/brand.rs — see README "Plans & pricing".
+                            div { class: "home-feature",
+                                span { class: "home-feature-icon", "★" }
+                                div { class: "home-feature-body",
+                                    p { class: "home-feature-title", "Free, or Pro for $10/year" }
+                                    p { class: "home-feature-desc", "Solving is always free; generate 5 puzzles a month and build teams of 4. Pro adds unlimited generation and teams of 10. Cancel anytime." }
+                                }
+                            }
                         }
                     }
                 }

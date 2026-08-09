@@ -1,12 +1,30 @@
+use std::collections::HashSet;
+
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
 
+use crossword_core::fmt::plural;
+
 use crate::components::game_list::status;
+use crate::components::ui::StatTile;
 use crate::net;
+use crate::store::{use_app_state, Severity};
 use crate::Route;
+
+/// One question of the pre-start grid silhouette: coordinates and answer
+/// *length* only — the server deliberately never sends answer/question text
+/// before the game starts. `direction` is the wire format "ACROSS"/"DOWN".
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SilhouetteQ {
+    root_x: i32,
+    root_y: i32,
+    direction: String,
+    len: i32,
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
@@ -17,8 +35,68 @@ struct StartDetails {
     source: String,
     question_count: i64,
     grid_size: i64,
+    /// `default` so older servers that don't send the silhouette still parse.
+    #[serde(default)]
+    questions: Vec<SilhouetteQ>,
     active_game_id: Option<String>,
     completed_game_id: Option<String>,
+}
+
+/// Union of covered cells plus derived grid extent (max occupied coordinate
+/// + 1 per axis).
+fn silhouette_cells(qs: &[SilhouetteQ]) -> (i32, i32, Vec<(i32, i32)>) {
+    let mut cells: HashSet<(i32, i32)> = HashSet::new();
+    for q in qs {
+        for i in 0..q.len.max(0) {
+            let (x, y) = if q.direction == "ACROSS" {
+                (q.root_x + i, q.root_y)
+            } else {
+                (q.root_x, q.root_y + i)
+            };
+            if x >= 0 && y >= 0 {
+                cells.insert((x, y));
+            }
+        }
+    }
+    let w = cells.iter().map(|c| c.0).max().map_or(0, |m| m + 1);
+    let h = cells.iter().map(|c| c.1).max().map_or(0, |m| m + 1);
+    let mut cells: Vec<_> = cells.into_iter().collect();
+    cells.sort_unstable(); // HashSet order is random; keep renders stable
+    (w, h, cells)
+}
+
+/// Blank grid shape as a dot-matrix of squares. Pure presentational.
+#[component]
+fn Silhouette(questions: Vec<SilhouetteQ>) -> Element {
+    let (w, h, cells) = silhouette_cells(&questions);
+    if w == 0 || h == 0 {
+        return rsx! {};
+    }
+    // 10 viewBox units per cell, 9-unit squares → a 1-unit gap, centred.
+    let view_box = format!("0 0 {} {}", w * 10, h * 10);
+    // Natural size scales with the grid but never exceeds the container.
+    let natural_px = w * 22;
+    let rects: Vec<(String, String)> = cells
+        .into_iter()
+        .map(|(x, y)| (format!("{}.5", x * 10), format!("{}.5", y * 10)))
+        .collect();
+    rsx! {
+        svg {
+            view_box: "{view_box}",
+            role: "img",
+            "aria-label": "Puzzle grid silhouette",
+            style: "display: block; width: {natural_px}px; max-width: 100%; height: auto;",
+            for (x, y) in rects {
+                rect {
+                    x: "{x}",
+                    y: "{y}",
+                    width: "9",
+                    height: "9",
+                    fill: "var(--bg-cell-letter)",
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -62,7 +140,11 @@ pub fn GameNew(id: String) -> Element {
 
     let is_starting = use_signal(|| false);
     let start_error = use_signal(|| String::new());
+    // Co-op invite flow: started-but-not-entered game id (None = row hidden).
+    let coop_starting = use_signal(|| false);
+    let coop_game_id = use_signal(|| Option::<String>::None);
     let nav = use_navigator();
+    let state = use_app_state();
 
     let ws = use_workspace("game_new_layout", default_layout);
     crate::store::sync_panel_mode(ws.mode);
@@ -88,13 +170,10 @@ pub fn GameNew(id: String) -> Element {
             },
             (Some(Err(_)), Panel::Start) => status("muted", "Unavailable", false),
             (Some(Ok(details)), Panel::Puzzle) => {
-                let status_label = if details.active_game_id.is_some() {
-                    "Active"
-                } else if details.completed_game_id.is_some() {
-                    "Completed"
-                } else {
-                    "Ready"
-                };
+                let (grid_w, grid_h, _) = silhouette_cells(&details.questions);
+                let clues = details.question_count;
+                // 90s per clue, rounded up to whole minutes — hence the tilde.
+                let est_min = (clues * 90 + 59) / 60;
                 rsx! {
                     div { style: "display: flex; flex-direction: column; gap: 1.5rem;",
                         // Header
@@ -102,7 +181,7 @@ pub fn GameNew(id: String) -> Element {
                             div {
                                 p {
                                     class: "muted",
-                                    style: "font-size: .75rem; font-family: monospace; text-transform: uppercase; letter-spacing: .1em; margin: 0 0 .5rem 0;",
+                                    style: "font-size: var(--fs-2xs); font-family: var(--mono, monospace); text-transform: uppercase; letter-spacing: .1em; margin: 0 0 .5rem 0;",
                                     "New Game"
                                 }
                                 h1 {
@@ -112,18 +191,29 @@ pub fn GameNew(id: String) -> Element {
                             }
                             span { class: "gn-chip", "{details.source.to_lowercase()}" }
                         }
-                        // Stats grid — one tile shape, three values.
+                        // Stat tiles
                         div { class: "gn-stats",
-                            for (label, value) in [
-                                ("Clues", details.question_count.to_string()),
-                                ("Grid", format!("{0} x {0}", details.grid_size)),
-                                ("Status", status_label.to_string()),
-                            ] {
-                                div { key: "{label}", class: "gn-tile",
-                                    p { class: "gn-tile-label muted", "{label}" }
-                                    p { class: "gn-tile-value", "{value}" }
+                            StatTile { label: "Clues".to_string(), value: clues.to_string() }
+                            if grid_w > 0 && grid_h > 0 {
+                                StatTile { label: "Grid".to_string(), value: format!("{grid_w}×{grid_h}") }
+                            }
+                            if clues > 0 {
+                                StatTile {
+                                    label: "Est. solve".to_string(),
+                                    value: format!("~{est_min} min"),
+                                    sub: format!("{} × 90s", plural(clues, "clue")),
                                 }
                             }
+                        }
+                        // Grid silhouette (only when the server sent coordinates)
+                        if !details.questions.is_empty() {
+                            Silhouette { questions: details.questions.clone() }
+                        }
+                        // Play-state status line
+                        if details.active_game_id.is_some() {
+                            p { class: "gn-status", "You have this in progress" }
+                        } else if details.completed_game_id.is_some() {
+                            p { class: "gn-status", "You solved this puzzle" }
                         }
                     }
                 }
@@ -183,20 +273,106 @@ pub fn GameNew(id: String) -> Element {
                         is_starting.set(false);
                     });
                 };
+
+                // Invite: an already-active game is shareable without re-starting;
+                // otherwise "Start co-op" starts it but stays here to show the link.
+                let invite_id: Option<String> = coop_game_id
+                    .read()
+                    .clone()
+                    .or_else(|| details.active_game_id.clone());
+                let show_coop_button = invite_id.is_none() && details.completed_game_id.is_none();
+
+                let id_for_coop = id.clone();
+                let handle_coop = move || {
+                    let id = id_for_coop.clone();
+                    let mut coop_starting = coop_starting;
+                    let mut coop_game_id = coop_game_id;
+                    let mut start_error = start_error;
+                    spawn_local(async move {
+                        coop_starting.set(true);
+                        start_error.set(String::new());
+                        match net::mutation_as::<serde_json::Value>(
+                            "activeGame.start",
+                            Some(json!({ "gameId": id })),
+                        )
+                        .await
+                        {
+                            Ok(res) => {
+                                if let Some(new_id) = res.get("id").and_then(|v| v.as_str()) {
+                                    coop_game_id.set(Some(new_id.to_string()));
+                                } else {
+                                    start_error.set("Unexpected response from server.".into());
+                                }
+                            }
+                            Err(e) => {
+                                start_error.set(net::trpc_err_msg(e));
+                            }
+                        }
+                        coop_starting.set(false);
+                    });
+                };
+
                 rsx! {
                     div { style: "display: flex; flex-direction: column; gap: 1rem;",
                         if !start_error.read().is_empty() {
                             p { class: "error", style: "font-size: .875rem;", "{start_error}" }
                         }
-                        div { style: "display: flex; flex-direction: row; gap: .75rem; flex-wrap: wrap;",
+                        button {
+                            class: "app-btn app-btn-active",
+                            style: "justify-content: center;",
+                            disabled: *is_starting.read(),
+                            onclick: move |_| handle_start(),
+                            if *is_starting.read() { "Starting..." } else { "{action_label}" }
+                        }
+                        // Invite row: co-op start, then share the join URL.
+                        if show_coop_button {
                             button {
-                                class: "app-btn app-btn-active",
+                                class: "app-btn",
                                 style: "justify-content: center;",
-                                disabled: *is_starting.read(),
-                                onclick: move |_| handle_start(),
-                                if *is_starting.read() { "Starting..." } else { "{action_label}" }
+                                disabled: *coop_starting.read(),
+                                onclick: move |_| handle_coop(),
+                                if *coop_starting.read() { "Starting..." } else { "Start co-op" }
                             }
-                            Link { to: Route::Games {}, class: "app-btn", style: "justify-content: center;", "Back to Games" }
+                        }
+                        if let Some(gid) = invite_id {
+                            {
+                                let origin = web_sys::window()
+                                    .and_then(|w| w.location().origin().ok())
+                                    .unwrap_or_default();
+                                let url = format!("{origin}/game/{gid}");
+                                let url_for_copy = url.clone();
+                                let state = state;
+                                // Clipboard via the JS API (same idiom as game_play's
+                                // invite button — no extra Rust deps).
+                                let copy_link = move |_| {
+                                    let script = format!(
+                                        "navigator.clipboard && navigator.clipboard.writeText({})",
+                                        serde_json::to_string(&url_for_copy).unwrap_or_default()
+                                    );
+                                    dioxus::document::eval(&script);
+                                    state.toast(Severity::Success, "Link copied");
+                                };
+                                let gid_for_enter = gid.clone();
+                                let enter_game = move |_| {
+                                    nav.push(Route::GamePlay {
+                                        id: gid_for_enter.clone(),
+                                    });
+                                };
+                                rsx! {
+                                    div { class: "gn-invite",
+                                        p { class: "gn-invite-label muted", "Share this link to play co-op" }
+                                        code { class: "gn-invite-url", "{url}" }
+                                        div { style: "display: flex; flex-direction: row; gap: .5rem; flex-wrap: wrap;",
+                                            button { class: "app-btn", onclick: copy_link, "Copy link" }
+                                            button { class: "app-btn app-btn-active", onclick: enter_game, "Enter game →" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Panel footer
+                        div { style: "margin-top: auto; padding-top: 1rem;",
+                            Link { to: Route::Games {}, class: "app-btn", style: "justify-content: center;", "← Back to Games" }
                         }
                     }
                 }
@@ -221,11 +397,13 @@ const NEW_CSS: &str = "
 .gn-chip { padding: .375rem .75rem; border: 1px solid var(--border-app); background: var(--bg-cell-empty);
   font-size: var(--fs-xs); font-family: var(--mono, monospace); text-transform: uppercase;
   letter-spacing: .05em; color: var(--text-secondary); white-space: nowrap; }
-.gn-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
-.gn-tile { border: 1px solid var(--border-app); background: var(--bg-cell-empty); padding: 1rem; }
-.gn-tile-label { font-size: var(--fs-2xs); font-family: var(--mono, monospace); text-transform: uppercase;
-  letter-spacing: .05em; margin: 0 0 .25rem 0; }
-.gn-tile-value { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 0; }
-/* Tiles stack rather than squeeze on a phone. */
-@media (max-width: 760px) { .gn-stats { grid-template-columns: 1fr 1fr; } }
+.gn-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .75rem; }
+.gn-status { font-size: var(--fs-sm); font-family: var(--mono, monospace); text-transform: uppercase;
+  letter-spacing: .05em; color: var(--text-secondary); margin: 0; }
+.gn-invite { border: 1px solid var(--border-app); background: var(--bg-cell-empty); padding: .75rem;
+  display: flex; flex-direction: column; gap: .5rem; }
+.gn-invite-label { font-size: var(--fs-2xs); font-family: var(--mono, monospace); text-transform: uppercase;
+  letter-spacing: .05em; margin: 0; }
+.gn-invite-url { font-family: var(--mono, monospace); font-size: var(--fs-xs); color: var(--text-secondary);
+  word-break: break-all; }
 ";

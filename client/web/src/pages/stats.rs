@@ -5,13 +5,13 @@ use serde_json::json;
 
 use wasm_bindgen_futures::spawn_local;
 
-use crate::components::game_list::error_status;
+use crate::components::game_list::{error_status, status};
 use crate::components::identicon::Identicon;
-use crate::components::ui::{self, RankBadge};
+use crate::components::ui::{self, RankBadge, StatTile};
 use crate::net;
 use crate::store::{use_app_state, Severity};
 use crate::Route;
-use crossword_core::fmt::format_date;
+use crossword_core::fmt::{format_date, plural};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -123,6 +123,245 @@ fn bar_pct(a: i64, b: i64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// Personal performance (stats.getUserHistory)
+// ---------------------------------------------------------------------------
+
+/// Row from `stats.getUserHistory` (auth, completedAt DESC). The endpoint may
+/// not be deployed yet — every consumer is gated on the fetch succeeding, so
+/// the page keeps working (KPIs + legacy match log) while it's absent.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryRow {
+    #[allow(dead_code)]
+    game_id: String,
+    completed_game_id: String,
+    title: String,
+    completed_at: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    started_at: Option<String>,
+    score: i64,
+    correct: i64,
+    incorrect: i64,
+    rank: i64,
+    #[allow(dead_code)]
+    participants: i64,
+    grid_size: HistGridSize,
+    #[serde(default)]
+    duration_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct HistGridSize {
+    w: i64,
+    h: i64,
+}
+
+const DAY_MS: f64 = 86_400_000.0;
+
+/// Epoch-ms → UTC day index (days since 1970-01-01). None for NaN/∞ stamps
+/// (a garbled `completedAt` drops out of the streak/heatmap, never panics).
+fn utc_day(ms: f64) -> Option<i64> {
+    ms.is_finite().then(|| (ms / DAY_MS).floor() as i64)
+}
+
+/// Current streak: consecutive UTC days with ≥1 completion, ending today or
+/// yesterday (playing yesterday but not yet today keeps the streak alive).
+fn current_streak(days: &std::collections::HashSet<i64>, today: i64) -> i64 {
+    let anchor = if days.contains(&today) {
+        today
+    } else if days.contains(&(today - 1)) {
+        today - 1
+    } else {
+        return 0;
+    };
+    let mut n = 0;
+    let mut d = anchor;
+    while days.contains(&d) {
+        n += 1;
+        d -= 1;
+    }
+    n
+}
+
+/// Longest run of consecutive days. Input must be sorted ascending + deduped.
+/// Returns `(length, last day of the run)`.
+fn longest_streak(sorted_days: &[i64]) -> (i64, Option<i64>) {
+    let (mut best, mut best_end) = (0i64, None);
+    let (mut run, mut prev) = (0i64, i64::MIN);
+    for &d in sorted_days {
+        run = if d == prev + 1 { run + 1 } else { 1 };
+        if run > best {
+            best = run;
+            best_end = Some(d);
+        }
+        prev = d;
+    }
+    (best, best_end)
+}
+
+/// 4-step heat level for the activity grid: 0 (no games) → 4 (4+ games).
+fn heat_level(n: i64) -> i64 {
+    n.clamp(0, 4)
+}
+
+/// Cell background for a day count — an opacity ramp of the accent token.
+fn heat_bg(n: i64) -> String {
+    match heat_level(n) {
+        0 => "var(--bg-cell-empty)".to_string(),
+        l => format!(
+            "color-mix(in srgb, var(--pastel-yellow) {}%, transparent)",
+            l * 25
+        ),
+    }
+}
+
+/// UTC day index → civil (year, month, day). Howard Hinnant's algorithm —
+/// pure integer math so it stays testable off-wasm.
+fn civil_from_day(day: i64) -> (i64, u32, u32) {
+    let z = day + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    (y, m, d)
+}
+
+const MONTHS_ABBR: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// "Aug 9" — tooltip label for a heatmap day.
+fn day_label(day: i64) -> String {
+    let (_, m, d) = civil_from_day(day);
+    format!("{} {d}", MONTHS_ABBR[(m - 1) as usize])
+}
+
+/// mm:ss, minutes unpadded ("12:05", "3:41") — matches game_completed.
+fn fmt_mmss(secs: i64) -> String {
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+/// Grid-size bucket by max(w,h): 0 Mini ≤9 · 1 Standard 10–15 · 2 Large 16+.
+fn size_bucket(w: i64, h: i64) -> usize {
+    let m = w.max(h);
+    if m <= 9 {
+        0
+    } else if m <= 15 {
+        1
+    } else {
+        2
+    }
+}
+
+const BUCKET_LABELS: [&str; 3] = ["Mini · ≤9", "Standard · 10–15", "Large · 16+"];
+
+#[derive(Default, Clone, Copy)]
+struct BucketAgg {
+    games: i64,
+    score_sum: i64,
+    correct: i64,
+    incorrect: i64,
+    dur_sum: i64,
+    dur_n: i64,
+}
+
+impl BucketAgg {
+    fn avg_score(&self) -> i64 {
+        if self.games == 0 {
+            0
+        } else {
+            self.score_sum / self.games
+        }
+    }
+    fn avg_acc(&self) -> Option<i64> {
+        let t = self.correct + self.incorrect;
+        (t > 0).then(|| self.correct * 100 / t)
+    }
+    /// Average solve time — only rows that carried a duration count.
+    fn avg_time(&self) -> Option<String> {
+        (self.dur_n > 0).then(|| fmt_mmss(self.dur_sum / self.dur_n))
+    }
+}
+
+fn bucket_stats(rows: &[HistoryRow]) -> [BucketAgg; 3] {
+    let mut b = [BucketAgg::default(); 3];
+    for r in rows {
+        let a = &mut b[size_bucket(r.grid_size.w, r.grid_size.h)];
+        a.games += 1;
+        a.score_sum += r.score;
+        a.correct += r.correct;
+        a.incorrect += r.incorrect;
+        if let Some(d) = r.duration_secs.filter(|&d| d > 0) {
+            a.dur_sum += d;
+            a.dur_n += 1;
+        }
+    }
+    b
+}
+
+/// Per-row accuracy percent; None when the row has no guesses at all.
+fn accuracy_pct(correct: i64, incorrect: i64) -> Option<i64> {
+    let t = correct + incorrect;
+    (t > 0).then(|| correct * 100 / t)
+}
+
+fn best_score(rows: &[HistoryRow]) -> Option<&HistoryRow> {
+    rows.iter().max_by_key(|r| r.score)
+}
+
+fn best_accuracy(rows: &[HistoryRow]) -> Option<(&HistoryRow, i64)> {
+    rows.iter()
+        .filter_map(|r| accuracy_pct(r.correct, r.incorrect).map(|a| (r, a)))
+        .max_by_key(|(_, a)| *a)
+}
+
+/// Fastest solve — only rows with a positive durationSecs qualify.
+fn fastest_solve(rows: &[HistoryRow]) -> Option<(&HistoryRow, i64)> {
+    rows.iter()
+        .filter_map(|r| r.duration_secs.filter(|&s| s > 0).map(|s| (r, s)))
+        .min_by_key(|(_, s)| *s)
+}
+
+fn score_bounds(scores: &[i64]) -> (i64, i64) {
+    scores
+        .iter()
+        .fold((i64::MAX, i64::MIN), |(lo, hi), &s| (lo.min(s), hi.max(s)))
+}
+
+/// Map chronological scores onto SVG coords inside the plot rect
+/// (x0/y0 top-left, w×h). Y auto-scales to the data; a flat series centers.
+fn chart_points(scores: &[i64], x0: f64, y0: f64, w: f64, h: f64) -> Vec<(f64, f64)> {
+    let n = scores.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let (lo, hi) = score_bounds(scores);
+    let span = (hi - lo) as f64;
+    scores
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| {
+            let x = if n == 1 {
+                x0 + w / 2.0
+            } else {
+                x0 + w * i as f64 / (n as f64 - 1.0)
+            };
+            let y = if span == 0.0 {
+                y0 + h / 2.0
+            } else {
+                y0 + h - h * (s - lo) as f64 / span
+            };
+            (x, y)
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Panel kind
 // ---------------------------------------------------------------------------
 
@@ -228,6 +467,18 @@ pub fn Stats() -> Element {
                 .await,
         )
     });
+
+    // Full personal match history — depends on session. Built against the
+    // stats.getUserHistory contract; the endpoint may not be deployed yet, so
+    // everything derived from it is gated on Ok (see career_body).
+    let history_res = use_resource(move || async move {
+        if state.user().is_none() {
+            return None;
+        }
+        Some(net::query_as::<Vec<HistoryRow>>("stats.getUserHistory", None).await)
+    });
+    // Match-log page (client-side, 10 rows/page).
+    let hist_page = use_signal(|| 0usize);
 
     // All players for H2H dropdown — depends on session (to exclude self)
     let players_res = use_resource(move || async move {
@@ -407,99 +658,7 @@ pub fn Stats() -> Element {
                             }
                         },
                         Some(Some(Ok(stats))) => rsx! {
-                            div { style: "display: flex; flex-direction: column; gap: 2rem;",
-
-                                // Stat cards row
-                                div { style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;",
-                                    div { class: "app-card st-stat-card",
-                                        span { class: "muted st-stat-label", "Global Rank" }
-                                        div { style: "display: flex; align-items: baseline; gap: .25rem;",
-                                            span { style: "font-size: 1.5rem; font-weight: 900; color: var(--pastel-yellow);", "#{stats.global_rank}" }
-                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "of {stats.total_players}" }
-                                        }
-                                    }
-                                    div { class: "app-card st-stat-card",
-                                        span { class: "muted st-stat-label", "Career Score" }
-                                        span { style: "font-size: 1.5rem; font-weight: 900; color: var(--pastel-yellow);", "{stats.total_score}" }
-                                    }
-                                    div { class: "app-card st-stat-card",
-                                        span { class: "muted st-stat-label", "Games Played" }
-                                        span { style: "font-size: 1.5rem; font-weight: 900; color: var(--text-primary);", "{stats.games_played}" }
-                                    }
-                                    div { class: "app-card st-stat-card",
-                                        span { class: "muted st-stat-label", "Solve Accuracy" }
-                                        span { style: "font-size: 1.5rem; font-weight: 900; color: var(--pastel-green);", "{stats.accuracy}%" }
-                                    }
-                                }
-
-                                // Accuracy breakdown bar
-                                div { class: "app-card", style: "padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;",
-                                    span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase;", "Accuracy Breakdown" }
-                                    div { style: "display: flex; flex-direction: column; gap: .5rem;",
-                                        div { style: "display: flex; justify-content: space-between; font-size: .625rem; color: var(--text-secondary); text-transform: uppercase;",
-                                            span { "Correct: {stats.total_correct}" }
-                                            span { "Incorrect: {stats.total_incorrect}" }
-                                        }
-                                        div { class: "st-bar-track",
-                                            div { class: "st-bar-segment", style: "width: {stats.accuracy}%; background: var(--pastel-green);" }
-                                            div { class: "st-bar-segment", style: "width: {100 - stats.accuracy}%; background: var(--pastel-red);" }
-                                        }
-                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; line-height: 1.6;",
-                                            "Your overall ratio is "
-                                            span { style: "color: var(--pastel-green); font-weight: 700;", "{stats.total_correct} correct guesses" }
-                                            " out of "
-                                            span { style: "color: var(--text-primary); font-weight: 700;", "{stats.total_correct + stats.total_incorrect} total guesses" }
-                                            "."
-                                        }
-                                    }
-                                }
-
-                                // Recent games
-                                div { style: "display: flex; flex-direction: column; gap: .75rem;",
-                                    span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Match Log History" }
-                                    div { style: "display: flex; flex-direction: column; gap: .75rem;",
-                                        for game_opt in stats.recent_games.iter() {
-                                            if let Some(game) = game_opt {
-                                                div { class: "app-card", style: "padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: .75rem;",
-                                                    div { style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem;",
-                                                        div { style: "display: flex; flex-direction: column; min-width: 0;",
-                                                            span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{game.title}" }
-                                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {format_date(&game.created_at)}" }
-                                                        }
-                                                        div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0; font-family: monospace;",
-                                                            div { style: "display: flex; flex-direction: column;",
-                                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Guesses" }
-                                                                span { style: "font-size: .75rem; font-weight: 600; color: var(--text-primary);",
-                                                                    span { style: "color: var(--pastel-green);", "{game.correct_guesses}" }
-                                                                    " / "
-                                                                    span { style: "color: var(--pastel-red);", "{game.incorrect_guesses}" }
-                                                                }
-                                                            }
-                                                            div { style: "display: flex; flex-direction: column;",
-                                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Place" }
-                                                                span { style: "font-size: .75rem; font-weight: 700; color: var(--text-primary);",
-                                                                    "#{game.rank} "
-                                                                    span { class: "muted", style: "font-size: .5625rem; font-weight: 400; text-transform: uppercase;", "of {game.total_participants}" }
-                                                                }
-                                                            }
-                                                            div { style: "display: flex; flex-direction: column; border-left: 1px solid var(--border-app); padding-left: 1rem; min-width: 3.125rem;",
-                                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Score" }
-                                                                span { style: "font-size: .875rem; font-weight: 900; color: var(--pastel-yellow);", "{game.score}" }
-                                                            }
-                                                            Link {
-                                                                to: Route::GameCompleted { id: game.id.clone() },
-                                                                class: "app-btn",
-                                                                style: "font-size: .625rem; padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
-                                                                "Review"
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            {career_body(stats, history_res, hist_page)}
                         }
                     }
                 }
@@ -1036,6 +1195,435 @@ pub fn Stats() -> Element {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Career panel body — KPI row + personal-performance sections
+// ---------------------------------------------------------------------------
+
+type HistoryResource = Resource<Option<Result<Vec<HistoryRow>, String>>>;
+
+/// Everything inside the Career panel once getUserStats is in. History-derived
+/// sections (streak, heatmap, bests, trends, buckets, paginated match log)
+/// only render when stats.getUserHistory answers Ok; until then the panel
+/// falls back to the legacy recent-games log so nothing regresses.
+fn career_body(
+    stats: &CareerStats,
+    mut history_res: HistoryResource,
+    hist_page: Signal<usize>,
+) -> Element {
+    let hist = history_res.read_unchecked();
+    let rows_ok: Option<&Vec<HistoryRow>> = match &*hist {
+        Some(Some(Ok(rows))) => Some(rows),
+        _ => None,
+    };
+
+    // Per-row UTC day indices (aligned with rows; unparsable stamps drop out).
+    let today = utc_day(js_sys::Date::now()).unwrap_or(0);
+    let day_of_row: Vec<Option<i64>> = rows_ok
+        .map(|rows| {
+            rows.iter()
+                .map(|r| utc_day(js_sys::Date::parse(&r.completed_at)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut day_counts = std::collections::HashMap::<i64, i64>::new();
+    for d in day_of_row.iter().flatten() {
+        *day_counts.entry(*d).or_insert(0) += 1;
+    }
+    let day_set: std::collections::HashSet<i64> = day_counts.keys().copied().collect();
+    let mut sorted_days: Vec<i64> = day_set.iter().copied().collect();
+    sorted_days.sort_unstable();
+
+    // Streak shows "—" until history answers (endpoint may not exist yet).
+    let has_history = rows_ok.is_some();
+    let streak_val = if has_history {
+        format!("{}d", current_streak(&day_set, today))
+    } else {
+        "—".to_string()
+    };
+
+    // History fetch state: loading → busy status, error → retry. Ok/absent-
+    // session render nothing here.
+    let hist_status: Element = match &*hist {
+        None => status("muted", "Loading match history…", true),
+        Some(Some(Err(e))) => error_status(&trpc_err(e), move |_| history_res.restart()),
+        _ => rsx! {},
+    };
+
+    let (overview, trends): (Element, Element) = match rows_ok {
+        Some(rows) if !rows.is_empty() => (
+            rsx! {
+                {heatmap_section(&day_counts, today)}
+                {bests_section(rows, &day_of_row, &sorted_days)}
+            },
+            rsx! {
+                {score_chart_section(rows)}
+                {bucket_section(rows)}
+                {match_log_section(rows, hist_page)}
+            },
+        ),
+        _ => (rsx! {}, legacy_match_log(stats)),
+    };
+
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: 2rem;",
+
+            // KPI row — getUserStats data + streak derived from history
+            div { class: "st-kpi-row",
+                StatTile {
+                    label: "Global Rank".to_string(),
+                    value: format!("#{}", stats.global_rank),
+                    sub: format!("of {}", stats.total_players),
+                }
+                StatTile { label: "Career Score".to_string(), value: stats.total_score.to_string() }
+                StatTile { label: "Accuracy".to_string(), value: format!("{}%", stats.accuracy) }
+                StatTile { label: "Games Played".to_string(), value: stats.games_played.to_string() }
+                if has_history {
+                    StatTile {
+                        label: "Current Streak".to_string(),
+                        value: streak_val.clone(),
+                        sub: "consecutive days".to_string(),
+                    }
+                } else {
+                    StatTile { label: "Current Streak".to_string(), value: streak_val.clone() }
+                }
+            }
+
+            {hist_status}
+            {overview}
+
+            // Accuracy breakdown bar
+            div { class: "app-card", style: "padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;",
+                span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase;", "Accuracy Breakdown" }
+                div { style: "display: flex; flex-direction: column; gap: .5rem;",
+                    div { style: "display: flex; justify-content: space-between; font-size: .625rem; color: var(--text-secondary); text-transform: uppercase;",
+                        span { "Correct: {stats.total_correct}" }
+                        span { "Incorrect: {stats.total_incorrect}" }
+                    }
+                    div { class: "st-bar-track",
+                        div { class: "st-bar-segment", style: "width: {stats.accuracy}%; background: var(--pastel-green);" }
+                        div { class: "st-bar-segment", style: "width: {100 - stats.accuracy}%; background: var(--pastel-red);" }
+                    }
+                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; line-height: 1.6;",
+                        "Your overall ratio is "
+                        span { style: "color: var(--pastel-green); font-weight: 700;", "{stats.total_correct} correct guesses" }
+                        " out of "
+                        span { style: "color: var(--text-primary); font-weight: 700;", "{stats.total_correct + stats.total_incorrect} total guesses" }
+                        "."
+                    }
+                }
+            }
+
+            {trends}
+        }
+    }
+}
+
+/// GitHub-style activity grid: 26 columns (weeks) × 7 rows (Sun–Sat); the
+/// last column is the current, partial week. Cell opacity ramps with games/day.
+fn heatmap_section(day_counts: &std::collections::HashMap<i64, i64>, today: i64) -> Element {
+    let weekday = (today + 4).rem_euclid(7); // epoch day 0 = Thursday; 0 = Sunday
+    let start = today - weekday - 25 * 7;
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: .75rem;",
+            span { class: "muted st-section-label", "Activity · Last 26 Weeks" }
+            div { style: "overflow-x: auto;",
+                div { class: "st-heat-grid",
+                    for col in 0..26i64 {
+                        for row in 0..7i64 {
+                            {
+                                let day = start + col * 7 + row;
+                                if day > today {
+                                    // Future days this week: invisible placeholders keep the column shape.
+                                    rsx! { div { class: "st-heat-cell", style: "visibility: hidden;" } }
+                                } else {
+                                    let n = day_counts.get(&day).copied().unwrap_or(0);
+                                    let bg = heat_bg(n);
+                                    let tip = format!("{} · {}", plural(n, "game"), day_label(day));
+                                    rsx! { div { class: "st-heat-cell", style: "background: {bg};", title: "{tip}" } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Personal bests: best score / best accuracy / fastest solve / longest
+/// streak, each linking to the game that set it.
+fn bests_section(rows: &[HistoryRow], day_of_row: &[Option<i64>], sorted_days: &[i64]) -> Element {
+    let bs = best_score(rows);
+    let ba = best_accuracy(rows);
+    let fs = fastest_solve(rows);
+    let (streak_n, streak_end) = longest_streak(sorted_days);
+    // The game that capped the longest streak (a completion on its last day).
+    let streak_row = streak_end.and_then(|d| {
+        day_of_row
+            .iter()
+            .position(|x| *x == Some(d))
+            .and_then(|i| rows.get(i))
+    });
+    let sub_of = |r: &HistoryRow| format!("{} · {}", r.title, format_date(&r.completed_at));
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: .75rem;",
+            span { class: "muted st-section-label", "Personal Bests" }
+            div { class: "st-best-grid",
+                {best_card("Best Score", bs.map(|r| r.score.to_string()).unwrap_or_else(|| "—".into()),
+                    bs.map(sub_of), bs.map(|r| r.completed_game_id.clone()))}
+                {best_card("Best Accuracy", ba.map(|(_, a)| format!("{a}%")).unwrap_or_else(|| "—".into()),
+                    ba.map(|(r, _)| sub_of(r)), ba.map(|(r, _)| r.completed_game_id.clone()))}
+                {best_card("Fastest Solve", fs.map(|(_, s)| fmt_mmss(s)).unwrap_or_else(|| "—".into()),
+                    fs.map(|(r, _)| sub_of(r)), fs.map(|(r, _)| r.completed_game_id.clone()))}
+                {best_card("Longest Streak",
+                    if streak_n > 0 { format!("{streak_n}d") } else { "—".into() },
+                    streak_row.map(sub_of), streak_row.map(|r| r.completed_game_id.clone()))}
+            }
+        }
+    }
+}
+
+/// One personal-best tile. With a backing game it's a link to the completed-
+/// game review; without one it's inert.
+fn best_card(
+    label: &'static str,
+    value: String,
+    sub: Option<String>,
+    link: Option<String>,
+) -> Element {
+    let body = rsx! {
+        span { class: "muted st-stat-label", "{label}" }
+        span { class: "st-best-value", "{value}" }
+        if let Some(s) = sub {
+            span { class: "muted st-best-sub", "{s}" }
+        }
+    };
+    match link {
+        Some(id) => rsx! {
+            Link { to: Route::GameCompleted { id }, class: "app-card st-best-card", {body} }
+        },
+        None => rsx! {
+            div { class: "app-card st-best-card", {body} }
+        },
+    }
+}
+
+/// Inline SVG score trend over the last 30 matches (chronological, no chart
+/// lib): a single yellow polyline with square markers, y auto-scaled.
+fn score_chart_section(rows: &[HistoryRow]) -> Element {
+    // Input is completedAt DESC → take the newest 30, then flip to chronological.
+    let scores: Vec<i64> = rows.iter().take(30).rev().map(|r| r.score).collect();
+    let n = scores.len();
+    let (lo, hi) = score_bounds(&scores);
+    const X0: f64 = 44.0;
+    const Y0: f64 = 10.0;
+    const W: f64 = 548.0;
+    const H: f64 = 140.0;
+    let pts = chart_points(&scores, X0, Y0, W, H);
+    let poly = pts
+        .iter()
+        .map(|(x, y)| format!("{x:.1},{y:.1}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let x_end = X0 + W;
+    let y_base = Y0 + H;
+    let y_hi_lbl = Y0 + 4.0;
+    let y_lo_lbl = y_base + 4.0;
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: .75rem;",
+            span { class: "muted st-section-label", "Score Trend · Last {n} Matches" }
+            div { class: "app-card", style: "padding: 1rem;",
+                svg {
+                    view_box: "0 0 600 165",
+                    role: "img",
+                    "aria-label": "Score per match, oldest to newest",
+                    style: "display: block; width: 100%; height: auto;",
+                    line { x1: "{X0}", y1: "{Y0}", x2: "{x_end}", y2: "{Y0}", stroke: "var(--border-app)", stroke_width: "1" }
+                    line { x1: "{X0}", y1: "{y_base}", x2: "{x_end}", y2: "{y_base}", stroke: "var(--border-app)", stroke_width: "1" }
+                    text { x: "38", y: "{y_hi_lbl}", class: "st-chart-label", "{hi}" }
+                    text { x: "38", y: "{y_lo_lbl}", class: "st-chart-label", "{lo}" }
+                    if pts.len() >= 2 {
+                        polyline { points: "{poly}", fill: "none", stroke: "var(--pastel-yellow)", stroke_width: "2" }
+                    }
+                    for (x, y) in pts.iter() {
+                        {
+                            let rx = x - 3.0;
+                            let ry = y - 3.0;
+                            rsx! { rect { x: "{rx}", y: "{ry}", width: "6", height: "6", fill: "var(--pastel-yellow)" } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Per-bucket aggregates by grid size (honest label — sizes, not difficulty).
+fn bucket_section(rows: &[HistoryRow]) -> Element {
+    let aggs = bucket_stats(rows);
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: .75rem;",
+            span { class: "muted st-section-label", "By Grid Size" }
+            div { class: "app-card", style: "overflow: hidden;",
+                div { style: "overflow-x: auto;",
+                    table { class: "st-table",
+                        thead {
+                            tr { class: "st-thead-row",
+                                th { "Size" }
+                                th { style: "text-align: center;", "Games" }
+                                th { style: "text-align: center;", "Avg Score" }
+                                th { style: "text-align: center;", "Avg Accuracy" }
+                                th { style: "text-align: right;", "Avg Time" }
+                            }
+                        }
+                        tbody {
+                            for (i, a) in aggs.iter().enumerate() {
+                                if a.games > 0 {
+                                    {
+                                        let label = BUCKET_LABELS[i];
+                                        let avg_score = a.avg_score();
+                                        let acc = a.avg_acc().map(|v| format!("{v}%")).unwrap_or_else(|| "—".into());
+                                        let time = a.avg_time().unwrap_or_else(|| "—".into());
+                                        rsx! {
+                                            tr { class: "st-table-row",
+                                                td { "{label}" }
+                                                td { style: "text-align: center; color: var(--text-secondary);", "{a.games}" }
+                                                td { style: "text-align: center; font-weight: 700; color: var(--pastel-yellow);", "{avg_score}" }
+                                                td { style: "text-align: center;", "{acc}" }
+                                                td { style: "text-align: right; color: var(--text-secondary);", "{time}" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Paginated match log (10/page, client-side). Rows link to the completed-
+/// game review.
+fn match_log_section(rows: &[HistoryRow], mut page: Signal<usize>) -> Element {
+    const PAGE: usize = 10;
+    let total = rows.len();
+    let pages = total.div_ceil(PAGE).max(1);
+    let p = (*page.read()).min(pages - 1);
+    let start = p * PAGE;
+    let end = (start + PAGE).min(total);
+    let from = start + 1;
+    let at_start = p == 0;
+    let at_end = end >= total;
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: .75rem;",
+            span { class: "muted st-section-label", "Match Log" }
+            div { style: "display: flex; flex-direction: column; gap: .5rem;",
+                for r in rows[start..end].iter() {
+                    {
+                        let time = r.duration_secs.filter(|&s| s > 0).map(fmt_mmss).unwrap_or_else(|| "—".into());
+                        let rank_idx = (r.rank.max(1) - 1) as usize;
+                        let date = format_date(&r.completed_at);
+                        rsx! {
+                            Link {
+                                to: Route::GameCompleted { id: r.completed_game_id.clone() },
+                                class: "app-card st-mlog-row",
+                                div { style: "flex: 1; display: flex; flex-direction: column; min-width: 0;",
+                                    span { class: "st-mlog-title", "{r.title}" }
+                                    span { class: "muted st-mlog-date", "{date}" }
+                                }
+                                span { class: "st-chip", "{r.grid_size.w}×{r.grid_size.h}" }
+                                span { class: "st-mlog-time", "{time}" }
+                                span { class: "st-mlog-score", "{r.score}" }
+                                RankBadge { index: rank_idx, label: r.rank.to_string() }
+                            }
+                        }
+                    }
+                }
+            }
+            div { style: "display: flex; align-items: center; justify-content: space-between; gap: .75rem;",
+                button {
+                    class: "app-btn",
+                    style: "font-size: .65rem;",
+                    disabled: at_start,
+                    onclick: move |_| {
+                        let cur = *page.peek();
+                        if cur > 0 {
+                            page.set(cur - 1);
+                        }
+                    },
+                    "Prev"
+                }
+                span { class: "muted", style: "font-size: .625rem; font-family: monospace; text-transform: uppercase;",
+                    "{from}–{end} of {total}"
+                }
+                button {
+                    class: "app-btn",
+                    style: "font-size: .65rem;",
+                    disabled: at_end,
+                    onclick: move |_| {
+                        let cur = *page.peek();
+                        page.set((cur + 1).min(pages - 1));
+                    },
+                    "Next"
+                }
+            }
+        }
+    }
+}
+
+/// Pre-history fallback: the recent-games log fed by getUserStats. Rendered
+/// while stats.getUserHistory is loading, erroring, or not yet deployed.
+fn legacy_match_log(stats: &CareerStats) -> Element {
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: .75rem;",
+            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Match Log History" }
+            div { style: "display: flex; flex-direction: column; gap: .75rem;",
+                for game_opt in stats.recent_games.iter() {
+                    if let Some(game) = game_opt {
+                        div { class: "app-card", style: "padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: .75rem;",
+                            div { style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem;",
+                                div { style: "display: flex; flex-direction: column; min-width: 0;",
+                                    span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{game.title}" }
+                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {format_date(&game.created_at)}" }
+                                }
+                                div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0; font-family: monospace;",
+                                    div { style: "display: flex; flex-direction: column;",
+                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Guesses" }
+                                        span { style: "font-size: .75rem; font-weight: 600; color: var(--text-primary);",
+                                            span { style: "color: var(--pastel-green);", "{game.correct_guesses}" }
+                                            " / "
+                                            span { style: "color: var(--pastel-red);", "{game.incorrect_guesses}" }
+                                        }
+                                    }
+                                    div { style: "display: flex; flex-direction: column;",
+                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Place" }
+                                        span { style: "font-size: .75rem; font-weight: 700; color: var(--text-primary);",
+                                            "#{game.rank} "
+                                            span { class: "muted", style: "font-size: .5625rem; font-weight: 400; text-transform: uppercase;", "of {game.total_participants}" }
+                                        }
+                                    }
+                                    div { style: "display: flex; flex-direction: column; border-left: 1px solid var(--border-app); padding-left: 1rem; min-width: 3.125rem;",
+                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Score" }
+                                        span { style: "font-size: .875rem; font-weight: 900; color: var(--pastel-yellow);", "{game.score}" }
+                                    }
+                                    Link {
+                                        to: Route::GameCompleted { id: game.id.clone() },
+                                        class: "app-btn",
+                                        style: "font-size: .625rem; padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
+                                        "Review"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 const STATS_CSS: &str = r#"
 .st-loading {
     padding: 2rem;
@@ -1133,4 +1721,159 @@ const STATS_CSS: &str = r#"
     flex-direction: column;
     gap: .5rem;
 }
+.st-kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 1rem;
+}
+.st-section-label {
+    font-size: .75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+.st-heat-grid {
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(7, .625rem);
+    grid-auto-columns: .625rem;
+    gap: 2px;
+    width: max-content;
+    padding: .125rem 0;
+}
+.st-heat-cell {
+    width: .625rem;
+    height: .625rem;
+    border: 1px solid color-mix(in srgb, var(--border-app) 60%, transparent);
+}
+.st-best-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: 1rem;
+}
+.st-best-card {
+    padding: .875rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    font-family: monospace;
+    color: inherit;
+    text-decoration: none;
+    min-width: 0;
+}
+a.st-best-card:hover { border-color: var(--border-hover); }
+.st-best-value {
+    font-size: 1.25rem;
+    font-weight: 900;
+    color: var(--pastel-yellow);
+}
+.st-best-sub {
+    font-size: .5625rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.st-chart-label {
+    fill: var(--text-secondary);
+    font-size: 9px;
+    font-family: monospace;
+    text-anchor: end;
+}
+.st-chip {
+    font-size: .5625rem;
+    font-family: monospace;
+    text-transform: uppercase;
+    border: 1px solid var(--border-app);
+    padding: .1rem .35rem;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+.st-mlog-row {
+    display: flex;
+    align-items: center;
+    gap: .875rem;
+    padding: .625rem .9rem;
+    color: inherit;
+    text-decoration: none;
+    font-family: monospace;
+}
+.st-mlog-row:hover { border-color: var(--border-hover); }
+.st-mlog-title {
+    font-size: .8rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.st-mlog-date {
+    font-size: .5625rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-top: .125rem;
+}
+.st-mlog-time {
+    font-size: .6875rem;
+    color: var(--text-secondary);
+    min-width: 2.75rem;
+    text-align: right;
+    flex-shrink: 0;
+}
+.st-mlog-score {
+    font-size: .875rem;
+    font-weight: 900;
+    color: var(--pastel-yellow);
+    min-width: 2.25rem;
+    text-align: right;
+    flex-shrink: 0;
+}
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// 2026-01-01T00:00:00Z in epoch ms (2025 is not a leap year).
+    const JAN1_2026_MS: f64 = 1_767_225_600_000.0;
+
+    #[test]
+    fn utc_day_handles_day_boundaries_and_garbage() {
+        let d0 = utc_day(JAN1_2026_MS).unwrap();
+        // Last ms of the day is still the same UTC day; the next ms is not.
+        assert_eq!(utc_day(JAN1_2026_MS + DAY_MS - 1.0), Some(d0));
+        assert_eq!(utc_day(JAN1_2026_MS + DAY_MS), Some(d0 + 1));
+        assert_eq!(utc_day(f64::NAN), None);
+        // Sanity: the civil date round-trips.
+        assert_eq!(civil_from_day(d0), (2026, 1, 1));
+        assert_eq!(civil_from_day(0), (1970, 1, 1));
+    }
+
+    #[test]
+    fn current_streak_anchors_on_today_or_yesterday() {
+        let days: HashSet<i64> = [100, 99, 98, 95].into_iter().collect();
+        assert_eq!(current_streak(&days, 100), 3); // ends today
+        assert_eq!(current_streak(&days, 101), 3); // yesterday keeps it alive
+        assert_eq!(current_streak(&days, 102), 0); // a full missed day breaks it
+        assert_eq!(current_streak(&HashSet::new(), 100), 0);
+    }
+
+    #[test]
+    fn streak_from_timestamps_respects_utc_midnight() {
+        // Completions either side of UTC midnight land on consecutive days.
+        let late = JAN1_2026_MS + DAY_MS - 60_000.0; // Jan 1, 23:59 UTC
+        let early = JAN1_2026_MS + DAY_MS + 60_000.0; // Jan 2, 00:01 UTC
+        let days: HashSet<i64> = [late, early].iter().filter_map(|&ms| utc_day(ms)).collect();
+        assert_eq!(days.len(), 2);
+        assert_eq!(current_streak(&days, utc_day(early).unwrap()), 2);
+    }
+
+    #[test]
+    fn longest_streak_finds_run_and_end_day() {
+        assert_eq!(longest_streak(&[1, 2, 3, 7, 8, 9, 10, 20]), (4, Some(10)));
+        assert_eq!(longest_streak(&[5]), (1, Some(5)));
+        assert_eq!(longest_streak(&[]), (0, None));
+    }
+}

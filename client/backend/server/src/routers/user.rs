@@ -20,7 +20,9 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
         "user.isUsernameUnique" => Some(is_username_unique(input, ctx).await),
         "user.isEmailUnique" => Some(is_email_unique(input, ctx).await),
         "user.verifyEmail" => Some(verify_email(input, ctx).await),
+        "user.resendVerification" => Some(resend_verification(input, ctx).await),
         "user.requestPasswordReset" => Some(request_password_reset(input, ctx).await),
+        "user.changePassword" => Some(change_password(input, ctx).await),
         "user.resetPassword" => Some(reset_password(input, ctx).await),
         "user.getProfile" => Some(get_profile(input, ctx).await),
         "user.updateProfile" => Some(update_profile(input, ctx).await),
@@ -56,6 +58,29 @@ fn hash_password_sync(plain: &str) -> Result<String, String> {
         hex::encode(salt),
         hex::encode(hash)
     ))
+}
+
+/// Verify a plaintext against a stored `scrypt:<saltHex>:<hashHex>` hash.
+/// Mirrors auth_routes.rs `verify_password` (private to that module); same
+/// params as `hash_password_sync` above. Run via `spawn_blocking` — scrypt is
+/// CPU-intensive.
+fn verify_password_sync(plain: &str, stored: &str) -> bool {
+    let parts: Vec<&str> = stored.splitn(3, ':').collect();
+    if parts.len() != 3 || parts[0] != "scrypt" {
+        return false;
+    }
+    let (Ok(salt), Ok(expected)) = (hex::decode(parts[1]), hex::decode(parts[2])) else {
+        return false;
+    };
+    let params = match scrypt::Params::new(14, 8, 1, expected.len()) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let mut out = vec![0u8; expected.len()];
+    if scrypt::scrypt(plain.as_bytes(), &salt, &params, &mut out).is_err() {
+        return false;
+    }
+    out == expected
 }
 
 // ── Public procedures ────────────────────────────────────────────────────────
@@ -112,6 +137,25 @@ async fn signup(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .await
     .map_err(|e| e.to_string())?;
 
+    create_and_send_verification(ctx, &email).await?;
+
+    Ok(json!({
+        "success": true,
+        "userId": id,
+    }))
+}
+
+/// Create a 24h `token_` verification row and email the link. The single
+/// token-table + mailer path shared by `signup` and `resend_verification`.
+///
+/// NOTE: never expose `token_str` to the caller. The verification token must
+/// only ever reach the address being verified (via email), otherwise possession
+/// of the email is never proven and anyone can self-verify an address they
+/// don't own.
+///
+/// Sent inline (~1 API call of latency); mail errors are logged inside the
+/// mailer and never fail the request — login is not gated on verification.
+async fn create_and_send_verification(ctx: &Ctx, email: &str) -> Result<(), String> {
     // token_str format matches TS: "token_" + random alphanumeric
     let token_str = format!(
         "token_{}",
@@ -122,24 +166,53 @@ async fn signup(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         r#"INSERT INTO "VerificationToken" (identifier, token, expires)
            VALUES ($1, $2, now() + interval '24 hours')"#,
     )
-    .bind(&email)
+    .bind(email)
     .bind(&token_str)
     .execute(&ctx.pool)
     .await
     .map_err(|e| e.to_string())?;
 
-    // NOTE: do NOT return `token_str` here. The verification token must only ever
-    // reach the address being verified (via email), otherwise possession of the
-    // email is never proven and anyone can self-verify an address they don't own.
-    //
-    // Sent inline (~1 API call of latency); errors are logged inside the mailer
-    // and never fail the signup — login is not gated on verification.
-    ctx.mailer.send_verification(&email, &token_str).await;
+    ctx.mailer.send_verification(email, &token_str).await;
+    Ok(())
+}
 
-    Ok(json!({
-        "success": true,
-        "userId": id,
-    }))
+/// user.resendVerification({ email }) — public. Always returns success so the
+/// response never reveals whether an account exists or is already verified
+/// (no enumeration). When the account exists and is unverified: replace any
+/// previous verification token and email a fresh 24h link via the exact path
+/// signup uses.
+async fn resend_verification(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let email = input["email"]
+        .as_str()
+        .ok_or("missing email")?
+        .trim()
+        .to_lowercase();
+
+    let unverified: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS(SELECT 1 FROM "User" WHERE email = $1 AND "emailVerified" IS NULL)"#,
+    )
+    .bind(&email)
+    .fetch_one(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if unverified {
+        // One live verification link per address: a resend invalidates the old
+        // one (mirrors requestPasswordReset's delete-then-insert).
+        sqlx::query(
+            r#"DELETE FROM "VerificationToken" WHERE identifier = $1 AND token LIKE 'token_%'"#,
+        )
+        .bind(&email)
+        .execute(&ctx.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        create_and_send_verification(ctx, &email).await?;
+    }
+    // ponytail: no rate limit — the mailer's provider quota is the backstop;
+    // add a per-email cooldown here if abuse ever shows up in the logs.
+
+    Ok(json!({ "success": true }))
 }
 
 /// user.requestPasswordReset({ email }) — public. Always returns success so the
@@ -248,6 +321,53 @@ async fn reset_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     Ok(json!({ "success": true }))
 }
 
+/// user.changePassword({ current, new }) — protected. Re-proves possession of
+/// the current password before setting a new one for the authenticated caller.
+async fn change_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let user = ctx.require_user()?;
+    let current = input["current"]
+        .as_str()
+        .ok_or("missing current")?
+        .to_string();
+    let new_password = input["new"].as_str().ok_or("missing new")?.to_string();
+    if new_password.len() < 8 {
+        return Err("Password must be at least 8 characters.".to_string());
+    }
+
+    let stored: Option<Option<String>> =
+        sqlx::query_scalar(r#"SELECT password FROM "User" WHERE id = $1"#)
+            .bind(&user.id)
+            .fetch_optional(&ctx.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    let Some(stored) = stored else {
+        return Err("User not found.".to_string());
+    };
+    // OAuth/admin-created accounts can have a NULL password; there is no
+    // "current" to verify, so route them through the reset flow instead.
+    let Some(stored) = stored else {
+        return Err("This account has no password set — use password reset.".to_string());
+    };
+
+    let ok = tokio::task::spawn_blocking(move || verify_password_sync(&current, &stored))
+        .await
+        .map_err(|e| e.to_string())?;
+    if !ok {
+        return Err("Current password is incorrect.".to_string());
+    }
+
+    let hashed = hash_password(new_password).await?;
+    sqlx::query(r#"UPDATE "User" SET password = $1 WHERE id = $2"#)
+        .bind(&hashed)
+        .bind(&user.id)
+        .execute(&ctx.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(json!({ "success": true }))
+}
+
 async fn is_username_unique(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     let username = match input["username"].as_str() {
         Some(u) if u.trim().len() >= 3 => u,
@@ -333,7 +453,7 @@ async fn get_profile(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     let user = ctx.require_user()?;
 
     let row = sqlx::query(&format!(
-        r#"SELECT id, name, email, to_char("emailVerified", '{}') AS "emailVerified"
+        r#"SELECT id, name, email, username, to_char("emailVerified", '{}') AS "emailVerified"
            FROM "User" WHERE id = $1"#,
         TS_FMT
     ))
@@ -351,6 +471,7 @@ async fn get_profile(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
         "id": row.get::<String, _>("id"),
         "name": row.get::<Option<String>, _>("name"),
         "email": row.get::<Option<String>, _>("email"),
+        "username": row.get::<Option<String>, _>("username"),
         "emailVerified": row.get::<Option<String>, _>("emailVerified"),
     }))
 }

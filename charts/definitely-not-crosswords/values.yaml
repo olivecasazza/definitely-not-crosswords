@@ -73,14 +73,18 @@ auth:
   origin: "https://definitely-not-crosswords.local"
   nextAuthSecret: "supersecretsecret"
 
-# Outbound email (verification + password-reset links). Off by default: with no
-# API key the server logs mail bodies instead of sending. `existingSecret` must
-# hold key RESEND_API_KEY. Link origin is derived from APP_ENV in the server;
-# set `origin` only to override it.
+# Outbound email (verification + password-reset links) over SMTP submission.
+# Off by default: with no credentials the server logs mail bodies instead of
+# sending. Link origin is derived from APP_ENV in the server; set `origin` only
+# to override it.
 mail:
+  # Secret holding SMTP_USER + SMTP_PASSWORD (a Google Workspace account and an
+  # app password). Unset → the server logs mail bodies instead of sending.
   existingSecret: ""
-  from: ""    # e.g. 'Definitely Not Crosswords <noreply@casazza.io>'
+  from: ""    # e.g. 'Definitely Not Crosswords <noreply@casazza.info>'
   origin: ""  # e.g. https://crosswords-staging.casazza.io
+  host: ""    # default smtp.gmail.com
+  port: ""    # default 587 (STARTTLS)
 
 # Billing (Lemon Squeezy Pro checkout).
 billing:

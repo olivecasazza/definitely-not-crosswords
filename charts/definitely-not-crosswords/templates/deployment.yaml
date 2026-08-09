@@ -185,11 +185,24 @@ spec:
                   key: DATABASE_URL
                   {{- end }}
             {{- if .Values.mail.existingSecret }}
-            - name: RESEND_API_KEY
+            - name: SMTP_USER
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.mail.existingSecret }}
-                  key: RESEND_API_KEY
+                  key: SMTP_USER
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mail.existingSecret }}
+                  key: SMTP_PASSWORD
+            {{- end }}
+            {{- if .Values.mail.host }}
+            - name: SMTP_HOST
+              value: {{ .Values.mail.host | quote }}
+            {{- end }}
+            {{- if .Values.mail.port }}
+            - name: SMTP_PORT
+              value: {{ .Values.mail.port | quote }}
             {{- end }}
             {{- if .Values.mail.from }}
             - name: MAIL_FROM

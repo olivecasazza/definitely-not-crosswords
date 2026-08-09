@@ -35,6 +35,15 @@ hex = "0.4"
 hmac = "0.12"
 sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Outbound mail over SMTP submission (Google Workspace). rustls, not native-tls,
+# to keep openssl out of the build like everything else here.
+lettre = { version = "0.11", default-features = false, features = [
+  "builder",
+  "hostname",
+  "smtp-transport",
+  "tokio1",
+  "tokio1-rustls-tls",
+] }
 chrono = { version = "0.4", features = ["serde"] }
 # ONNX crossword generator (port of services/crossword + @xenova/transformers):
 # ort runs the quantized MiniLM model, tokenizers does the BERT wordpiece, regex

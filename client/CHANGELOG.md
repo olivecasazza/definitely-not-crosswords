@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.36](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.35...v0.1.36) - 2026-08-09
+
+### Added
+
+- *(server)* open puzzle generation to players behind the Pro quota
+- daily puzzle — game.getDaily with DailyPick persistence
+- *(web)* Create-your-own tab on the pre-game view
+- admin dashboard, Joined column, and mobile read-only mode
+
+### Fixed
+
+- *(mail)* point SMTP at Cloudflare Email Service
+- *(mail)* send as noreply@noreply.casazza.io
+
+### Other
+
+- changelog for v0.1.35 [skip ci]
+
+
 ## [0.1.35](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.34...v0.1.35) - 2026-08-09
 
 ### Added

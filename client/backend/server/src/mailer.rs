@@ -44,8 +44,11 @@ impl Mailer {
             }
             .to_string()
         });
+        // noreply.casazza.io (not the apex) is what's onboarded for Email
+        // Sending, so the From must sit on that subdomain or Cloudflare rejects
+        // it — hence the doubled "noreply".
         let from = std::env::var("MAIL_FROM")
-            .unwrap_or_else(|_| "Definitely Not Crosswords <noreply@casazza.io>".into());
+            .unwrap_or_else(|_| "Definitely Not Crosswords <noreply@noreply.casazza.io>".into());
 
         let non_empty = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
         let smtp = match (non_empty("SMTP_USER"), non_empty("SMTP_PASSWORD")) {

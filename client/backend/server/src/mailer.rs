@@ -1,7 +1,10 @@
-//! Outbound email over SMTP submission — Google Workspace (`smtp.gmail.com`)
-//! rather than a separate transactional vendor, since the Workspace org already
-//! exists. The whole provider surface is one function (`send`), so swapping
-//! providers later is a one-function edit.
+//! Outbound email over SMTP submission — Cloudflare Email Service, since the
+//! zone is already on Cloudflare and onboarding auto-publishes SPF/DKIM/DMARC.
+//! Credentials are literally `api_token` plus a Cloudflare API token carrying
+//! "Email Sending: Edit". The whole provider surface is one function (`send`),
+//! so swapping providers later is a one-function edit.
+//!
+//! Implicit TLS on 465 — Cloudflare does NOT support STARTTLS on this endpoint.
 //!
 //! Unconfigured (no `SMTP_USER`/`SMTP_PASSWORD`): logs the message body instead
 //! of sending, so local dev and e2e work with zero creds and verification/reset
@@ -26,11 +29,12 @@ pub struct Mailer {
 }
 
 impl Mailer {
-    /// `SMTP_USER` + `SMTP_PASSWORD` (both required to send; a Workspace account
-    /// and an app password), `SMTP_HOST` (default smtp.gmail.com), `SMTP_PORT`
-    /// (default 587, STARTTLS), `MAIL_FROM` (optional — must be an address the
-    /// SMTP user is allowed to send as), `APP_ORIGIN` (optional — defaults
-    /// derived from APP_ENV, which maps 1:1 to a public host).
+    /// `SMTP_USER` + `SMTP_PASSWORD` (both required to send; for Cloudflare the
+    /// user is the literal `api_token` and the password is an API token with
+    /// "Email Sending: Edit"), `SMTP_HOST` (default smtp.mx.cloudflare.net),
+    /// `SMTP_PORT` (default 465, implicit TLS), `MAIL_FROM` (optional — must be
+    /// on a domain onboarded for Email Sending), `APP_ORIGIN` (optional —
+    /// defaults derived from APP_ENV, which maps 1:1 to a public host).
     pub fn from_env(app_env: &str) -> Self {
         let origin = std::env::var("APP_ORIGIN").unwrap_or_else(|_| {
             match app_env {
@@ -41,18 +45,19 @@ impl Mailer {
             .to_string()
         });
         let from = std::env::var("MAIL_FROM")
-            .unwrap_or_else(|_| "Definitely Not Crosswords <noreply@casazza.info>".into());
+            .unwrap_or_else(|_| "Definitely Not Crosswords <noreply@casazza.io>".into());
 
         let non_empty = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
         let smtp = match (non_empty("SMTP_USER"), non_empty("SMTP_PASSWORD")) {
             (Some(user), Some(pass)) => {
-                let host =
-                    std::env::var("SMTP_HOST").unwrap_or_else(|_| "smtp.gmail.com".to_string());
+                let host = std::env::var("SMTP_HOST")
+                    .unwrap_or_else(|_| "smtp.mx.cloudflare.net".to_string());
                 let port = std::env::var("SMTP_PORT")
                     .ok()
                     .and_then(|p| p.parse().ok())
-                    .unwrap_or(587u16);
-                match AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host) {
+                    .unwrap_or(465u16);
+                // relay() = implicit TLS. Cloudflare rejects STARTTLS on 465.
+                match AsyncSmtpTransport::<Tokio1Executor>::relay(&host) {
                     Ok(b) => Some(
                         b.port(port)
                             .credentials(Credentials::new(user, pass))

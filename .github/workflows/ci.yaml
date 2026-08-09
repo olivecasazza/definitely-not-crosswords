@@ -99,18 +99,12 @@ jobs:
             docker push "${BASE}:${VERSION}"
             echo "pushed ${BASE}:${VERSION}"
           elif [[ "${GITHUB_REF}" == refs/heads/main ]]; then
-            # Continuous build on main. The `main-<ts>-<sha>` tag is what makes
-            # staging continuous: Flux's staging ImagePolicy numerically sorts
-            # the timestamp and deploys the newest main build. Prod still only
-            # moves via the release promotion PR (pinned tag).
-            TS=$(date -u +%Y%m%d%H%M%S)
-            MAIN_TAG="main-${TS}-${GITHUB_SHA::7}"
+            # Continuous build on main: keep :latest + :sha (current deploy tracks
+            # :latest until the ImagePolicy is flipped to semver).
             docker tag "${BASE}:latest" "${BASE}:${GITHUB_SHA}"
-            docker tag "${BASE}:latest" "${BASE}:${MAIN_TAG}"
             docker push "${BASE}:${GITHUB_SHA}"
-            docker push "${BASE}:${MAIN_TAG}"
             docker push "${BASE}:latest"
-            echo "pushed ${BASE}:latest + :${GITHUB_SHA} + :${MAIN_TAG}"
+            echo "pushed ${BASE}:latest + :${GITHUB_SHA}"
           fi
 
   conventional-commits-check:

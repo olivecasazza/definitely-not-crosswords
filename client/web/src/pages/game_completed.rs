@@ -21,6 +21,10 @@ struct CompletedGameData {
     /// an older server (which doesn't send it) still parse; we then hide rematch.
     #[serde(default)]
     game_id: Option<String>,
+    /// When the match began. Older servers don't send it — then the "Time"
+    /// stat tile is simply omitted (never fabricated).
+    #[serde(default)]
+    started_at: Option<String>,
     created_at: String,
     game: GameInfo,
     game_stats: GameStats,
@@ -72,6 +76,31 @@ struct GameMember {
 struct MemberUser {
     name: Option<String>,
     email: Option<String>,
+}
+
+/// mm:ss between two ISO timestamps. None unless both parse and the span is
+/// positive — a missing/garbled startedAt must hide the tile, not show 0:00.
+fn solve_time(started_at: &str, created_at: &str) -> Option<String> {
+    let start = js_sys::Date::parse(started_at);
+    let end = js_sys::Date::parse(created_at);
+    if !start.is_finite() || !end.is_finite() {
+        return None;
+    }
+    let secs = ((end - start) / 1000.0).floor() as i64;
+    if secs <= 0 {
+        return None;
+    }
+    Some(format!("{}:{:02}", secs / 60, secs % 60))
+}
+
+/// Copy text via the JS clipboard API (no extra Rust deps) — same idiom as the
+/// invite-link button on the play page.
+fn copy_to_clipboard(text: &str) {
+    let script = format!(
+        "navigator.clipboard && navigator.clipboard.writeText({})",
+        serde_json::to_string(text).unwrap_or_default()
+    );
+    dioxus::document::eval(&script);
 }
 
 fn rank_name(index: usize) -> &'static str {
@@ -185,6 +214,35 @@ pub fn GameCompleted(id: String) -> Element {
                         rankings.sort_by(|a, b| b.score.cmp(&a.score));
                         let rankings_len = rankings.len();
 
+                        // "Your Result" hero — only when the signed-in user has a
+                        // row in the standings. Public/signed-out viewers (share
+                        // links) never match and just see the standings.
+                        let my_result = current_email.as_deref().and_then(|email| {
+                            rankings
+                                .iter()
+                                .position(|r| r.member.user.email.as_deref() == Some(email))
+                                .map(|idx| {
+                                    let r = &rankings[idx];
+                                    let total = r.correct_guesses + r.incorrect_guesses;
+                                    let accuracy = if total > 0 {
+                                        r.correct_guesses * 100 / total
+                                    } else {
+                                        0
+                                    };
+                                    let time = data
+                                        .started_at
+                                        .as_deref()
+                                        .and_then(|s| solve_time(s, &data.created_at));
+                                    (idx + 1, r.score, accuracy, time)
+                                })
+                        });
+                        let share_text = my_result.as_ref().map(|(_, score, accuracy, _)| {
+                            format!(
+                                "Solved \"{}\" — {} pts, {}% · definitely-not-crosswords",
+                                data.game.title, score, accuracy
+                            )
+                        });
+
                         rsx! {
                             div { style: "display: flex; flex-direction: column; gap: 2rem; height: 100%; overflow-y: auto;",
 
@@ -211,6 +269,50 @@ pub fn GameCompleted(id: String) -> Element {
                                         style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; border-top: 1px solid var(--border-app); padding-top: .75rem; width: 100%; max-width: 20rem;",
                                         "COMPLETED: "
                                         span { style: "color: var(--text-primary); font-weight: 700;", "{format_date(&data.created_at)}" }
+                                    }
+                                }
+
+                                // Your Result — personal read directly under the
+                                // banner (which already carries title + date).
+                                if let Some((place, score, accuracy, time)) = my_result {
+                                    div { style: "display: flex; flex-direction: column; gap: .75rem; font-family: monospace;",
+                                        h2 { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: 0; padding: 0 .25rem;", "Your Result" }
+                                        div { style: "display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .75rem;",
+                                            StatTile { label: "Score".to_string(), value: score.to_string() }
+                                            StatTile { label: "Accuracy".to_string(), value: format!("{accuracy}%") }
+                                            StatTile { label: "Place".to_string(), value: format!("{place} of {rankings_len}") }
+                                            // Only when the server sent startedAt and
+                                            // the span is positive — never fake a time.
+                                            if let Some(t) = time {
+                                                StatTile { label: "Time".to_string(), value: t }
+                                            }
+                                        }
+                                        div { style: "display: flex; gap: .75rem;",
+                                            button {
+                                                class: "app-btn",
+                                                style: "flex: 1; justify-content: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
+                                                onclick: move |_| {
+                                                    // This page is public, so the current URL is shareable as-is.
+                                                    let url = web_sys::window()
+                                                        .and_then(|w| w.location().href().ok())
+                                                        .unwrap_or_default();
+                                                    copy_to_clipboard(&url);
+                                                    state.toast(crate::store::Severity::Success, "Copied");
+                                                },
+                                                "Copy result link"
+                                            }
+                                            if let Some(share_text) = share_text {
+                                                button {
+                                                    class: "app-btn",
+                                                    style: "flex: 1; justify-content: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
+                                                    onclick: move |_| {
+                                                        copy_to_clipboard(&share_text);
+                                                        state.toast(crate::store::Severity::Success, "Copied");
+                                                    },
+                                                    "Copy text"
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
@@ -244,11 +346,7 @@ pub fn GameCompleted(id: String) -> Element {
                                                 "app-card cg-rank-card"
                                             };
 
-                                            let rank_n = if index > 2 {
-                                                format!("{}", index + 1)
-                                            } else {
-                                                (index + 1).to_string()
-                                            };
+                                            let rank_n = (index + 1).to_string();
 
                                             rsx! {
                                                 div { class: "{card_style}",

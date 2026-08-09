@@ -3,15 +3,16 @@ use std::collections::HashSet;
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use wasm_bindgen_futures::spawn_local;
 
 use crossword_core::fmt::plural;
 
 use crate::components::game_list::status;
-use crate::components::ui::StatTile;
+use crate::components::generation_progress::{GenerationProgress, Progress};
+use crate::components::ui::{SectionTabs, StatTile};
 use crate::net;
-use crate::store::{use_app_state, Severity};
+use crate::store::{use_app_state, AppState, Severity};
 use crate::Route;
 
 /// One question of the pre-start grid silhouette: coordinates and answer
@@ -99,6 +100,198 @@ fn Silhouette(questions: Vec<SilhouetteQ>) -> Element {
     }
 }
 
+// ── Create-your-own: generation plumbing ─────────────────────────────────────
+
+/// S / M / L grid sizes for the segmented size control.
+const GEN_SIZES: [(i64, i64); 3] = [(15, 15), (21, 21), (25, 25)];
+
+/// Fixed solver knobs — same defaults the admin generator uses.
+const GEN_RUNS: i64 = 20;
+const GEN_MAX_ATTEMPTS: i64 = 180;
+
+/// Substring of the server's quota-exhaustion error:
+/// "Monthly generation limit reached — upgrade to Pro for unlimited puzzles."
+const QUOTA_ERR_NEEDLE: &str = "Monthly generation limit reached";
+
+/// The user's generation recipe. Width/height come from the S/M/L control;
+/// the rest from the Advanced disclosure.
+#[derive(Clone)]
+struct Recipe {
+    topic: String,
+    width: i64,
+    height: i64,
+    min_word_length: i64,
+    max_word_length: i64,
+    target_words: i64,
+}
+
+/// Exact `generator.runGeneration` input — mirrors admin_generator.rs.
+fn recipe_input(r: &Recipe) -> Value {
+    json!({
+        "params": {
+            "topic": r.topic,
+            "width": r.width,
+            "height": r.height,
+            "minWordLength": r.min_word_length,
+            "maxWordLength": r.max_word_length,
+            "targetWords": r.target_words,
+            "runs": GEN_RUNS,
+            "maxAttempts": GEN_MAX_ATTEMPTS,
+        }
+    })
+}
+
+/// All generation-run signals bundled so helpers stay call-site friendly.
+/// `Signal<T>` is Copy, so this is too.
+#[derive(Clone, Copy)]
+struct GenSignals {
+    log: Signal<Vec<Value>>,
+    progress: Signal<Option<Progress>>,
+    /// "idle" | "running" | "succeeded" | "failed"
+    status: Signal<String>,
+    error: Signal<String>,
+    elapsed: Signal<u64>,
+    /// Live subscription handle kept alive in a signal; drop = unsubscribe.
+    handle: Signal<Option<net::Subscription>>,
+    game_id: Signal<Option<String>>,
+    game_title: Signal<Option<String>>,
+    publishing: Signal<bool>,
+    publish_error: Signal<String>,
+    /// Set when the server reports quota exhaustion mid-flight.
+    quota_blocked: Signal<bool>,
+    /// Last submitted recipe, for "Try again".
+    last_recipe: Signal<Option<Recipe>>,
+}
+
+/// Kick off a generation run: reset state, start the 1s elapsed ticker, and
+/// subscribe to the event stream (same idioms as admin_generator.rs).
+fn run_generation(recipe: Recipe, mut gs: GenSignals, state: AppState) {
+    // Drop any previous subscription, reset run state.
+    gs.handle.set(None);
+    gs.log.set(vec![]);
+    gs.progress.set(None);
+    gs.status.set("running".to_string());
+    gs.error.set(String::new());
+    gs.game_id.set(None);
+    gs.game_title.set(None);
+    gs.publishing.set(false);
+    gs.publish_error.set(String::new());
+    gs.elapsed.set(0);
+    gs.last_recipe.set(Some(recipe.clone()));
+
+    // Tick elapsed every second until the run leaves "running".
+    spawn_local(async move {
+        loop {
+            gloo_timers::future::TimeoutFuture::new(1_000).await;
+            if gs.status.read().as_str() != "running" {
+                break;
+            }
+            let cur = *gs.elapsed.read();
+            gs.elapsed.set(cur + 1);
+        }
+    });
+
+    let input = recipe_input(&recipe);
+    let handle = net::subscribe(
+        "generator.runGeneration",
+        Some(input),
+        move |data: Value| {
+            let etype = data["type"].as_str().unwrap_or("").to_string();
+            if etype == "progress" {
+                let stage = data["stage"].as_str().unwrap_or("").to_string();
+                let current = data["current"].as_i64().unwrap_or(0);
+                let total = data["total"].as_i64().unwrap_or(0);
+                let message = data["message"].as_str().map(|s| s.to_string());
+                gs.progress.set(Some(Progress {
+                    stage,
+                    current,
+                    total,
+                    message,
+                }));
+                return;
+            }
+
+            gs.log.write().push(data.clone());
+
+            match etype.as_str() {
+                "completed" => {
+                    gs.status.set("succeeded".to_string());
+                    gs.progress.set(None);
+                    if let Some(gid) = data["gameId"].as_str() {
+                        gs.game_id.set(Some(gid.to_string()));
+                    }
+                    if let Some(t) = data["title"].as_str() {
+                        gs.game_title.set(Some(t.to_string()));
+                    }
+                    state.toast(Severity::Success, "Your puzzle is ready");
+                }
+                "failed" => {
+                    gs.status.set("failed".to_string());
+                    let err = data["error"]
+                        .as_str()
+                        .unwrap_or("unknown error")
+                        .to_string();
+                    if err.contains(QUOTA_ERR_NEEDLE) {
+                        gs.quota_blocked.set(true);
+                    }
+                    gs.error.set(err);
+                }
+                _ => {}
+            }
+        },
+    );
+    gs.handle.set(Some(handle));
+}
+
+/// Success CTA: publish the generated game (creator-gated server-side), start
+/// it, and enter play. Errors (e.g. permission) surface inline via
+/// `publish_error`.
+fn publish_and_play(game_id: String, mut gs: GenSignals, nav: Navigator) {
+    spawn_local(async move {
+        gs.publishing.set(true);
+        gs.publish_error.set(String::new());
+        if let Err(e) = net::mutation(
+            "generator.publishGeneratedGame",
+            Some(json!({ "gameId": game_id })),
+        )
+        .await
+        {
+            gs.publish_error.set(net::trpc_err_msg(e));
+            gs.publishing.set(false);
+            return;
+        }
+        match net::mutation_as::<Value>("activeGame.start", Some(json!({ "gameId": game_id })))
+            .await
+        {
+            Ok(res) => {
+                if let Some(id) = res.get("id").and_then(|v| v.as_str()) {
+                    nav.push(Route::GamePlay { id: id.to_string() });
+                } else {
+                    gs.publish_error
+                        .set("Unexpected response from server.".into());
+                }
+            }
+            Err(e) => gs.publish_error.set(net::trpc_err_msg(e)),
+        }
+        gs.publishing.set(false);
+    });
+}
+
+/// Inline (never modal) upgrade pitch shown when the monthly quota is spent.
+fn upgrade_card() -> Element {
+    rsx! {
+        div { class: "app-card", style: "padding: 1rem; display: flex; flex-direction: column; gap: .625rem; align-items: flex-start; flex-shrink: 0;",
+            p { style: "font-size: .875rem; font-weight: 600; margin: 0; color: var(--text-primary);",
+                "You've used all your puzzle generations this month."
+            }
+            p { class: "muted", style: "font-size: .75rem; margin: 0;",
+                "Pro members generate unlimited puzzles."
+            }
+            Link { to: Route::Profile {}, class: "app-btn app-btn-active", "Upgrade to Pro" }
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum Panel {
     Puzzle,
@@ -146,6 +339,31 @@ pub fn GameNew(id: String) -> Element {
     let nav = use_navigator();
     let state = use_app_state();
 
+    // ── Create-your-own tab state ─────────────────────────────────────────
+    // 0 = Play this puzzle (default), 1 = Create your own.
+    let mut create_tab = use_signal(|| 0usize);
+    let mut topic = use_signal(String::new);
+    // Index into GEN_SIZES; default M · 21×21.
+    let mut size_idx = use_signal(|| 1usize);
+    let mut advanced_open = use_signal(|| false);
+    let mut min_len = use_signal(|| 3i64);
+    let mut max_len = use_signal(|| 12i64);
+    let mut answers = use_signal(|| 42i64);
+    let gen = GenSignals {
+        log: use_signal(Vec::new),
+        progress: use_signal(|| None),
+        status: use_signal(|| "idle".to_string()),
+        error: use_signal(String::new),
+        elapsed: use_signal(|| 0u64),
+        handle: use_signal(|| None),
+        game_id: use_signal(|| None),
+        game_title: use_signal(|| None),
+        publishing: use_signal(|| false),
+        publish_error: use_signal(String::new),
+        quota_blocked: use_signal(|| false),
+        last_recipe: use_signal(|| None),
+    };
+
     let ws = use_workspace("game_new_layout", default_layout);
     crate::store::sync_panel_mode(ws.mode);
 
@@ -170,50 +388,302 @@ pub fn GameNew(id: String) -> Element {
             },
             (Some(Err(_)), Panel::Start) => status("muted", "Unavailable", false),
             (Some(Ok(details)), Panel::Puzzle) => {
+                let tab = *create_tab.read();
                 let (grid_w, grid_h, _) = silhouette_cells(&details.questions);
                 let clues = details.question_count;
                 // 90s per clue, rounded up to whole minutes — hence the tilde.
                 let est_min = (clues * 90 + 59) / 60;
-                rsx! {
-                    div { style: "display: flex; flex-direction: column; gap: 1.5rem;",
-                        // Header
-                        div { style: "display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap;",
-                            div {
+
+                // ── Create-your-own pane ──────────────────────────────────
+                // `None` = session still loading, `Some(None)` = signed out.
+                let session = state.session.read().clone();
+                let sub_now = state.sub.read().clone();
+                // Omit the quota line entirely while sub status is unknown.
+                let quota_line = sub_now.as_ref().map(|s| {
+                    if s.is_pro || s.quota_limit.is_none() {
+                        format!("{} / ∞ this month", s.quota_used)
+                    } else {
+                        format!(
+                            "{} / {} this month",
+                            s.quota_used,
+                            s.quota_limit.unwrap_or(0)
+                        )
+                    }
+                });
+                let client_exhausted = sub_now.as_ref().map_or(false, |s| {
+                    !s.is_pro && s.quota_limit.map_or(false, |l| s.quota_used >= l)
+                });
+                let exhausted = client_exhausted || *gen.quota_blocked.read();
+                let gen_running = gen.status.read().as_str() == "running";
+                let topic_empty = topic.read().trim().is_empty();
+                let advanced = *advanced_open.read();
+
+                let create_pane = match session {
+                    None => status("muted", "Loading…", true),
+                    Some(None) => rsx! {
+                        div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: .75rem; align-items: flex-start;",
+                            p { style: "font-size: .875rem; font-weight: 600; margin: 0; color: var(--text-primary);",
+                                "Sign in to create puzzles"
+                            }
+                            p { class: "muted", style: "font-size: .75rem; margin: 0;",
+                                "Generate a custom crossword from any topic you like."
+                            }
+                            Link { to: Route::Login {}, class: "app-btn app-btn-active", "Sign in" }
+                        }
+                    },
+                    Some(Some(_)) => rsx! {
+                        div { style: "display: flex; flex-direction: column; gap: 1.25rem;",
+                            // Eyebrow + quota line (top-right)
+                            div { style: "display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap;",
                                 p {
                                     class: "muted",
-                                    style: "font-size: var(--fs-2xs); font-family: var(--mono, monospace); text-transform: uppercase; letter-spacing: .1em; margin: 0 0 .5rem 0;",
-                                    "New Game"
+                                    style: "font-size: var(--fs-2xs); font-family: var(--mono, monospace); text-transform: uppercase; letter-spacing: .1em; margin: 0;",
+                                    "Create your own"
                                 }
-                                h1 {
-                                    style: "font-size: 1.75rem; font-weight: 700; color: var(--text-primary); margin: 0;",
-                                    "{details.title}"
-                                }
-                            }
-                            span { class: "gn-chip", "{details.source.to_lowercase()}" }
-                        }
-                        // Stat tiles
-                        div { class: "gn-stats",
-                            StatTile { label: "Clues".to_string(), value: clues.to_string() }
-                            if grid_w > 0 && grid_h > 0 {
-                                StatTile { label: "Grid".to_string(), value: format!("{grid_w}×{grid_h}") }
-                            }
-                            if clues > 0 {
-                                StatTile {
-                                    label: "Est. solve".to_string(),
-                                    value: format!("~{est_min} min"),
-                                    sub: format!("{} × 90s", plural(clues, "clue")),
+                                if let Some(q) = quota_line {
+                                    span {
+                                        class: "muted",
+                                        style: "font-size: var(--fs-2xs); font-family: var(--mono, monospace); text-transform: uppercase; letter-spacing: .05em;",
+                                        "{q}"
+                                    }
                                 }
                             }
+                            // Topic
+                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
+                                label {
+                                    r#for: "gn-topic",
+                                    class: "muted",
+                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;",
+                                    "Topic"
+                                }
+                                input {
+                                    id: "gn-topic",
+                                    class: "app-input",
+                                    style: "padding: .75rem 1rem; font-size: 1.125rem; width: 100%;",
+                                    r#type: "text",
+                                    placeholder: "e.g. deep sea creatures",
+                                    value: "{topic}",
+                                    oninput: move |e| topic.set(e.value()),
+                                }
+                            }
+                            // Size
+                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
+                                span {
+                                    class: "muted",
+                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;",
+                                    "Size"
+                                }
+                                SectionTabs {
+                                    tabs: vec!["S · 15×15".to_string(), "M · 21×21".to_string(), "L · 25×25".to_string()],
+                                    active: *size_idx.read(),
+                                    on_select: move |i| size_idx.set(i),
+                                }
+                            }
+                            // Advanced disclosure
+                            button {
+                                class: "app-btn",
+                                style: "align-self: flex-start;",
+                                onclick: move |_| {
+                                    let cur = *advanced_open.peek();
+                                    advanced_open.set(!cur);
+                                },
+                                if advanced { "Advanced ▴" } else { "Advanced ▸" }
+                            }
+                            if advanced {
+                                div { style: "display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: .75rem;",
+                                    for (lbl, value, min_v, max_v, idx) in [
+                                        ("Min word len", *min_len.read(), 2i64, 50i64, 0usize),
+                                        ("Max word len", *max_len.read(), 2, 50, 1),
+                                        ("Answers", *answers.read(), 1, 250, 2),
+                                    ] {
+                                        label { class: "muted", style: "display: flex; flex-direction: column; gap: .25rem; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;",
+                                            {lbl}
+                                            input {
+                                                class: "app-input",
+                                                style: "padding: .375rem .5rem; font-size: .875rem;",
+                                                r#type: "number",
+                                                min: "{min_v}",
+                                                max: "{max_v}",
+                                                value: "{value}",
+                                                oninput: move |e| {
+                                                    if let Ok(n) = e.value().parse::<i64>() {
+                                                        match idx {
+                                                            0 => min_len.set(n),
+                                                            1 => max_len.set(n),
+                                                            _ => answers.set(n),
+                                                        }
+                                                    }
+                                                },
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // CTA — swapped for the upgrade card when the quota is spent
+                            if exhausted {
+                                {upgrade_card()}
+                            } else {
+                                button {
+                                    class: "app-btn app-btn-active",
+                                    style: "justify-content: center; font-weight: 700;",
+                                    disabled: gen_running || topic_empty,
+                                    onclick: move |_| {
+                                        let t = topic.read().trim().to_string();
+                                        if t.is_empty() {
+                                            return;
+                                        }
+                                        let (w, h) = GEN_SIZES[(*size_idx.read()).min(GEN_SIZES.len() - 1)];
+                                        let recipe = Recipe {
+                                            topic: t,
+                                            width: w,
+                                            height: h,
+                                            min_word_length: *min_len.read(),
+                                            max_word_length: *max_len.read(),
+                                            target_words: *answers.read(),
+                                        };
+                                        run_generation(recipe, gen, state);
+                                    },
+                                    if gen_running { "Generating…" } else { "Generate puzzle" }
+                                }
+                            }
                         }
-                        // Grid silhouette (only when the server sent coordinates)
-                        if !details.questions.is_empty() {
-                            Silhouette { questions: details.questions.clone() }
+                    },
+                };
+
+                rsx! {
+                    div { style: "display: flex; flex-direction: column; gap: 1.5rem;",
+                        SectionTabs {
+                            tabs: vec!["Play this puzzle".to_string(), "Create your own".to_string()],
+                            active: tab,
+                            on_select: move |i| create_tab.set(i),
                         }
-                        // Play-state status line
-                        if details.active_game_id.is_some() {
-                            p { class: "gn-status", "You have this in progress" }
-                        } else if details.completed_game_id.is_some() {
-                            p { class: "gn-status", "You solved this puzzle" }
+                        if tab == 0 {
+                            // Header
+                            div { style: "display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap;",
+                                div {
+                                    p {
+                                        class: "muted",
+                                        style: "font-size: var(--fs-2xs); font-family: var(--mono, monospace); text-transform: uppercase; letter-spacing: .1em; margin: 0 0 .5rem 0;",
+                                        "New Game"
+                                    }
+                                    h1 {
+                                        style: "font-size: 1.75rem; font-weight: 700; color: var(--text-primary); margin: 0;",
+                                        "{details.title}"
+                                    }
+                                }
+                                span { class: "gn-chip", "{details.source.to_lowercase()}" }
+                            }
+                            // Stat tiles
+                            div { class: "gn-stats",
+                                StatTile { label: "Clues".to_string(), value: clues.to_string() }
+                                if grid_w > 0 && grid_h > 0 {
+                                    StatTile { label: "Grid".to_string(), value: format!("{grid_w}×{grid_h}") }
+                                }
+                                if clues > 0 {
+                                    StatTile {
+                                        label: "Est. solve".to_string(),
+                                        value: format!("~{est_min} min"),
+                                        sub: format!("{} × 90s", plural(clues, "clue")),
+                                    }
+                                }
+                            }
+                            // Grid silhouette (only when the server sent coordinates)
+                            if !details.questions.is_empty() {
+                                Silhouette { questions: details.questions.clone() }
+                            }
+                            // Play-state status line
+                            if details.active_game_id.is_some() {
+                                p { class: "gn-status", "You have this in progress" }
+                            } else if details.completed_game_id.is_some() {
+                                p { class: "gn-status", "You solved this puzzle" }
+                            }
+                        } else {
+                            {create_pane}
+                        }
+                    }
+                }
+            }
+            // Create-your-own: the Start panel becomes the generation stage.
+            (Some(Ok(_)), Panel::Start) if *create_tab.read() == 1 => {
+                let status_now = gen.status.read().clone();
+                if status_now == "idle" {
+                    rsx! {
+                        div { class: "muted", style: "font-size: .875rem; text-align: center; padding: 2rem 0;",
+                            "Your puzzle will build here."
+                        }
+                    }
+                } else {
+                    let is_running = status_now == "running";
+                    let failed = status_now == "failed";
+                    let quota_blocked = *gen.quota_blocked.read();
+                    // Title reveal only once the completed event delivered both.
+                    let game = if status_now == "succeeded" {
+                        let gid = gen.game_id.read().clone();
+                        let gtitle = gen.game_title.read().clone();
+                        gid.zip(gtitle)
+                    } else {
+                        None
+                    };
+                    rsx! {
+                        div { style: "display: flex; flex-direction: column; gap: 1rem; height: 100%;",
+                            // Log/progress: the shared GenerationProgress component,
+                            // wrapped so the feed takes the remaining panel height.
+                            div { style: "flex: 1 1 auto; min-height: 0;",
+                                GenerationProgress {
+                                    log: gen.log.read().clone(),
+                                    progress: gen.progress.read().clone(),
+                                    running: is_running,
+                                    status: status_now.clone(),
+                                    elapsed_secs: *gen.elapsed.read(),
+                                }
+                            }
+                            if failed {
+                                if quota_blocked {
+                                    // Server-side quota exhaustion — same inline
+                                    // upgrade card as the recipe CTA, never a modal.
+                                    {upgrade_card()}
+                                } else {
+                                    div { class: "app-card", style: "padding: 1rem; display: flex; flex-direction: column; gap: .75rem; border-color: var(--color-error); flex-shrink: 0;",
+                                        p { class: "error", style: "font-size: .875rem; margin: 0;", "{gen.error}" }
+                                        button {
+                                            class: "app-btn",
+                                            style: "justify-content: center;",
+                                            onclick: move |_| {
+                                                // Clone out first: run_generation writes
+                                                // last_recipe, so no read guard may be
+                                                // held across the call.
+                                                let recipe = gen.last_recipe.read().clone();
+                                                if let Some(r) = recipe {
+                                                    run_generation(r, gen, state);
+                                                }
+                                            },
+                                            "Try again"
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some((gid, gtitle)) = game {
+                                div { class: "app-card", style: "padding: 1rem; display: flex; flex-direction: column; gap: .75rem; border-color: var(--color-success); flex-shrink: 0;",
+                                    p {
+                                        class: "muted",
+                                        style: "font-size: var(--fs-2xs); font-family: var(--mono, monospace); text-transform: uppercase; letter-spacing: .1em; margin: 0;",
+                                        "Your puzzle is ready"
+                                    }
+                                    p { style: "font-size: 1.125rem; font-weight: 700; margin: 0; color: var(--text-primary);",
+                                        "{gtitle}"
+                                    }
+                                    if !gen.publish_error.read().is_empty() {
+                                        p { class: "error", style: "font-size: .75rem; margin: 0;", "{gen.publish_error}" }
+                                    }
+                                    button {
+                                        class: "app-btn app-btn-active",
+                                        style: "justify-content: center; font-weight: 700;",
+                                        disabled: *gen.publishing.read(),
+                                        onclick: move |_| publish_and_play(gid.clone(), gen, nav),
+                                        if *gen.publishing.read() { "Starting…" } else { "Play it now" }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

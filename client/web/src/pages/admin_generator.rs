@@ -173,18 +173,16 @@ pub fn AdminGenerator() -> Element {
         return gate;
     }
 
+    // Mobile (< 760px, panel-kit's own threshold): the parameters form
+    // collapses behind a disclosure and Publish is not mounted.
+    let mobile_ro = *ws.is_mobile.read();
+
     let body = move |kind: Panel, _max: bool| -> Element {
         let status = gen_status.read().clone();
         let is_running = status == "running";
         match kind {
-            Panel::Parameters => rsx! {
-                div { class: "col", style: "gap:1.5rem;padding:1rem;overflow-y:auto;height:100%",
-                    div { style: "border-bottom:1px solid var(--border-app);padding-bottom:1rem",
-                        h1 { style: "font-size:1.125rem;font-weight:bold;letter-spacing:0.05em",
-                            "CROSSWORD GENERATOR"
-                        }
-                    }
-
+            Panel::Parameters => {
+                let params_form = rsx! {
                     // topic + submit row
                     div { class: "row", style: "flex-wrap:wrap;align-items:flex-end;gap:0.75rem",
                         div { class: "col", style: "gap:0.375rem;flex:1;min-width:280px",
@@ -337,8 +335,32 @@ pub fn AdminGenerator() -> Element {
                             }
                         }
                     }
+                };
+
+                rsx! {
+                    div { class: "col", style: "gap:1.5rem;padding:1rem;overflow-y:auto;height:100%",
+                        div { style: "border-bottom:1px solid var(--border-app);padding-bottom:1rem",
+                            h1 { style: "font-size:1.125rem;font-weight:bold;letter-spacing:0.05em",
+                                "CROSSWORD GENERATOR"
+                            }
+                        }
+                        // Mobile: collapse the form behind a disclosure. Gated by
+                        // rsx (not CSS) so only one branch mounts the controls.
+                        if mobile_ro {
+                            details { style: "border:1px solid var(--border-app)",
+                                summary { class: "muted", style: "cursor:pointer;padding:0.75rem 1rem;font-size:0.75rem;font-weight:600;font-family:monospace;text-transform:uppercase;letter-spacing:0.05em",
+                                    "New generation (desktop recommended)"
+                                }
+                                div { class: "col", style: "gap:1.5rem;padding:1rem;border-top:1px solid var(--border-app)",
+                                    {params_form}
+                                }
+                            }
+                        } else {
+                            {params_form}
+                        }
+                    }
                 }
-            },
+            }
 
             Panel::Progress => {
                 // Idle summary of the most recent job from the already-fetched list.
@@ -394,7 +416,8 @@ pub fn AdminGenerator() -> Element {
                                         }
                                     }
                                     div { class: "row", style: "gap:0.5rem",
-                                        if !*gen_game_published.read() {
+                                        // Publish is desktop-only; mobile stays read-only.
+                                        if !mobile_ro && !*gen_game_published.read() {
                                             button {
                                                 class: "app-btn app-btn-active",
                                                 style: "font-weight:bold",
@@ -609,13 +632,20 @@ pub fn AdminGenerator() -> Element {
     };
 
     rsx! {
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
+        div { class: "col", style: "height:100%",
+            if mobile_ro {
+                div { class: "muted", style: "font-size:0.75rem;padding:0.5rem 1rem;border-bottom:1px solid var(--border-app)",
+                    "Editing requires a desktop viewport."
+                }
+            }
+            div {
+                class: ws.root_class(),
+                tabindex: "0",
+                onmousemove: move |e| ws.handle_mouse_move(&e),
+                onmouseup: move |_| ws.handle_mouse_up(),
+                {ws.render(body)}
+                {ws.dock()}
+            }
         }
     }
 }

@@ -521,12 +521,14 @@ async fn list_for_admin(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
         return Err(format!("{e:?}"));
     }
 
+    // `createdAt` is nullable: pre-migration rows have no signup stamp and the
+    // admin UI renders them as "—".
     let rows = sqlx::query(&format!(
         r#"SELECT id, email, username, name, role::text AS role, "vipPass",
-                  to_char("emailVerified", '{}') AS "emailVerified"
+                  to_char("emailVerified", '{TS_FMT}') AS "emailVerified",
+                  to_char("createdAt", '{TS_FMT}') AS "createdAt"
            FROM "User"
-           ORDER BY role ASC, email ASC"#,
-        TS_FMT
+           ORDER BY role ASC, email ASC"#
     ))
     .fetch_all(&ctx.pool)
     .await
@@ -543,6 +545,7 @@ async fn list_for_admin(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
                 "role": r.get::<String, _>("role"),
                 "vipPass": r.get::<bool, _>("vipPass"),
                 "emailVerified": r.get::<Option<String>, _>("emailVerified"),
+                "createdAt": r.get::<Option<String>, _>("createdAt"),
             })
         })
         .collect();

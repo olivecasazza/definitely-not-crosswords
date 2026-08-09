@@ -2,6 +2,7 @@ use crate::components::identicon::Identicon;
 use crate::components::ui::Drawer;
 use crate::net::{mutation, query, trpc_err_msg};
 use crate::store::{use_app_state, Severity};
+use crossword_core::fmt::format_date;
 use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,10 @@ struct AdminUser {
     vip_pass: bool,
     // nullable timestamp — presence = verified
     email_verified: Option<serde_json::Value>,
+    // Additive server field — older servers omit it, so default to None
+    // and render "—".
+    #[serde(default)]
+    created_at: Option<String>,
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -259,8 +264,25 @@ pub fn AdminUsers() -> Element {
         return gate;
     }
 
+    // Mobile (< 760px, panel-kit's own threshold) is read-only: row data still
+    // renders, but mutation controls are not mounted at all.
+    let mobile_ro = *ws.is_mobile.read();
+
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
+            Panel::AddUser if mobile_ro => rsx! {
+                div { class: "col", style: "gap:0.75rem;padding:1rem",
+                    div { class: "muted", style: "font-size:0.875rem",
+                        "Adding users requires a desktop viewport."
+                    }
+                    // fetch errors still surface on mobile (read-only display)
+                    if !error_msg.read().is_empty() {
+                        div { class: "app-card error", style: "padding:0.75rem;font-size:0.875rem",
+                            {error_msg.read().clone()}
+                        }
+                    }
+                }
+            },
             Panel::AddUser => rsx! {
                 div { class: "col", style: "gap:1rem",
                     // ── add user form ──────────────────────────────────────────
@@ -407,7 +429,7 @@ pub fn AdminUsers() -> Element {
                             table { style: "width:100%;text-align:left;font-size:0.875rem;border-collapse:collapse",
                                 thead {
                                     tr { style: "font-size:0.75rem;text-transform:uppercase;font-family:monospace",
-                                        for col in ["User", "Username", "Verified", "Role", "VIP Pass", "Capabilities"] {
+                                        for col in ["User", "Username", "Verified", "Joined", "Role", "VIP Pass", "Capabilities"] {
                                             th { class: "muted", style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app)", {col} }
                                         }
                                     }
@@ -425,6 +447,7 @@ pub fn AdminUsers() -> Element {
                                                 .unwrap_or_else(|| "Unnamed user".to_string());
                                             let email_text = user.email.clone().unwrap_or_else(|| "—".to_string());
                                             let username_text = user.username.clone().unwrap_or_else(|| "—".to_string());
+                                            let joined_text = user.created_at.as_deref().map(format_date).unwrap_or_else(|| "—".to_string());
 
                                             let uid_role = uid.clone();
                                             let uid_vip = uid.clone();
@@ -452,45 +475,54 @@ pub fn AdminUsers() -> Element {
                                                     }
                                                     td { class: "muted", style: "padding:0.75rem 1rem", {username_text} }
                                                     td { style: "padding:0.75rem 1rem", {verified_badge(verified)} }
+                                                    td { class: "muted", style: "padding:0.75rem 1rem;white-space:nowrap", {joined_text} }
                                                     // inline controls own their cells — keep clicks and
                                                     // keystrokes from bubbling into the row's drawer-open.
-                                                    td {
-                                                        style: "padding:0.75rem 1rem",
-                                                        onclick: move |e| e.stop_propagation(),
-                                                        onkeydown: move |e| e.stop_propagation(),
-                                                        {
-                                                            let saving_id = saving_role_id.read().clone();
-                                                            let is_saving = saving_id.as_deref() == Some(&uid_role);
-                                                            let uid2 = uid_role.clone();
-                                                            rsx! {
-                                                                select {
-                                                                    class: "app-input",
-                                                                    style: "padding:0.375rem 0.5rem;font-size:0.75rem",
-                                                                    disabled: is_saving,
-                                                                    value: "{user_role}",
-                                                                    oninput: move |e| set_role(uid2.clone(), e.value()),
-                                                                    for opt in role_options.read().iter() {
-                                                                        option { value: "{opt.role}", {opt.role.clone()} }
+                                                    // Mobile is read-only: plain text, no editors mounted.
+                                                    if mobile_ro {
+                                                        td { style: "padding:0.75rem 1rem", {user_role.clone()} }
+                                                        td { class: "muted", style: "padding:0.75rem 1rem",
+                                                            if vip { "VIP" } else { "—" }
+                                                        }
+                                                    } else {
+                                                        td {
+                                                            style: "padding:0.75rem 1rem",
+                                                            onclick: move |e| e.stop_propagation(),
+                                                            onkeydown: move |e| e.stop_propagation(),
+                                                            {
+                                                                let saving_id = saving_role_id.read().clone();
+                                                                let is_saving = saving_id.as_deref() == Some(&uid_role);
+                                                                let uid2 = uid_role.clone();
+                                                                rsx! {
+                                                                    select {
+                                                                        class: "app-input",
+                                                                        style: "padding:0.375rem 0.5rem;font-size:0.75rem",
+                                                                        disabled: is_saving,
+                                                                        value: "{user_role}",
+                                                                        oninput: move |e| set_role(uid2.clone(), e.value()),
+                                                                        for opt in role_options.read().iter() {
+                                                                            option { value: "{opt.role}", {opt.role.clone()} }
+                                                                        }
                                                                     }
                                                                 }
                                                             }
                                                         }
-                                                    }
-                                                    td {
-                                                        style: "padding:0.75rem 1rem",
-                                                        onclick: move |e| e.stop_propagation(),
-                                                        onkeydown: move |e| e.stop_propagation(),
-                                                        {
-                                                            let saving_id = saving_vip_id.read().clone();
-                                                            let is_saving = saving_id.as_deref() == Some(&uid_vip);
-                                                            let uid3 = uid_vip.clone();
-                                                            rsx! {
-                                                                input {
-                                                                    r#type: "checkbox",
-                                                                    style: "width:1rem;height:1rem;cursor:pointer",
-                                                                    checked: vip,
-                                                                    disabled: is_saving,
-                                                                    oninput: move |e| set_vip(uid3.clone(), e.value() == "true"),
+                                                        td {
+                                                            style: "padding:0.75rem 1rem",
+                                                            onclick: move |e| e.stop_propagation(),
+                                                            onkeydown: move |e| e.stop_propagation(),
+                                                            {
+                                                                let saving_id = saving_vip_id.read().clone();
+                                                                let is_saving = saving_id.as_deref() == Some(&uid_vip);
+                                                                let uid3 = uid_vip.clone();
+                                                                rsx! {
+                                                                    input {
+                                                                        r#type: "checkbox",
+                                                                        style: "width:1rem;height:1rem;cursor:pointer",
+                                                                        checked: vip,
+                                                                        disabled: is_saving,
+                                                                        oninput: move |e| set_vip(uid3.clone(), e.value() == "true"),
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -511,14 +543,14 @@ pub fn AdminUsers() -> Element {
                                     }
                                     if filtered.is_empty() && !*loading.read() {
                                         tr {
-                                            td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "6",
+                                            td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "7",
                                                 if total == 0 { "No users found." } else { "No users match the current filters." }
                                             }
                                         }
                                     }
                                     if *loading.read() {
                                         tr {
-                                            td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "6",
+                                            td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "7",
                                                 "Loading users…"
                                             }
                                         }
@@ -539,13 +571,20 @@ pub fn AdminUsers() -> Element {
         .and_then(|id| users.read().iter().find(|u| &u.id == id).cloned());
 
     rsx! {
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
+        div { class: "col", style: "height:100%",
+            if mobile_ro {
+                div { class: "muted", style: "font-size:0.75rem;padding:0.5rem 1rem;border-bottom:1px solid var(--border-app)",
+                    "Editing requires a desktop viewport."
+                }
+            }
+            div {
+                class: ws.root_class(),
+                tabindex: "0",
+                onmousemove: move |e| ws.handle_mouse_move(&e),
+                onmouseup: move |_| ws.handle_mouse_up(),
+                {ws.render(body)}
+                {ws.dock()}
+            }
         }
         if let Some(u) = drawer_user {
             {
@@ -556,6 +595,7 @@ pub fn AdminUsers() -> Element {
                     .unwrap_or_else(|| "Unnamed user".to_string());
                 let email_text = u.email.clone().unwrap_or_else(|| "—".to_string());
                 let username_text = u.username.clone().unwrap_or_else(|| "—".to_string());
+                let joined_text = u.created_at.as_deref().map(format_date).unwrap_or_else(|| "—".to_string());
                 let user_role = u.role.clone();
                 let role_saving = saving_role_id.read().as_deref() == Some(uid.as_str());
                 let vip_saving = saving_vip_id.read().as_deref() == Some(uid.as_str());
@@ -580,71 +620,91 @@ pub fn AdminUsers() -> Element {
                                     }
                                 }
                             }
-                            // ── role + vip ─────────────────────────────────────
-                            label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
-                                "Role"
-                                select {
-                                    class: "app-input",
-                                    style: "padding:0.5rem 0.75rem;font-size:0.875rem",
-                                    disabled: role_saving,
-                                    value: "{user_role}",
-                                    oninput: move |e| set_role(uid_role.clone(), e.value()),
-                                    for opt in role_options.read().iter() {
-                                        option { value: "{opt.role}", {opt.role.clone()} }
+                            // ── role + vip (read-only values on mobile) ────────
+                            if mobile_ro {
+                                div { class: "col", style: "gap:0.25rem",
+                                    span { class: "muted", style: "font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em", "Role" }
+                                    span { style: "font-size:0.875rem", {user_role.clone()} }
+                                }
+                                div { class: "col", style: "gap:0.25rem",
+                                    span { class: "muted", style: "font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em", "VIP pass" }
+                                    span { style: "font-size:0.875rem", if u.vip_pass { "Yes" } else { "No" } }
+                                }
+                                div { class: "col", style: "gap:0.25rem",
+                                    span { class: "muted", style: "font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em", "Joined" }
+                                    span { style: "font-size:0.875rem", {joined_text.clone()} }
+                                }
+                                div { class: "muted", style: "font-size:0.75rem;border-top:1px solid var(--border-app);padding-top:1rem",
+                                    "Editing requires a desktop viewport."
+                                }
+                            } else {
+                                label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                                    "Role"
+                                    select {
+                                        class: "app-input",
+                                        style: "padding:0.5rem 0.75rem;font-size:0.875rem",
+                                        disabled: role_saving,
+                                        value: "{user_role}",
+                                        oninput: move |e| set_role(uid_role.clone(), e.value()),
+                                        for opt in role_options.read().iter() {
+                                            option { value: "{opt.role}", {opt.role.clone()} }
+                                        }
                                     }
+                                }
+                                label { class: "row", style: "gap:0.5rem;align-items:center;cursor:pointer",
+                                    input {
+                                        r#type: "checkbox",
+                                        style: "width:1rem;height:1rem;cursor:pointer",
+                                        checked: u.vip_pass,
+                                        disabled: vip_saving,
+                                        oninput: move |e| set_vip(uid_vip.clone(), e.value() == "true"),
+                                    }
+                                    span { style: "font-size:0.875rem", "VIP pass" }
                                 }
                             }
-                            label { class: "row", style: "gap:0.5rem;align-items:center;cursor:pointer",
-                                input {
-                                    r#type: "checkbox",
-                                    style: "width:1rem;height:1rem;cursor:pointer",
-                                    checked: u.vip_pass,
-                                    disabled: vip_saving,
-                                    oninput: move |e| set_vip(uid_vip.clone(), e.value() == "true"),
-                                }
-                                span { style: "font-size:0.875rem", "VIP pass" }
-                            }
-                            // ── set password ───────────────────────────────────
-                            form {
-                                class: "col",
-                                style: "gap:0.75rem;border-top:1px solid var(--border-app);padding-top:1rem",
-                                onsubmit: move |_| submit_password(uid_pw.clone()),
-                                span { class: "muted", style: "font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;font-family:monospace",
-                                    "Set password"
-                                }
-                                label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
-                                    "New password"
-                                    input {
-                                        class: "app-input",
-                                        style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
-                                        r#type: "password",
-                                        autocomplete: "new-password",
-                                        value: "{pw}",
-                                        oninput: move |e| pw.set(e.value()),
+                            // ── set password (desktop only) ────────────────────
+                            if !mobile_ro {
+                                form {
+                                    class: "col",
+                                    style: "gap:0.75rem;border-top:1px solid var(--border-app);padding-top:1rem",
+                                    onsubmit: move |_| submit_password(uid_pw.clone()),
+                                    span { class: "muted", style: "font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;font-family:monospace",
+                                        "Set password"
                                     }
-                                }
-                                label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
-                                    "Confirm password"
-                                    input {
-                                        class: "app-input",
-                                        style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
-                                        r#type: "password",
-                                        autocomplete: "new-password",
-                                        value: "{pw_confirm}",
-                                        oninput: move |e| pw_confirm.set(e.value()),
+                                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                                        "New password"
+                                        input {
+                                            class: "app-input",
+                                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                                            r#type: "password",
+                                            autocomplete: "new-password",
+                                            value: "{pw}",
+                                            oninput: move |e| pw.set(e.value()),
+                                        }
                                     }
-                                }
-                                if !pw_error.read().is_empty() {
-                                    div { class: "app-card error", style: "padding:0.5rem 0.75rem;font-size:0.8125rem",
-                                        {pw_error.read().clone()}
+                                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                                        "Confirm password"
+                                        input {
+                                            class: "app-input",
+                                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                                            r#type: "password",
+                                            autocomplete: "new-password",
+                                            value: "{pw_confirm}",
+                                            oninput: move |e| pw_confirm.set(e.value()),
+                                        }
                                     }
-                                }
-                                button {
-                                    class: "app-btn app-btn-active",
-                                    style: "height:38px;font-weight:bold",
-                                    r#type: "submit",
-                                    disabled: *saving_pw.read(),
-                                    if *saving_pw.read() { "Saving…" } else { "Set password" }
+                                    if !pw_error.read().is_empty() {
+                                        div { class: "app-card error", style: "padding:0.5rem 0.75rem;font-size:0.8125rem",
+                                            {pw_error.read().clone()}
+                                        }
+                                    }
+                                    button {
+                                        class: "app-btn app-btn-active",
+                                        style: "height:38px;font-weight:bold",
+                                        r#type: "submit",
+                                        disabled: *saving_pw.read(),
+                                        if *saving_pw.read() { "Saving…" } else { "Set password" }
+                                    }
                                 }
                             }
                         }

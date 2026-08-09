@@ -223,8 +223,17 @@ pub fn AdminDiscounts() -> Element {
         return gate;
     }
 
+    // Mobile (< 760px, panel-kit's own threshold) is read-only: the list still
+    // renders, but the create form and row actions are not mounted at all.
+    let mobile_ro = *ws.is_mobile.read();
+
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
+            Panel::Create if mobile_ro => rsx! {
+                div { class: "muted", style: "padding:1rem;font-size:0.875rem",
+                    "Creating discount codes requires a desktop viewport."
+                }
+            },
             Panel::Create => rsx! {
                 form {
                     style: "display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));align-items:end;overflow-y:auto;padding:0.5rem",
@@ -391,8 +400,12 @@ pub fn AdminDiscounts() -> Element {
                         table { style: "width:100%;text-align:left;font-size:0.875rem;border-collapse:collapse",
                             thead {
                                 tr { style: "font-size:0.75rem;text-transform:uppercase;font-family:monospace",
-                                    for col in ["Code", "Name", "Amount", "Duration", "Redemptions", "Expires", "Test", "Status", "Actions"] {
+                                    for col in ["Code", "Name", "Amount", "Duration", "Redemptions", "Expires", "Test", "Status"] {
                                         th { class: "muted", style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app)", {col} }
+                                    }
+                                    // actions are desktop-only (mobile is read-only)
+                                    if !mobile_ro {
+                                        th { class: "muted", style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app)", "Actions" }
                                     }
                                 }
                             }
@@ -466,45 +479,47 @@ pub fn AdminDiscounts() -> Element {
                                                         if is_active { "Active" } else { "Inactive" }
                                                     }
                                                 }
-                                                td { style: "padding:0.75rem 1rem",
-                                                    {
-                                                        let is_busy = saving_ids.read().contains(&did);
-                                                        rsx! {
-                                                            div { class: "row", style: "gap:0.5rem",
-                                                                button {
-                                                                    class: "app-btn",
-                                                                    style: "font-size:0.75rem;padding:0.25rem 0.5rem",
-                                                                    disabled: is_busy,
-                                                                    onclick: move |_| {
-                                                                        let id = did_active.clone();
-                                                                        let next_active = !is_active;
-                                                                        let code = dcode_msg.clone();
-                                                                        saving_ids.write().push(id.clone());
-                                                                        message.set(String::new());
-                                                                        error_msg.set(String::new());
-                                                                        spawn_local(async move {
-                                                                            match mutation("discount.setActive", Some(json!({"id": id, "isActive": next_active}))).await {
-                                                                                Ok(_) => {
-                                                                                    let state = if next_active { "active" } else { "inactive" };
-                                                                                    message.set(format!("{code} is now {state}."));
-                                                                                    refresh();
+                                                if !mobile_ro {
+                                                    td { style: "padding:0.75rem 1rem",
+                                                        {
+                                                            let is_busy = saving_ids.read().contains(&did);
+                                                            rsx! {
+                                                                div { class: "row", style: "gap:0.5rem",
+                                                                    button {
+                                                                        class: "app-btn",
+                                                                        style: "font-size:0.75rem;padding:0.25rem 0.5rem",
+                                                                        disabled: is_busy,
+                                                                        onclick: move |_| {
+                                                                            let id = did_active.clone();
+                                                                            let next_active = !is_active;
+                                                                            let code = dcode_msg.clone();
+                                                                            saving_ids.write().push(id.clone());
+                                                                            message.set(String::new());
+                                                                            error_msg.set(String::new());
+                                                                            spawn_local(async move {
+                                                                                match mutation("discount.setActive", Some(json!({"id": id, "isActive": next_active}))).await {
+                                                                                    Ok(_) => {
+                                                                                        let state = if next_active { "active" } else { "inactive" };
+                                                                                        message.set(format!("{code} is now {state}."));
+                                                                                        refresh();
+                                                                                    }
+                                                                                    Err(e) => {
+                                                                                        error_msg.set(trpc_err_msg(e));
+                                                                                        refresh();
+                                                                                    }
                                                                                 }
-                                                                                Err(e) => {
-                                                                                    error_msg.set(trpc_err_msg(e));
-                                                                                    refresh();
-                                                                                }
-                                                                            }
-                                                                            saving_ids.write().retain(|x| x != &id);
-                                                                        });
-                                                                    },
-                                                                    if is_active { "Deactivate" } else { "Activate" }
-                                                                }
-                                                                button {
-                                                                    class: "app-btn error",
-                                                                    style: "font-size:0.75rem;padding:0.25rem 0.5rem",
-                                                                    disabled: is_busy,
-                                                                    onclick: move |_| pending_delete.set(Some(d_for_delete.clone())),
-                                                                    "Delete"
+                                                                                saving_ids.write().retain(|x| x != &id);
+                                                                            });
+                                                                        },
+                                                                        if is_active { "Deactivate" } else { "Activate" }
+                                                                    }
+                                                                    button {
+                                                                        class: "app-btn error",
+                                                                        style: "font-size:0.75rem;padding:0.25rem 0.5rem",
+                                                                        disabled: is_busy,
+                                                                        onclick: move |_| pending_delete.set(Some(d_for_delete.clone())),
+                                                                        "Delete"
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -516,14 +531,14 @@ pub fn AdminDiscounts() -> Element {
                                 }
                                 if discounts.read().is_empty() && !*loading.read() {
                                     tr {
-                                        td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "9",
+                                        td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: if mobile_ro { "8" } else { "9" },
                                             "No discount codes yet."
                                         }
                                     }
                                 }
                                 if *loading.read() {
                                     tr {
-                                        td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: "9",
+                                        td { class: "muted", style: "padding:1.5rem 1rem;text-align:center", colspan: if mobile_ro { "8" } else { "9" },
                                             "Loading discounts…"
                                         }
                                     }
@@ -538,6 +553,11 @@ pub fn AdminDiscounts() -> Element {
 
     rsx! {
         div { class: "col", style: "height:100%",
+            if mobile_ro {
+                div { class: "muted", style: "font-size:0.75rem;padding:0.5rem 1rem;border-bottom:1px solid var(--border-app)",
+                    "Editing requires a desktop viewport."
+                }
+            }
             div {
                 class: ws.root_class(),
                 tabindex: "0",

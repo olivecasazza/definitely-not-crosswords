@@ -94,28 +94,32 @@ async fn list_jobs(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 }
 
 async fn publish_generated_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
-    ctx.auth
-        .require_capability(Capability::AdminAccess)
-        .map_err(|e| e.to_string())?;
+    let user = ctx.require_user()?.clone();
     let game_id = input
         .get("gameId")
         .and_then(|v| v.as_str())
         .ok_or("missing gameId")?;
 
-    let source: Option<String> =
-        sqlx::query(r#"SELECT source::text AS source FROM "Game" WHERE id = $1"#)
+    let row =
+        sqlx::query(r#"SELECT source::text AS source, "createdById" FROM "Game" WHERE id = $1"#)
             .bind(game_id)
             .fetch_optional(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?
-            .map(|r| r.get("source"));
+            .map_err(|e| e.to_string())?;
 
-    match source.as_deref() {
-        None => return Err("Game was not found.".to_string()),
+    let Some(row) = row else {
+        return Err("Game was not found.".to_string());
+    };
+    match row.get::<Option<String>, _>("source").as_deref() {
         Some("GENERATED") => {}
-        Some(_) => {
-            return Err("Only generated games can be published through this route.".to_string())
-        }
+        _ => return Err("Only generated games can be published through this route.".to_string()),
+    }
+
+    // Admins can publish any generated game; everyone else only their own.
+    if !user.role.has(Capability::AdminAccess)
+        && row.get::<Option<String>, _>("createdById").as_deref() != Some(user.id.as_str())
+    {
+        return Err("You can only publish games you generated.".to_string());
     }
 
     sqlx::query(r#"UPDATE "Game" SET published = true, "updatedAt" = now() WHERE id = $1"#)
@@ -167,27 +171,48 @@ fn parse_params(input: &Value) -> Result<(Params, Value, Option<String>), String
     Ok((p, raw, title))
 }
 
-/// Users with generator:manage and Pro users are unlimited; free users get 5
-/// generations per calendar month. Returns is_unlimited; Err on quota exhausted.
+/// Free users get FREE_LIMIT generations per calendar month; admins
+/// (generator:manage) and Pro users are unlimited. Keep in sync with
+/// subscription.rs::FREE_LIMIT (subscription.getStatus reports the same quota).
+const FREE_LIMIT: i32 = 5;
+
+/// Users with generator:manage and Pro users are unlimited; free users get
+/// FREE_LIMIT generations per calendar month. The Pro test mirrors
+/// subscription.getStatus: ACTIVE, or CANCELLED while the already-paid period
+/// is still live, or User.vipPass. Returns is_unlimited; Err on quota
+/// exhausted.
 async fn check_quota(pool: &PgPool, user: &AuthUser) -> Result<bool, String> {
     if user.role.has(Capability::GeneratorManage) {
         return Ok(true);
     }
-    let vip: bool = sqlx::query(r#"SELECT "vipPass" FROM "User" WHERE id = $1"#)
-        .bind(&user.id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|r| r.get::<bool, _>("vipPass"))
-        .unwrap_or(false);
-    let status: Option<String> =
-        sqlx::query(r#"SELECT status::text AS status FROM "Subscription" WHERE "userId" = $1"#)
-            .bind(&user.id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| e.to_string())?
-            .map(|r| r.get("status"));
-    let is_pro = matches!(status.as_deref(), Some("ACTIVE") | Some("CANCELLED")) || vip;
+    let row = sqlx::query(
+        r#"
+        SELECT u."vipPass",
+               s.status::text AS subscription_status,
+               (s."currentPeriodEnd" IS NOT NULL
+                   AND s."currentPeriodEnd" > (NOW() AT TIME ZONE 'UTC')) AS period_active
+        FROM "User" u
+        LEFT JOIN "Subscription" s ON s."userId" = u.id
+        WHERE u.id = $1
+        "#,
+    )
+    .bind(&user.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let (vip, status, period_active) = match &row {
+        Some(r) => (
+            r.get::<bool, _>("vipPass"),
+            r.get::<Option<String>, _>("subscription_status"),
+            r.try_get::<bool, _>("period_active").unwrap_or(false),
+        ),
+        None => (false, None, false),
+    };
+    let is_pro = status
+        .as_deref()
+        .map(|s| s == "ACTIVE" || (s == "CANCELLED" && period_active))
+        .unwrap_or(false)
+        || vip;
 
     if !is_pro {
         // lazy-create the quota row, then lazily reset it at month boundaries
@@ -197,7 +222,8 @@ async fn check_quota(pool: &PgPool, user: &AuthUser) -> Result<bool, String> {
             VALUES ($1, $2, 0, now(), now(), now())
             ON CONFLICT ("userId") DO UPDATE SET "updatedAt" = now()
             RETURNING "usedThisMonth",
-              (date_trunc('month', "monthResetAt") = date_trunc('month', now())) AS is_current
+              (date_trunc('month', "monthResetAt" AT TIME ZONE 'UTC')
+                 = date_trunc('month', NOW() AT TIME ZONE 'UTC')) AS is_current
             "#,
         )
         .bind(Uuid::new_v4().to_string())
@@ -218,9 +244,9 @@ async fn check_quota(pool: &PgPool, user: &AuthUser) -> Result<bool, String> {
             .map_err(|e| e.to_string())?;
             used = 0;
         }
-        if used >= 5 {
+        if used >= FREE_LIMIT {
             return Err(
-                "Monthly generation limit reached. Upgrade to Pro for unlimited generations."
+                "Monthly generation limit reached — upgrade to Pro for unlimited puzzles."
                     .to_string(),
             );
         }
@@ -396,7 +422,7 @@ fn fail(emit_ws: &Arc<dyn Fn(Value) + Send + Sync>, job_id: Option<&str>, error:
 
 async fn create_job(
     pool: &PgPool,
-    admin_id: &str,
+    creator_id: &str,
     p: &Params,
     raw_params: &Value,
     title: Option<&str>,
@@ -429,7 +455,7 @@ async fn create_job(
     .bind(p.max_len)
     .bind(raw_params)
     .bind(&metadata)
-    .bind(admin_id)
+    .bind(creator_id)
     .execute(pool)
     .await
     .map_err(|e| e.to_string())?;

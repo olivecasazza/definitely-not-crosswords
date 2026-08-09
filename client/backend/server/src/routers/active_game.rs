@@ -268,12 +268,29 @@ async fn get_start_details(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     let completed_game_id: Option<String> = completed_row.map(|r| r.get("id"));
 
+    // Grid silhouette for the pre-start brief: coordinates + answer *length*
+    // only. Never the answer text or question text — the game hasn't started.
+    // Answers are ASCII, so .len() == char count (same as gridSize above).
+    let questions: Vec<Value> = q_rows
+        .iter()
+        .map(|r| {
+            let answer: String = r.get("answer");
+            json!({
+                "rootX":     r.get::<i32, _>("rootX"),
+                "rootY":     r.get::<i32, _>("rootY"),
+                "direction": r.get::<String, _>("direction"),
+                "len":       answer.len() as i32,
+            })
+        })
+        .collect();
+
     Ok(json!({
         "id":              game_row.get::<String, _>("id"),
         "title":           game_row.get::<String, _>("title"),
         "source":          game_row.get::<String, _>("source"),
         "questionCount":   question_count,
         "gridSize":        grid_size,
+        "questions":       questions,
         "activeGameId":    active_game_id,
         "completedGameId": completed_game_id,
     }))
@@ -701,15 +718,19 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .map_err(|e| e.to_string())?;
 
     let completed_id = Uuid::new_v4().to_string();
+    // "startedAt" ← the ActiveGame's "createdAt" (solve time = completedAt −
+    // startedAt). Copied via subquery: the ActiveGame row still exists here
+    // (deleted in step 5), and this avoids the sqlx chrono feature.
     sqlx::query(
         r#"
-        INSERT INTO "CompletedGame" (id, "gameId", "gameStatsId", "createdAt", "updatedAt")
-        VALUES ($1, $2, $3, now(), now())
+        INSERT INTO "CompletedGame" (id, "gameId", "gameStatsId", "startedAt", "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, (SELECT "createdAt" FROM "ActiveGame" WHERE id = $4), now(), now())
         "#,
     )
     .bind(&completed_id)
     .bind(&game_id)
     .bind(&stats_id)
+    .bind(active_game_id)
     .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;

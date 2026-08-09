@@ -521,6 +521,7 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         SELECT cg.id,
                cg."gameId" AS game_id,
                to_char(cg."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+               to_char(cg."startedAt", 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS started_at,
                g.title,
                g.source::text AS source
         FROM "CompletedGame" cg
@@ -541,6 +542,8 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     let cg_id: String = cg_row.get("id");
     let cg_game_id: String = cg_row.get("game_id");
     let created_at: String = cg_row.get("created_at");
+    // NULL for games completed before the startedAt migration (no backfill).
+    let started_at: Option<String> = cg_row.get("started_at");
     let game_title: String = cg_row.get("title");
     let game_source: String = cg_row.get("source");
 
@@ -591,6 +594,7 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         "id":        cg_id,
         "gameId":    cg_game_id,
         "createdAt": created_at,
+        "startedAt": started_at,
         "game": {
             "title":     game_title,
             "source":    game_source,

@@ -68,6 +68,19 @@ jobs:
             sleep 20
           done
           echo "::error::staging never reached $want after 45m"; exit 1
+      # Scheduled runs get a lighter gate: ride out a transient blip (pod
+      # reschedule, tunnel reconnect) for up to 5 minutes before testing, but
+      # still fail if staging is truly down — the nightly canary is the only
+      # alarm that watches staging at all, so it must stay capable of ringing.
+      - name: Wait for staging to answer at all
+        if: github.event_name == 'schedule'
+        run: |
+          for i in $(seq 1 15); do
+            curl -sf -o /dev/null "$E2E_BASE_URL/api/healthz" && { echo "staging healthy"; exit 0; }
+            echo "staging not answering — retry $i/15"
+            sleep 20
+          done
+          echo "::error::staging unreachable for 5m before the nightly run"; exit 1
       - name: Install deps
         working-directory: e2e
         run: npm ci

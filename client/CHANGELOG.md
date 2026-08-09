@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.35](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.34...v0.1.35) - 2026-08-09
+
+### Added
+
+- *(web)* shared UI atoms, date/error helpers, and a global toast host
+- *(web)* shared auth guard with return-to redirects, router-native login
+- *(web)* shell chrome — nav-aware header, mobile tab bar, admin strip
+- *(web)* shared ConfirmModal and Drawer
+- *(web)* Next Up panel on game completion — rematch and next puzzle
+- *(web)* confirm-gated discount delete, redemption bars, amount validation
+- *(web)* public team directory, per-action team toasts, surfaced errors
+- *(web)* admin users search, filters, detail drawer, set-password
+- *(web)* generator max-attempts control, presets, jobs tooling
+- *(server)* gridSize, gameId, and fill counts on gameList.get rows
+- *(web)* games library redesign — Continue, Featured, Library, Progress
+- *(server)* pre-start grid silhouette and completed-game solve time
+- *(web)* pre-game brief with grid silhouette and co-op invite
+- *(web)* signed-in home is a play-now dashboard
+- *(web)* Your Result hero and share row on game completion
+- *(server)* stats.getUserHistory — full per-user match history
+- *(server)* resend-verification, change-password, real subscription cancel
+- *(web)* stats depth — streaks, heatmap, bests, trends, match log
+- *(web)* profile becomes the full account surface
+- *(web)* static centered auth layout for all four auth pages
+- *(ci)* sortable main-build image tags for continuous staging
+- *(mail)* send over Workspace SMTP instead of Resend
+- *(ci)* continuous staging via deploy-staging on every main build
+
+### Fixed
+
+- *(ci)* let the scheduled canary ride out transient staging blips
+
+### Other
+
+- changelog for v0.1.34 [skip ci]
+- *(web)* tokenize every hardcoded color and delete rounded corners
+
+
 ## [0.1.34](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.33...v0.1.34) - 2026-08-09
 
 ### Other

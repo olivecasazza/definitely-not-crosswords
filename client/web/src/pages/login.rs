@@ -1,7 +1,7 @@
+use crate::components::auth_layout::AuthLayout;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
-use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use wasm_bindgen_futures::spawn_local;
 
 /// Simple percent-encoder for application/x-www-form-urlencoded values.
@@ -32,31 +32,6 @@ struct CsrfResponse {
     #[serde(rename = "csrfToken")]
     csrf_token: String,
 }
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-enum Panel {
-    Welcome,
-    SignIn,
-}
-
-impl PanelKind for Panel {
-    fn title(self) -> &'static str {
-        match self {
-            Panel::Welcome => "Welcome",
-            Panel::SignIn => "Sign In",
-        }
-    }
-}
-
-fn default_layout() -> Vec<PanelWin<Panel>> {
-    let mut b = LayoutBuilder::new();
-    vec![
-        b.at(Panel::Welcome, 520.0, 150.0, 380.0, 600.0),
-        b.at(Panel::SignIn, 920.0, 150.0, 480.0, 600.0),
-    ]
-}
-
-use crate::components::brand::brand_panel;
 
 #[component]
 pub fn Login() -> Element {
@@ -257,172 +232,110 @@ pub fn Login() -> Element {
         }
     };
 
-    let ws = use_workspace("login_layout", default_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    rsx! {
+        AuthLayout {
+            eyebrow: "SIGN IN",
+            show_brand: true,
+            subtitle: "Cooperative, real-time crosswords.",
 
-    let body = move |kind: Panel, _max: bool| -> Element {
-        match kind {
-            Panel::Welcome => brand_panel("Cooperative, real-time crosswords. Sign in to race the grid and climb the leaderboard."),
-            Panel::SignIn => rsx! {
-                div {
-                    style: "height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 1.25rem; padding: 1.5rem 1.75rem; overflow-y: auto;",
+            p {
+                class: "muted auth-note",
+                style: "text-align: center;",
+                "Welcome back to the \"Definitely Not Crosswords\" experience"
+            }
 
-                    // Header
-                    div {
-                        style: "display: flex; flex-direction: column; align-items: center; margin-bottom: 2rem;",
-                        h1 {
-                            style: "font-family: monospace; font-size: 1.5rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--text-primary); margin: 0 0 .25rem 0;",
-                            "Sign In"
-                        }
-                        p {
-                            class: "muted",
-                            style: "font-size: .75rem; font-family: monospace; margin: 0; text-align: center;",
-                            "Welcome back to the \"Definitely Not Crosswords\" experience"
-                        }
+            form {
+                class: "auth-form",
+                onsubmit: handle_submit,
+
+                // Error alert
+                if !error.read().is_empty() {
+                    div { class: "error auth-banner", "{error}" }
+                }
+
+                // Email field
+                div { class: "auth-group",
+                    label { r#for: "email", class: "auth-label", "Email Address" }
+                    input {
+                        id: "email",
+                        class: "app-input auth-field",
+                        r#type: "email",
+                        placeholder: "you@example.com",
+                        value: "{email}",
+                        oninput: move |e| email.clone().set(e.value()),
+                        onblur: move |_| email_touched.clone().set(true),
                     }
-
-                    // Form
-                    form {
-                        onsubmit: handle_submit.clone(),
-                        style: "display: flex; flex-direction: column; gap: 1.25rem;",
-
-                        // Error alert
-                        if !error.read().is_empty() {
-                            div {
-                                class: "error",
-                                style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid color-mix(in srgb, var(--pastel-red) 20%, transparent); background: color-mix(in srgb, var(--pastel-red) 6%, transparent);",
-                                "{error}"
-                            }
-                        }
-
-                        // Email field
-                        div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                            label {
-                                r#for: "email",
-                                style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                "Email Address"
-                            }
-                            input {
-                                id: "email",
-                                class: "app-input",
-                                style: "width: 100%; padding: .75rem 1rem;",
-                                r#type: "email",
-                                placeholder: "you@example.com",
-                                value: "{email}",
-                                oninput: move |e| email.clone().set(e.value()),
-                                onblur: move |_| email_touched.clone().set(true),
-                            }
-                            if *email_touched.read() && !email_error.is_empty() {
-                                p {
-                                    class: "error",
-                                    style: "font-size: .69rem; font-family: monospace; margin: 0;",
-                                    "{email_error}"
-                                }
-                            }
-                        }
-
-                        // Password field
-                        div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                            label {
-                                r#for: "password",
-                                style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                "Password"
-                            }
-                            input {
-                                id: "password",
-                                class: "app-input",
-                                style: "width: 100%; padding: .75rem 1rem;",
-                                r#type: "password",
-                                placeholder: "••••••••",
-                                value: "{password}",
-                                oninput: move |e| password.clone().set(e.value()),
-                                onblur: move |_| password_touched.clone().set(true),
-                            }
-                            if *password_touched.read() && !password_error.is_empty() {
-                                p {
-                                    class: "error",
-                                    style: "font-size: .69rem; font-family: monospace; margin: 0;",
-                                    "{password_error}"
-                                }
-                            }
-                        }
-
-                        // Submit
-                        button {
-                            r#type: "submit",
-                            class: "app-btn app-btn-active",
-                            style: "width: 100%; padding: .75rem 1rem; font-weight: 600; font-size: .875rem; text-transform: uppercase; letter-spacing: .05em;",
-                            disabled: *loading.read() || is_invalid,
-                            if *loading.read() { "Signing in..." } else { "Sign In" }
-                        }
-
-                        Link {
-                            to: crate::Route::ResetPassword {},
-                            class: "muted",
-                            style: "font-size: .75rem; font-family: monospace; text-align: center; text-decoration: underline;",
-                            "Forgot your password?"
-                        }
-                    }
-
-                    // Local-only dev bypass: the backend unregisters the local-dev
-                    // route outside local, and this button is hidden via the
-                    // devLoginBypass feature flag from /api/config.
-                    //
-                    // There is no SSO button here: the Rust backend never ported
-                    // next-auth's OAuth sign-in flow, so "Continue with SSO" only
-                    // ever navigated to /api/auth/signin/keycloak — an unrouted
-                    // path the SPA answered with its 404 page. Credentials login
-                    // is the only real path. Re-add SSO alongside a genuine
-                    // authorize/callback route + JWKS verification, not before.
-                    if state.feature(|f| f.dev_login_bypass) {
-                        // Divider
-                        div {
-                            style: "display: flex; align-items: center; gap: .75rem; margin: 1.25rem 0;",
-                            div { style: "flex: 1; height: 1px; background: var(--border-app);" }
-                            span {
-                                class: "muted",
-                                style: "font-size: .75rem; font-family: monospace;",
-                                "or"
-                            }
-                            div { style: "flex: 1; height: 1px; background: var(--border-app);" }
-                        }
-                        button {
-                            r#type: "button",
-                            class: "app-btn",
-                            style: "width: 100%; padding: .75rem 1rem; margin-top: .75rem; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em;",
-                            disabled: *loading.read(),
-                            onclick: handle_dev_bypass.clone(),
-                            "🔑 Developer Admin Bypass"
-                        }
-                    }
-
-                    // Footer
-                    div {
-                        style: "margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-app); text-align: center;",
-                        p {
-                            class: "muted",
-                            style: "font-size: .75rem; font-family: monospace; margin: 0;",
-                            "Don't have an account? "
-                            Link {
-                                to: crate::Route::Signup {},
-                                style: "color: var(--pastel-yellow);",
-                                "Sign Up"
-                            }
-                        }
+                    if *email_touched.read() && !email_error.is_empty() {
+                        p { class: "error auth-hint", "{email_error}" }
                     }
                 }
-            },
-        }
-    };
 
-    rsx! {
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
+                // Password field
+                div { class: "auth-group",
+                    label { r#for: "password", class: "auth-label", "Password" }
+                    input {
+                        id: "password",
+                        class: "app-input auth-field",
+                        r#type: "password",
+                        placeholder: "••••••••",
+                        value: "{password}",
+                        oninput: move |e| password.clone().set(e.value()),
+                        onblur: move |_| password_touched.clone().set(true),
+                    }
+                    if *password_touched.read() && !password_error.is_empty() {
+                        p { class: "error auth-hint", "{password_error}" }
+                    }
+                }
+
+                // Submit
+                button {
+                    r#type: "submit",
+                    class: "app-btn app-btn-active auth-submit",
+                    disabled: *loading.read() || is_invalid,
+                    if *loading.read() { "Signing in..." } else { "Sign In" }
+                }
+
+                Link {
+                    to: crate::Route::ResetPassword {},
+                    class: "muted auth-link",
+                    "Forgot your password?"
+                }
+            }
+
+            // Local-only dev bypass: the backend unregisters the local-dev
+            // route outside local, and this button is hidden via the
+            // devLoginBypass feature flag from /api/config.
+            //
+            // There is no SSO button here: the Rust backend never ported
+            // next-auth's OAuth sign-in flow, so "Continue with SSO" only
+            // ever navigated to /api/auth/signin/keycloak — an unrouted
+            // path the SPA answered with its 404 page. Credentials login
+            // is the only real path. Re-add SSO alongside a genuine
+            // authorize/callback route + JWKS verification, not before.
+            if state.feature(|f| f.dev_login_bypass) {
+                div { class: "auth-divider",
+                    span { class: "muted", "or" }
+                }
+                button {
+                    r#type: "button",
+                    class: "app-btn auth-submit",
+                    disabled: *loading.read(),
+                    onclick: handle_dev_bypass,
+                    "🔑 Developer Admin Bypass"
+                }
+            }
+
+            // Footer
+            div { class: "auth-foot",
+                p { class: "muted auth-note",
+                    "Don't have an account? "
+                    Link {
+                        to: crate::Route::Signup {},
+                        style: "color: var(--pastel-yellow);",
+                        "Sign Up"
+                    }
+                }
+            }
         }
     }
 }

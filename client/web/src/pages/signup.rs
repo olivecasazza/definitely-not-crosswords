@@ -1,34 +1,8 @@
+use crate::components::auth_layout::AuthLayout;
 use crate::net;
 use dioxus::prelude::*;
-use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-enum Panel {
-    Welcome,
-    CreateAccount,
-}
-
-impl PanelKind for Panel {
-    fn title(self) -> &'static str {
-        match self {
-            Panel::Welcome => "Welcome",
-            Panel::CreateAccount => "Create Account",
-        }
-    }
-}
-
-fn default_layout() -> Vec<PanelWin<Panel>> {
-    let mut b = LayoutBuilder::new();
-    vec![
-        b.at(Panel::Welcome, 480.0, 110.0, 380.0, 700.0),
-        b.at(Panel::CreateAccount, 880.0, 110.0, 540.0, 700.0),
-    ]
-}
-
-use crate::components::brand::brand_panel;
 
 #[component]
 pub fn Signup() -> Element {
@@ -245,6 +219,15 @@ pub fn Signup() -> Element {
                             email.set(String::new());
                             password.set(String::new());
                             confirm.set(String::new());
+                        } else {
+                            // success:false must never be a silent no-op —
+                            // surface the server's message, or a generic one.
+                            let msg = res["message"].as_str().unwrap_or("").to_string();
+                            error.set(if msg.is_empty() {
+                                "Something went wrong — please try again.".to_string()
+                            } else {
+                                msg
+                            });
                         }
                     }
                     Err(e) => {
@@ -268,241 +251,168 @@ pub fn Signup() -> Element {
     let email_checking = *checking_email.read();
     let email_touched_val = *email_touched.read();
 
-    let ws = use_workspace("signup_layout", default_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    rsx! {
+        AuthLayout {
+            eyebrow: "CREATE ACCOUNT",
+            show_brand: true,
+            subtitle: "Solve together.",
 
-    let body = move |kind: Panel, _max: bool| -> Element {
-        match kind {
-            Panel::Welcome => brand_panel("Join the cooperative crossword race. Create an account to play, compete, and climb the leaderboard."),
-            Panel::CreateAccount => rsx! {
+            p {
+                class: "muted auth-note",
+                style: "text-align: center;",
+                "Join the \"Definitely Not Crosswords\" experience"
+            }
+
+            // Success state
+            if *success.read() {
                 div {
-                    style: "height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 1.25rem; padding: 1.5rem 1.75rem; overflow-y: auto;",
-
-                    // Header
-                    div {
-                        style: "display: flex; flex-direction: column; align-items: center; margin-bottom: 2rem;",
-                        h1 {
-                            style: "font-family: monospace; font-size: 1.5rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--text-primary); margin: 0 0 .25rem 0;",
-                            "Create Account"
-                        }
-                        p {
-                            class: "muted",
-                            style: "font-size: .75rem; font-family: monospace; margin: 0; text-align: center;",
-                            "Join the \"Definitely Not Crosswords\" experience"
-                        }
-                    }
-
-                    // Success state
-                    if *success.read() {
-                        div {
-                            class: "success",
-                            style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid color-mix(in srgb, var(--pastel-green) 20%, transparent); background: color-mix(in srgb, var(--pastel-green) 6%, transparent); display: flex; flex-direction: column; gap: .5rem;",
-                            // Login isn't gated on verification, so make both
-                            // halves clear: link sent, but sign-in works already.
-                            p { style: "margin: 0;", "Account created! We've sent a verification link to your email — you can sign in right away." }
-                            Link {
-                                to: crate::Route::Login {},
-                                class: "app-btn app-btn-active",
-                                style: "text-align: center; margin-top: .25rem;",
-                                "Sign In"
-                            }
-                        }
-                    }
-
-                    // Form (hidden after success)
-                    if !*success.read() {
-                        form {
-                            onsubmit: handle_submit.clone(),
-                            style: "display: flex; flex-direction: column; gap: 1.25rem;",
-
-                            // Error alert
-                            if !error.read().is_empty() {
-                                div {
-                                    class: "error",
-                                    style: "font-size: .75rem; font-family: monospace; padding: .75rem; border: 1px solid color-mix(in srgb, var(--pastel-red) 20%, transparent); background: color-mix(in srgb, var(--pastel-red) 6%, transparent);",
-                                    "{error}"
-                                }
-                            }
-
-                            // Name field
-                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                                label {
-                                    r#for: "name",
-                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                    "Full Name"
-                                }
-                                input {
-                                    id: "name",
-                                    class: "app-input",
-                                    style: "width: 100%; padding: .75rem 1rem;",
-                                    r#type: "text",
-                                    placeholder: "e.g. Olive Casazza",
-                                    value: "{name}",
-                                    oninput: move |e| name.clone().set(e.value()),
-                                    onblur: move |_| name_touched.clone().set(true),
-                                }
-                                if *name_touched.read() && !name_error.is_empty() {
-                                    p {
-                                        class: "error",
-                                        style: "font-size: .69rem; font-family: monospace; margin: 0;",
-                                        "{name_error}"
-                                    }
-                                }
-                            }
-
-                            // Username field
-                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                                label {
-                                    r#for: "username",
-                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                    "Username"
-                                }
-                                input {
-                                    id: "username",
-                                    class: "app-input",
-                                    style: "width: 100%; padding: .75rem 1rem;",
-                                    r#type: "text",
-                                    placeholder: "e.g. olivepasta",
-                                    value: "{username}",
-                                    oninput: move |e| username.clone().set(e.value()),
-                                    onblur: on_username_blur.clone(),
-                                }
-                                if uname_touched_val {
-                                    if !username_error.is_empty() {
-                                        p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "{username_error}" }
-                                    } else if uname_checking {
-                                        p { class: "muted", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Checking availability..." }
-                                    } else if uname_len >= 3 && !uname_available {
-                                        p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Username is already taken." }
-                                    } else if uname_len >= 3 && uname_available {
-                                        p { class: "success", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Username is available!" }
-                                    }
-                                }
-                            }
-
-                            // Email field
-                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                                label {
-                                    r#for: "email",
-                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                    "Email Address"
-                                }
-                                input {
-                                    id: "email",
-                                    class: "app-input",
-                                    style: "width: 100%; padding: .75rem 1rem;",
-                                    r#type: "email",
-                                    placeholder: "you@example.com",
-                                    value: "{email}",
-                                    oninput: move |e| email.clone().set(e.value()),
-                                    onblur: on_email_blur.clone(),
-                                }
-                                if email_touched_val {
-                                    if !email_error.is_empty() {
-                                        p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "{email_error}" }
-                                    } else if email_checking {
-                                        p { class: "muted", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Checking availability..." }
-                                    } else if email_len_ok && !email_available {
-                                        p { class: "error", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Email is already registered." }
-                                    } else if email_len_ok && email_available {
-                                        p { class: "success", style: "font-size: .69rem; font-family: monospace; margin: 0;", "Email is available!" }
-                                    }
-                                }
-                            }
-
-                            // Password field
-                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                                label {
-                                    r#for: "password",
-                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                    "Password"
-                                }
-                                input {
-                                    id: "password",
-                                    class: "app-input",
-                                    style: "width: 100%; padding: .75rem 1rem;",
-                                    r#type: "password",
-                                    placeholder: "••••••••",
-                                    value: "{password}",
-                                    oninput: move |e| password.clone().set(e.value()),
-                                    onblur: move |_| password_touched.clone().set(true),
-                                }
-                                if *password_touched.read() && !password_error.is_empty() {
-                                    p {
-                                        class: "error",
-                                        style: "font-size: .69rem; font-family: monospace; margin: 0;",
-                                        "{password_error}"
-                                    }
-                                }
-                            }
-
-                            // Confirm password field
-                            div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                                label {
-                                    r#for: "confirm-password",
-                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); font-family: monospace;",
-                                    "Confirm Password"
-                                }
-                                input {
-                                    id: "confirm-password",
-                                    class: "app-input",
-                                    style: "width: 100%; padding: .75rem 1rem;",
-                                    r#type: "password",
-                                    placeholder: "••••••••",
-                                    value: "{confirm}",
-                                    oninput: move |e| confirm.clone().set(e.value()),
-                                    onblur: move |_| confirm_touched.clone().set(true),
-                                }
-                                if *confirm_touched.read() && !confirm_error.is_empty() {
-                                    p {
-                                        class: "error",
-                                        style: "font-size: .69rem; font-family: monospace; margin: 0;",
-                                        "{confirm_error}"
-                                    }
-                                }
-                            }
-
-                            // Submit
-                            button {
-                                r#type: "submit",
-                                class: "app-btn app-btn-active",
-                                style: "width: 100%; padding: .75rem 1rem; font-weight: 600; font-size: .875rem; text-transform: uppercase; letter-spacing: .05em;",
-                                disabled: *loading.read() || is_invalid,
-                                if *loading.read() { "Creating..." } else { "Sign Up" }
-                            }
-                        }
-                    }
-
-                    // Footer
-                    div {
-                        style: "margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-app); text-align: center;",
-                        p {
-                            class: "muted",
-                            style: "font-size: .75rem; font-family: monospace; margin: 0;",
-                            "Already have an account? "
-                            Link {
-                                to: crate::Route::Login {},
-                                style: "color: var(--pastel-yellow);",
-                                "Sign In"
-                            }
-                        }
+                    class: "success auth-banner auth-banner-ok",
+                    style: "display: flex; flex-direction: column; gap: .5rem;",
+                    // Login isn't gated on verification, so make both
+                    // halves clear: link sent, but sign-in works already.
+                    p { style: "margin: 0;", "Account created! We've sent a verification link to your email — you can sign in right away." }
+                    Link {
+                        to: crate::Route::Login {},
+                        class: "app-btn app-btn-active",
+                        style: "text-align: center; margin-top: .25rem;",
+                        "Sign In"
                     }
                 }
-            },
-        }
-    };
+            }
 
-    rsx! {
-        style { {SIGNUP_CSS} }
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
+            // Form (hidden after success)
+            if !*success.read() {
+                form {
+                    class: "auth-form",
+                    onsubmit: handle_submit,
+
+                    // Error alert
+                    if !error.read().is_empty() {
+                        div { class: "error auth-banner", "{error}" }
+                    }
+
+                    // Name field
+                    div { class: "auth-group",
+                        label { r#for: "name", class: "auth-label", "Full Name" }
+                        input {
+                            id: "name",
+                            class: "app-input auth-field",
+                            r#type: "text",
+                            placeholder: "e.g. Olive Casazza",
+                            value: "{name}",
+                            oninput: move |e| name.clone().set(e.value()),
+                            onblur: move |_| name_touched.clone().set(true),
+                        }
+                        if *name_touched.read() && !name_error.is_empty() {
+                            p { class: "error auth-hint", "{name_error}" }
+                        }
+                    }
+
+                    // Username field
+                    div { class: "auth-group",
+                        label { r#for: "username", class: "auth-label", "Username" }
+                        input {
+                            id: "username",
+                            class: "app-input auth-field",
+                            r#type: "text",
+                            placeholder: "e.g. olivepasta",
+                            value: "{username}",
+                            oninput: move |e| username.clone().set(e.value()),
+                            onblur: on_username_blur,
+                        }
+                        if uname_touched_val {
+                            if !username_error.is_empty() {
+                                p { class: "error auth-hint", "{username_error}" }
+                            } else if uname_checking {
+                                p { class: "muted auth-hint", "Checking availability..." }
+                            } else if uname_len >= 3 && !uname_available {
+                                p { class: "error auth-hint", "Username is already taken." }
+                            } else if uname_len >= 3 && uname_available {
+                                p { class: "success auth-hint", "Username is available!" }
+                            }
+                        }
+                    }
+
+                    // Email field
+                    div { class: "auth-group",
+                        label { r#for: "email", class: "auth-label", "Email Address" }
+                        input {
+                            id: "email",
+                            class: "app-input auth-field",
+                            r#type: "email",
+                            placeholder: "you@example.com",
+                            value: "{email}",
+                            oninput: move |e| email.clone().set(e.value()),
+                            onblur: on_email_blur,
+                        }
+                        if email_touched_val {
+                            if !email_error.is_empty() {
+                                p { class: "error auth-hint", "{email_error}" }
+                            } else if email_checking {
+                                p { class: "muted auth-hint", "Checking availability..." }
+                            } else if email_len_ok && !email_available {
+                                p { class: "error auth-hint", "Email is already registered." }
+                            } else if email_len_ok && email_available {
+                                p { class: "success auth-hint", "Email is available!" }
+                            }
+                        }
+                    }
+
+                    // Password field
+                    div { class: "auth-group",
+                        label { r#for: "password", class: "auth-label", "Password" }
+                        input {
+                            id: "password",
+                            class: "app-input auth-field",
+                            r#type: "password",
+                            placeholder: "••••••••",
+                            value: "{password}",
+                            oninput: move |e| password.clone().set(e.value()),
+                            onblur: move |_| password_touched.clone().set(true),
+                        }
+                        if *password_touched.read() && !password_error.is_empty() {
+                            p { class: "error auth-hint", "{password_error}" }
+                        }
+                    }
+
+                    // Confirm password field
+                    div { class: "auth-group",
+                        label { r#for: "confirm-password", class: "auth-label", "Confirm Password" }
+                        input {
+                            id: "confirm-password",
+                            class: "app-input auth-field",
+                            r#type: "password",
+                            placeholder: "••••••••",
+                            value: "{confirm}",
+                            oninput: move |e| confirm.clone().set(e.value()),
+                            onblur: move |_| confirm_touched.clone().set(true),
+                        }
+                        if *confirm_touched.read() && !confirm_error.is_empty() {
+                            p { class: "error auth-hint", "{confirm_error}" }
+                        }
+                    }
+
+                    // Submit
+                    button {
+                        r#type: "submit",
+                        class: "app-btn app-btn-active auth-submit",
+                        disabled: *loading.read() || is_invalid,
+                        if *loading.read() { "Creating..." } else { "Sign Up" }
+                    }
+                }
+            }
+
+            // Footer
+            div { class: "auth-foot",
+                p { class: "muted auth-note",
+                    "Already have an account? "
+                    Link {
+                        to: crate::Route::Login {},
+                        style: "color: var(--pastel-yellow);",
+                        "Sign In"
+                    }
+                }
+            }
         }
     }
 }
-
-const SIGNUP_CSS: &str = "";

@@ -3,30 +3,14 @@
 //!   /auth/reset-password?token=…   → new-password form → user.resetPassword
 //!
 //! The request form always reports success (the backend never reveals whether
-//! an account exists).
+//! an account exists). A dead token swaps the card to "Link expired" with a
+//! one-click flip into request mode.
 
+use crate::components::auth_layout::AuthLayout;
 use crate::net;
 use dioxus::prelude::*;
-use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-enum Panel {
-    Reset,
-}
-
-impl PanelKind for Panel {
-    fn title(self) -> &'static str {
-        "Reset Password"
-    }
-}
-
-fn default_layout() -> Vec<PanelWin<Panel>> {
-    let mut b = LayoutBuilder::new();
-    vec![b.at(Panel::Reset, 720.0, 120.0, 480.0, 480.0)]
-}
 
 /// `?name=` from the current URL (tiny hand parser; web_sys UrlSearchParams
 /// isn't in the enabled feature set — same approach as verify_email).
@@ -38,11 +22,12 @@ fn query_param(name: &str) -> Option<String> {
     })
 }
 
-const LABEL: &str = "font-size: .75rem; font-family: monospace; font-weight: 700; \
-    text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary);";
-const FIELD: &str = "width: 100%; padding: .625rem .75rem; font-size: .875rem;";
-const SUBMIT: &str = "width: 100%; padding: .75rem 1rem; font-weight: 600; \
-    font-size: .875rem; text-transform: uppercase; letter-spacing: .05em;";
+/// Does this `user.resetPassword` error mean the token itself is dead
+/// (invalid / expired / already used), as opposed to a transport failure?
+fn is_token_error(e: &str) -> bool {
+    let e = e.to_lowercase();
+    e.contains("expired") || (e.contains("token") && (e.contains("invalid") || e.contains("used")))
+}
 
 #[component]
 pub fn ResetPassword() -> Element {
@@ -55,6 +40,11 @@ pub fn ResetPassword() -> Element {
     let mut loading = use_signal(|| false);
     let mut error = use_signal(String::new);
     let mut done = use_signal(|| false);
+    // Set when resetPassword rejects the token itself → "Link expired" card.
+    let mut expired = use_signal(|| false);
+    // Set by the "Send me a new link" button: render the request form even
+    // though the URL carries a (dead) token.
+    let mut request_mode = use_signal(|| false);
 
     let request_submit = move |e: Event<FormData>| {
         e.prevent_default();
@@ -102,120 +92,128 @@ pub fn ResetPassword() -> Element {
             .await
             {
                 Ok(_) => done.set(true),
-                Err(e) => error.set(e),
+                Err(e) => {
+                    if is_token_error(&e) {
+                        expired.set(true);
+                    } else {
+                        error.set(e);
+                    }
+                }
             }
             loading.set(false);
         });
     };
 
-    let ws = use_workspace("reset_password_layout", default_layout);
-    crate::store::sync_panel_mode(ws.mode);
-
     let has_token = token.is_some();
-    let body = move |_: Panel, _max: bool| -> Element {
-        rsx! {
-            div {
-                style: "padding: 2rem; display: flex; flex-direction: column; gap: 1.25rem;",
-                h1 {
-                    style: "font-family: monospace; font-size: 1.25rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--text-primary); margin: 0; text-align: center;",
-                    "Reset Password"
-                }
+    // True when the email-request form is (or should be) showing — either no
+    // token in the URL, or the user flipped over after a dead token.
+    let in_request = !has_token || *request_mode.read();
 
-                if !error.read().is_empty() {
-                    p { class: "error", style: "font-size: .75rem; font-family: monospace; margin: 0;", "{error}" }
-                }
+    rsx! {
+        AuthLayout {
+            eyebrow: "RESET PASSWORD",
+            show_brand: false,
+            subtitle: "",
 
-                if *done.read() {
-                    div { class: "success", style: "font-size: .8rem; font-family: monospace; display: flex; flex-direction: column; gap: 1rem;",
-                        if has_token {
-                            p { style: "margin: 0;", "Password updated. Sign in with your new password." }
-                        } else {
-                            p { style: "margin: 0;", "If that address has an account, a reset link is on its way. It expires in 1 hour." }
-                        }
-                        Link { to: crate::Route::Login {}, class: "app-btn app-btn-active", style: "text-align: center;", "Sign In" }
+            if !error.read().is_empty() {
+                p { class: "error auth-note", "{error}" }
+            }
+
+            if *done.read() {
+                div {
+                    class: "success auth-note",
+                    style: "display: flex; flex-direction: column; gap: 1rem;",
+                    if in_request {
+                        p { style: "margin: 0;", "If that address has an account, a reset link is on its way. It expires in 1 hour." }
+                    } else {
+                        p { style: "margin: 0;", "Password updated. Sign in with your new password." }
                     }
-                } else if has_token {
-                    form {
-                        onsubmit: reset_submit.clone(),
-                        style: "display: flex; flex-direction: column; gap: 1rem;",
-                        div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                            label { r#for: "new-password", style: LABEL, "New Password" }
-                            input {
-                                id: "new-password",
-                                class: "app-input",
-                                style: FIELD,
-                                r#type: "password",
-                                autocomplete: "new-password",
-                                value: "{password}",
-                                oninput: move |e| password.set(e.value()),
-                            }
-                        }
-                        div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                            label { r#for: "confirm-password", style: LABEL, "Confirm Password" }
-                            input {
-                                id: "confirm-password",
-                                class: "app-input",
-                                style: FIELD,
-                                r#type: "password",
-                                autocomplete: "new-password",
-                                value: "{confirm}",
-                                oninput: move |e| confirm.set(e.value()),
-                            }
-                        }
-                        button {
-                            r#type: "submit",
-                            class: "app-btn app-btn-active",
-                            style: SUBMIT,
-                            disabled: *loading.read(),
-                            if *loading.read() { "Saving..." } else { "Set New Password" }
+                    Link { to: crate::Route::Login {}, class: "app-btn app-btn-active", style: "text-align: center;", "Sign In" }
+                }
+            } else if *expired.read() && !in_request {
+                div { style: "display: flex; flex-direction: column; gap: 1rem;",
+                    h2 {
+                        class: "error",
+                        style: "font-family: var(--mono, monospace); font-size: 1.125rem; font-weight: 700; text-transform: uppercase; margin: 0;",
+                        "Link Expired"
+                    }
+                    p { class: "muted auth-note",
+                        "This reset link is invalid, expired, or has already been used."
+                    }
+                    button {
+                        r#type: "button",
+                        class: "app-btn app-btn-active auth-submit",
+                        onclick: move |_| {
+                            error.set(String::new());
+                            request_mode.set(true);
+                        },
+                        "Send Me a New Link"
+                    }
+                }
+            } else if !in_request {
+                form {
+                    class: "auth-form",
+                    onsubmit: reset_submit,
+                    div { class: "auth-group",
+                        label { r#for: "new-password", class: "auth-label", "New Password" }
+                        input {
+                            id: "new-password",
+                            class: "app-input auth-field",
+                            r#type: "password",
+                            autocomplete: "new-password",
+                            value: "{password}",
+                            oninput: move |e| password.set(e.value()),
                         }
                     }
-                } else {
-                    form {
-                        onsubmit: request_submit,
-                        style: "display: flex; flex-direction: column; gap: 1rem;",
-                        p { class: "muted", style: "font-size: .75rem; font-family: monospace; margin: 0;",
-                            "Enter your email and we'll send you a link to choose a new password."
+                    div { class: "auth-group",
+                        label { r#for: "confirm-password", class: "auth-label", "Confirm Password" }
+                        input {
+                            id: "confirm-password",
+                            class: "app-input auth-field",
+                            r#type: "password",
+                            autocomplete: "new-password",
+                            value: "{confirm}",
+                            oninput: move |e| confirm.set(e.value()),
                         }
-                        div { style: "display: flex; flex-direction: column; gap: .375rem;",
-                            label { r#for: "reset-email", style: LABEL, "Email" }
-                            input {
-                                id: "reset-email",
-                                class: "app-input",
-                                style: FIELD,
-                                r#type: "email",
-                                autocomplete: "email",
-                                value: "{email}",
-                                oninput: move |e| email.set(e.value()),
-                            }
+                    }
+                    button {
+                        r#type: "submit",
+                        class: "app-btn app-btn-active auth-submit",
+                        disabled: *loading.read(),
+                        if *loading.read() { "Saving..." } else { "Set New Password" }
+                    }
+                }
+            } else {
+                form {
+                    class: "auth-form",
+                    onsubmit: request_submit,
+                    p { class: "muted auth-note",
+                        "Enter your email and we'll send you a link to choose a new password."
+                    }
+                    div { class: "auth-group",
+                        label { r#for: "reset-email", class: "auth-label", "Email" }
+                        input {
+                            id: "reset-email",
+                            class: "app-input auth-field",
+                            r#type: "email",
+                            autocomplete: "email",
+                            value: "{email}",
+                            oninput: move |e| email.set(e.value()),
                         }
-                        button {
-                            r#type: "submit",
-                            class: "app-btn app-btn-active",
-                            style: SUBMIT,
-                            disabled: *loading.read(),
-                            if *loading.read() { "Sending..." } else { "Send Reset Link" }
-                        }
-                        Link {
-                            to: crate::Route::Login {},
-                            class: "muted",
-                            style: "font-size: .75rem; font-family: monospace; text-align: center; text-decoration: underline;",
-                            "Back to sign in"
-                        }
+                    }
+                    button {
+                        r#type: "submit",
+                        class: "app-btn app-btn-active auth-submit",
+                        disabled: *loading.read(),
+                        if *loading.read() { "Sending..." } else { "Send Reset Link" }
+                    }
+                    Link {
+                        to: crate::Route::Login {},
+                        class: "muted auth-link",
+                        "Back to sign in"
                     }
                 }
             }
-        }
-    };
-
-    rsx! {
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
         }
     }
 }

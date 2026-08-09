@@ -1,6 +1,7 @@
 //! Shared components. Each is owned by its file.
 
 pub mod admin_nav;
+pub mod auth_layout;
 pub mod brand;
 pub mod footer;
 pub mod game_list;

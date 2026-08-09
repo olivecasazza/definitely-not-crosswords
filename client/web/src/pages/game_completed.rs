@@ -3,7 +3,6 @@ use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::rc::Rc;
-use wasm_bindgen_futures::spawn_local;
 
 use crate::components::game_list::status;
 use crate::components::identicon::Identicon;
@@ -457,7 +456,9 @@ pub fn GameCompleted(id: String) -> Element {
                                                 let mut is_starting = is_starting;
                                                 let mut start_error = start_error;
                                                 let nav = nav;
-                                                spawn_local(async move {
+                                                // Dioxus `spawn`: `nav.push`
+                                                // needs the runtime scope.
+                                                spawn(async move {
                                                     is_starting.set(true);
                                                     start_error.set(String::new());
                                                     match net::mutation(

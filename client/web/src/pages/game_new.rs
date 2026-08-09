@@ -4,7 +4,6 @@ use dioxus::prelude::*;
 use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use wasm_bindgen_futures::spawn_local;
 
 use crossword_core::fmt::plural;
 
@@ -179,8 +178,11 @@ fn run_generation(recipe: Recipe, mut gs: GenSignals, state: AppState) {
     gs.elapsed.set(0);
     gs.last_recipe.set(Some(recipe.clone()));
 
-    // Tick elapsed every second until the run leaves "running".
-    spawn_local(async move {
+    // Tick elapsed every second until the run leaves "running". Runtime-aware
+    // `spawn` (never `wasm_bindgen_futures::spawn_local`): the task is owned by
+    // this scope, so it is cancelled on unmount instead of ticking dropped
+    // signals forever.
+    spawn(async move {
         loop {
             gloo_timers::future::TimeoutFuture::new(1_000).await;
             if gs.status.read().as_str() != "running" {
@@ -247,7 +249,11 @@ fn run_generation(recipe: Recipe, mut gs: GenSignals, state: AppState) {
 /// it, and enter play. Errors (e.g. permission) surface inline via
 /// `publish_error`.
 fn publish_and_play(game_id: String, mut gs: GenSignals, nav: Navigator) {
-    spawn_local(async move {
+    // Dioxus `spawn`, NOT `wasm_bindgen_futures::spawn_local`: `nav.push` needs
+    // the Dioxus runtime scope to resolve the router's history context. A raw
+    // wasm task has no scope, so push panics (RuntimeError) and poisons the
+    // router's inner lock.
+    spawn(async move {
         gs.publishing.set(true);
         gs.publish_error.set(String::new());
         if let Err(e) = net::mutation(
@@ -714,7 +720,10 @@ pub fn GameNew(id: String) -> Element {
                     let mut is_starting = is_starting;
                     let mut start_error = start_error;
                     let nav = nav;
-                    spawn_local(async move {
+                    // Dioxus `spawn` (runtime-aware), NOT spawn_local: the
+                    // `nav.push` below must run inside the runtime scope or the
+                    // router can't find its history context and panics.
+                    spawn(async move {
                         is_starting.set(true);
                         start_error.set(String::new());
                         // POST, not GET: starting a game is a write. A GET can be
@@ -758,7 +767,7 @@ pub fn GameNew(id: String) -> Element {
                     let mut coop_starting = coop_starting;
                     let mut coop_game_id = coop_game_id;
                     let mut start_error = start_error;
-                    spawn_local(async move {
+                    spawn(async move {
                         coop_starting.set(true);
                         start_error.set(String::new());
                         match net::mutation_as::<serde_json::Value>(

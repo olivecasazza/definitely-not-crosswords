@@ -9,7 +9,6 @@ use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::spawn_local;
 
 use crate::components::game_list::{
     error_status, game_list, progress_bar, progress_pct, status, GameRow, GameStatus, GAME_LIST_CSS,
@@ -615,7 +614,9 @@ pub fn Games() -> Element {
                     };
                     join_err.set(None);
                     join_busy.set(true);
-                    spawn_local(async move {
+                    // Dioxus `spawn`: `nav.push` below needs the runtime scope
+                    // (raw spawn_local panics resolving the history context).
+                    spawn(async move {
                         let res =
                             net::mutation("activeGame.join", Some(json!({ "id": id.clone() })))
                                 .await;

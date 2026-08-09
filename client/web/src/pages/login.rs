@@ -2,7 +2,6 @@ use crate::components::auth_layout::AuthLayout;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
 use serde::Deserialize;
-use wasm_bindgen_futures::spawn_local;
 
 /// Simple percent-encoder for application/x-www-form-urlencoded values.
 /// next-auth's credentials provider expects form-encoded, not JSON.
@@ -92,7 +91,9 @@ pub fn Login() -> Element {
             let mut loading = loading.clone();
             let mut error = error.clone();
 
-            spawn_local(async move {
+            // Dioxus `spawn`: the post-login `nav.push` needs the runtime
+            // scope (raw spawn_local panics resolving the history context).
+            spawn(async move {
                 loading.set(true);
                 error.set(String::new());
 
@@ -172,7 +173,7 @@ pub fn Login() -> Element {
         let mut loading = loading;
         let mut error = error;
         move |_| {
-            spawn_local(async move {
+            spawn(async move {
                 loading.set(true);
                 error.set(String::new());
                 let csrf = async {

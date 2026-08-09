@@ -254,6 +254,12 @@ pub fn GamePlay(id: String) -> Element {
     let _subs =
         use_signal(|| Option::<(net::Subscription, net::Subscription, net::Subscription)>::None);
 
+    // Completion redirect, staged through a signal: the onGameCompleted
+    // subscription callback runs on a raw wasm task (no Dioxus runtime scope),
+    // so it must not call `nav.push` itself — the router couldn't resolve its
+    // history context and would panic. The effect below navigates in-runtime.
+    let mut completed_redirect = use_signal(|| Option::<String>::None);
+
     let id_for_load = id.clone();
 
     // --- load + subscribe (once) ---
@@ -297,7 +303,6 @@ pub fn GamePlay(id: String) -> Element {
 
         // Subscriptions: both emitters are global (no input). We filter by
         // activeGameId off the raw JSON before merging / navigating.
-        let nav = navigator();
         let id_actions = id_for_load.clone();
         let on_actions = net::subscribe("activeGame.onAddActions", None, move |data: Value| {
             // payload is an array of GameAction; each carries activeGameId.
@@ -344,9 +349,7 @@ pub fn GamePlay(id: String) -> Element {
             let completed = data.get("completedGameId").and_then(|x| x.as_str());
             if active == Some(id_done.as_str()) {
                 if let Some(cid) = completed {
-                    nav.push(Route::GameCompleted {
-                        id: cid.to_string(),
-                    });
+                    completed_redirect.set(Some(cid.to_string()));
                 }
             }
         });
@@ -408,6 +411,14 @@ pub fn GamePlay(id: String) -> Element {
         });
 
         subs.set(Some((on_actions, on_done, on_presence)));
+    });
+
+    // Perform the completion redirect inside the runtime (see the signal's
+    // declaration for why the subscription callback can't push directly).
+    use_effect(move || {
+        if let Some(cid) = completed_redirect.read().clone() {
+            navigator().push(Route::GameCompleted { id: cid });
+        }
     });
 
     // --- derived state (recomputes when questions/actions change) ---
@@ -640,7 +651,9 @@ pub fn GamePlay(id: String) -> Element {
 
         let id_complete = id_for_guess.clone();
         let nav = navigator();
-        spawn_local(async move {
+        // Dioxus `spawn`: `nav.push` below needs the runtime scope (raw
+        // spawn_local panics resolving the history context).
+        spawn(async move {
             let _ = net::mutation("activeGame.addActions", Some(add_input)).await;
             if is_correct && solved {
                 if let Ok(res) =

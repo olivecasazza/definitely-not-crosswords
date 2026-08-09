@@ -201,6 +201,54 @@ struct ResumeGame {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 struct IgnoredGame {}
 
+/// game.getDaily response — today's featured puzzle plus the caller's state
+/// on it (state fields are false/None without a session). Same shape as the
+/// games library's copy; each page keeps its own wire structs (house pattern).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct DailyGame {
+    #[serde(rename = "gameId")]
+    game_id: String,
+    title: String,
+    #[serde(default)]
+    clues: i64,
+    #[serde(default, rename = "alreadyCompleted")]
+    already_completed: bool,
+    #[serde(default, rename = "activeGameId")]
+    active_game_id: Option<String>,
+}
+
+/// Daily CTA: an in-progress session wins (most actionable), then solved,
+/// then fresh. Solved routes to GameNew — we only know the parent gameId, and
+/// its brief shows the solved state.
+fn daily_cta(d: &DailyGame) -> (Option<&'static str>, &'static str, &'static str, Route) {
+    if let Some(ag) = &d.active_game_id {
+        (
+            Some("IN PROGRESS"),
+            "border-color: var(--pastel-green); color: var(--pastel-green);",
+            "Continue →",
+            Route::GamePlay { id: ag.clone() },
+        )
+    } else if d.already_completed {
+        (
+            Some("SOLVED"),
+            "border-color: var(--pastel-yellow); color: var(--pastel-yellow);",
+            "View →",
+            Route::GameNew {
+                id: d.game_id.clone(),
+            },
+        )
+    } else {
+        (
+            None,
+            "",
+            "Play →",
+            Route::GameNew {
+                id: d.game_id.clone(),
+            },
+        )
+    }
+}
+
 /// Career aggregates from `stats.getUserStats` — the four Pulse tiles. The
 /// server also returns profile / totals / recentGames; serde ignores the rest.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -314,6 +362,20 @@ fn Dashboard() -> Element {
         _ => None,
     });
 
+    // Today's puzzle (B14). Public proc — but re-fetch when the session
+    // changes so alreadyCompleted/activeGameId track the signed-in user.
+    // `None` = loading OR error — including the router's "procedure not
+    // implemented" fallthrough — and the Play Now panel then renders exactly
+    // its pre-daily Fresh list, so an older server degrades gracefully.
+    let daily_res = use_resource(move || async move {
+        let _session = state.session.read().clone();
+        net::query_as::<DailyGame>("game.getDaily", None).await
+    });
+    let daily = use_memo(move || match &*daily_res.read() {
+        Some(Ok(d)) => Some(d.clone()),
+        _ => None,
+    });
+
     // Career tiles for the Pulse panel (non-critical: errors hide the panel
     // body instead of blocking the dashboard).
     let stats_res = use_resource(move || async move {
@@ -357,8 +419,33 @@ fn Dashboard() -> Element {
                 });
                 actives.truncate(3);
 
+                // Daily card (B14): rendered at the top of the Fresh section
+                // when game.getDaily has answered; None keeps the section
+                // exactly as it was.
+                let daily_v = daily();
+                let daily_card = daily_v.as_ref().map(|d| {
+                    let (badge, badge_style, cta, dest) = daily_cta(d);
+                    let clue_meta = (d.clues > 0).then(|| plural(d.clues, "clue"));
+                    rsx! {
+                        div { class: "home-head",
+                            span { class: "home-eyebrow", "TODAY'S PUZZLE" }
+                            if let Some(b) = badge {
+                                span { class: "home-daily-chip", style: "{badge_style}", "{b}" }
+                            }
+                        }
+                        Link { to: dest, class: "home-daily-card",
+                            span { class: "home-resume-title", "{d.title}" }
+                            if let Some(m) = clue_meta {
+                                span { class: "home-resume-meta", "{m}" }
+                            }
+                            span { class: "home-resume-cta", "{cta}" }
+                        }
+                    }
+                });
+
                 // Fresh: newest unstarted puzzles, up to 3, through the shared
                 // GameRow renderer (same projection the games library uses).
+                // The daily game is dropped here so it never shows twice.
                 let mut fresh: Vec<&FreshGame> = items
                     .iter()
                     .filter_map(|i| match i {
@@ -373,6 +460,7 @@ fn Dashboard() -> Element {
                 });
                 let rows: Vec<GameRow> = fresh
                     .into_iter()
+                    .filter(|g| daily_v.as_ref().is_none_or(|d| d.game_id != g.id))
                     .take(3)
                     .map(|g| GameRow {
                         id: g.id.clone(),
@@ -418,6 +506,9 @@ fn Dashboard() -> Element {
                                     }
                                 }
                             }
+                        }
+                        if let Some(card) = daily_card {
+                            {card}
                         }
                         div { class: "home-head",
                             span { class: "home-eyebrow", "START SOMETHING FRESH" }
@@ -593,6 +684,17 @@ const HOME_DASH_CSS: &str = "
   text-transform: uppercase; }
 .home-resume-card:hover .home-resume-cta, .home-resume-card:focus-visible .home-resume-cta {
   background: var(--pastel-green); color: var(--contrast-ink); }
+
+.home-daily-card { display: flex; flex-direction: column; gap: .4rem; padding: .875rem 1rem;
+  text-decoration: none; border-bottom: 1px solid var(--border-app);
+  border-left: 2px solid var(--pastel-yellow); transition: background-color .12s ease; }
+.home-daily-card:hover, .home-daily-card:focus-visible { outline: none;
+  background: var(--bg-cell-letter); }
+.home-daily-card:hover .home-resume-cta, .home-daily-card:focus-visible .home-resume-cta {
+  background: var(--pastel-green); color: var(--contrast-ink); }
+.home-daily-chip { font-family: var(--mono, monospace); font-size: var(--fs-2xs); font-weight: 700;
+  color: var(--text-secondary); border: 1px solid var(--border-app); padding: .125rem .375rem;
+  flex-shrink: 0; }
 .home-play-foot { display: inline-block; margin: auto 1rem 1rem; padding-top: .75rem;
   align-self: flex-start; }
 
@@ -615,8 +717,8 @@ const HOME_DASH_CSS: &str = "
 
 @media (max-width: 760px) {
   /* Comfortable tap targets; no hover-stick on touch. */
-  .home-resume-card { padding: 1rem; }
-  .home-resume-card:hover { background: transparent; }
+  .home-resume-card, .home-daily-card { padding: 1rem; }
+  .home-resume-card:hover, .home-daily-card:hover { background: transparent; }
   .home-resume-cta { padding: .625rem 1rem; }
   .home-pulse-grid { gap: .5rem; }
 }
@@ -666,6 +768,30 @@ mod tests {
         assert_eq!(actives.len(), 1);
         assert_eq!(actives[0].game.title, "Co-op Cryptic");
         assert_eq!(actives[0].players, 2);
+    }
+
+    /// game.getDaily response shape (verified against routers/game_list.rs);
+    /// state fields default when absent, and in-progress wins the CTA.
+    #[test]
+    fn daily_game_deserializes_with_defaults() {
+        let d: DailyGame = serde_json::from_value(json!({
+            "gameId": "g1", "title": "Saturday Stumper", "clues": 24,
+            "alreadyCompleted": true, "activeGameId": "a7",
+        }))
+        .unwrap();
+        let (badge, _, cta, dest) = daily_cta(&d);
+        assert_eq!(badge, Some("IN PROGRESS"));
+        assert_eq!(cta, "Continue →");
+        assert!(dest == Route::GamePlay { id: "a7".into() });
+
+        let lean: DailyGame =
+            serde_json::from_value(json!({ "gameId": "g2", "title": "Mini" })).unwrap();
+        assert!(!lean.already_completed);
+        assert_eq!(lean.active_game_id, None);
+        let (badge, _, cta, dest) = daily_cta(&lean);
+        assert_eq!(badge, None);
+        assert_eq!(cta, "Play →");
+        assert!(dest == Route::GameNew { id: "g2".into() });
     }
 
     /// getUserStats response shape (verified against routers/stats.rs).

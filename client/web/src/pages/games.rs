@@ -87,6 +87,54 @@ struct PlayedGame {
     total_cells: Option<i64>,
 }
 
+/// game.getDaily response — today's featured puzzle plus the caller's state
+/// on it (state fields are false/None without a session). All state fields
+/// default so a leaner response still deserializes.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct DailyGame {
+    #[serde(rename = "gameId")]
+    game_id: String,
+    title: String,
+    #[serde(default)]
+    clues: i64,
+    #[serde(default, rename = "alreadyCompleted")]
+    already_completed: bool,
+    #[serde(default, rename = "activeGameId")]
+    active_game_id: Option<String>,
+}
+
+/// Daily CTA: an in-progress session wins (most actionable), then solved,
+/// then fresh. Solved routes to GameNew — we only know the parent gameId, and
+/// its brief shows the solved state.
+fn daily_cta(d: &DailyGame) -> (Option<&'static str>, &'static str, &'static str, Route) {
+    if let Some(ag) = &d.active_game_id {
+        (
+            Some("IN PROGRESS"),
+            "border-color: var(--pastel-green); color: var(--pastel-green);",
+            "Continue →",
+            Route::GamePlay { id: ag.clone() },
+        )
+    } else if d.already_completed {
+        (
+            Some("SOLVED"),
+            "border-color: var(--pastel-yellow); color: var(--pastel-yellow);",
+            "View →",
+            Route::GameNew {
+                id: d.game_id.clone(),
+            },
+        )
+    } else {
+        (
+            None,
+            "",
+            "Play →",
+            Route::GameNew {
+                id: d.game_id.clone(),
+            },
+        )
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum Panel {
     Continue,
@@ -478,6 +526,21 @@ pub fn Games() -> Element {
         Some(result)
     });
 
+    // Today's puzzle (B14). Public proc — but re-fetch when the session
+    // changes so alreadyCompleted/activeGameId track the signed-in user.
+    let daily_res = use_resource(move || async move {
+        let _session = state.session.read().clone();
+        net::query_as::<DailyGame>("game.getDaily", None).await
+    });
+
+    // `None` = loading OR error — including the router's "procedure not
+    // implemented" fallthrough — and every consumer falls back to the
+    // pre-daily behaviour, so an older server degrades gracefully.
+    let daily = use_memo(move || match &*daily_res.read() {
+        Some(Ok(d)) => Some(d.clone()),
+        _ => None,
+    });
+
     // Parse once per fetch, not once per panel per render. `None` means "not
     // ready yet" (loading or error) — the panel body reads the resource for the
     // exact status. Keeping the projection here also keeps all hooks out of the
@@ -669,6 +732,27 @@ pub fn Games() -> Element {
             }
 
             Panel::Featured => {
+                // Daily puzzle takes over when game.getDaily answers; on any
+                // error (or a server without the proc) `daily` stays None and
+                // the newest-unstarted "THIS WEEK'S PUZZLE" below is unchanged.
+                if let Some(d) = daily() {
+                    let (badge, badge_style, cta, dest) = daily_cta(&d);
+                    return rsx! {
+                        div { class: "games-featured",
+                            div { class: "games-head",
+                                span { class: "games-eyebrow", "TODAY'S PUZZLE" }
+                                if let Some(b) = badge {
+                                    span { class: "games-chip", style: "{badge_style}", "{b}" }
+                                }
+                            }
+                            h2 { class: "games-featured-title", "{d.title}" }
+                            if d.clues > 0 {
+                                p { class: "games-featured-meta", {plural(d.clues, "clue")} }
+                            }
+                            Link { to: dest, class: "app-btn app-btn-active games-featured-cta", "{cta}" }
+                        }
+                    };
+                }
                 let Some(items) = &items_v else {
                     // Non-critical panel: hide content on fetch error.
                     return if fetch_err.is_some() {
@@ -1002,6 +1086,48 @@ mod tests {
         assert_eq!(parse_invite("/game/uuid_9"), Some("uuid_9".to_string()));
         assert_eq!(parse_invite("not a link"), None);
         assert_eq!(parse_invite("/game/"), None);
+    }
+
+    #[test]
+    fn daily_game_deserializes_and_cta_precedence_holds() {
+        // Full response shape.
+        let d: DailyGame = serde_json::from_value(json!({
+            "gameId": "g1", "title": "Saturday Stumper", "clues": 24,
+            "alreadyCompleted": false, "activeGameId": null,
+        }))
+        .unwrap();
+        assert_eq!(d.clues, 24);
+        let (badge, _, cta, dest) = daily_cta(&d);
+        assert_eq!(badge, None);
+        assert_eq!(cta, "Play →");
+        // Route has no Debug derive — compare with assert!.
+        assert!(dest == Route::GameNew { id: "g1".into() });
+
+        // Lean response: state fields default.
+        let lean: DailyGame =
+            serde_json::from_value(json!({ "gameId": "g2", "title": "Mini" })).unwrap();
+        assert!(!lean.already_completed);
+        assert_eq!(lean.active_game_id, None);
+
+        // An in-progress session wins over solved.
+        let both = DailyGame {
+            active_game_id: Some("a9".into()),
+            already_completed: true,
+            ..d.clone()
+        };
+        let (badge, _, cta, dest) = daily_cta(&both);
+        assert_eq!(badge, Some("IN PROGRESS"));
+        assert_eq!(cta, "Continue →");
+        assert!(dest == Route::GamePlay { id: "a9".into() });
+
+        // Solved with no session routes to GameNew (only the gameId is known).
+        let solved = DailyGame {
+            already_completed: true,
+            ..d
+        };
+        let (badge, _, _, dest) = daily_cta(&solved);
+        assert_eq!(badge, Some("SOLVED"));
+        assert!(dest == Route::GameNew { id: "g1".into() });
     }
 
     #[test]

@@ -1,4 +1,5 @@
-//! `game_list` router — port of server/trpc/router/gameList.ts
+//! `game_list` router — port of server/trpc/router/gameList.ts, plus the
+//! daily-puzzle proc `game.getDaily` (B14).
 use crate::ctx::Ctx;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -15,8 +16,141 @@ struct GridInfo {
 pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<Value, String>> {
     match proc {
         "gameList.get" => Some(get(input, ctx).await),
+        "game.getDaily" => Some(get_daily(ctx).await),
         _ => None,
     }
+}
+
+/// game.getDaily — today's featured puzzle (B14). Public procedure: works
+/// without a session, but when one exists the response also carries the
+/// caller's state on that game.
+///
+/// Pick rule (documented here, implemented in the candidate query below):
+/// the day's game is the LEAST-recently-picked published Game — games that
+/// have never been a DailyPick come first (NULLS FIRST on their last picked
+/// date), then games whose most recent pick is oldest; ties break toward the
+/// newest `createdAt`. The winning pick is persisted lazily on the first
+/// request of the UTC day with `INSERT ... ON CONFLICT DO NOTHING` + re-select,
+/// so concurrent first requests all converge on the same row.
+///
+/// Response: `{ gameId, title, clues, alreadyCompleted, activeGameId }` —
+/// `alreadyCompleted` / `activeGameId` are only meaningful with a session
+/// (false / null otherwise).
+async fn get_daily(ctx: &Ctx) -> Result<Value, String> {
+    // The UTC calendar day, computed by Postgres so app hosts' clocks/zones
+    // can't disagree. YYYY-MM-DD text sorts lexicographically == chronologically.
+    let today: String =
+        sqlx::query_scalar(r#"SELECT to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD')"#)
+            .fetch_one(&ctx.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    // Today's pick, with title + clue count in one row.
+    let select_pick = r#"
+        SELECT dp."gameId" AS game_id, g.title,
+               (SELECT COUNT(*) FROM "Question" q WHERE q."gameId" = g.id) AS clues
+        FROM "DailyPick" dp
+        JOIN "Game" g ON g.id = dp."gameId"
+        WHERE dp."date" = $1
+        "#;
+
+    let mut row = sqlx::query(select_pick)
+        .bind(&today)
+        .fetch_optional(&ctx.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if row.is_none() {
+        // First request of the day: choose deterministically (pick rule above).
+        let candidate: Option<String> = sqlx::query_scalar(
+            r#"
+            SELECT g.id
+            FROM "Game" g
+            LEFT JOIN (
+                SELECT "gameId", MAX("date") AS last_picked
+                FROM "DailyPick"
+                GROUP BY "gameId"
+            ) dp ON dp."gameId" = g.id
+            WHERE g.published = true
+            ORDER BY dp.last_picked ASC NULLS FIRST, g."createdAt" DESC
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(&ctx.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let Some(candidate) = candidate else {
+            return Err("no published games available for the daily puzzle".to_string());
+        };
+
+        // Racing first-requests: whoever inserts first wins, everyone re-selects
+        // the same persisted row.
+        sqlx::query(r#"INSERT INTO "DailyPick" ("date", "gameId") VALUES ($1, $2) ON CONFLICT ("date") DO NOTHING"#)
+            .bind(&today)
+            .bind(&candidate)
+            .execute(&ctx.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        row = sqlx::query(select_pick)
+            .bind(&today)
+            .fetch_optional(&ctx.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    let row = row.ok_or_else(|| "daily pick vanished after insert".to_string())?;
+    let game_id: String = row.get("game_id");
+    let title: String = row.get("title");
+    let clues: i64 = row.get("clues");
+
+    // Per-user state — only when a session exists (public proc otherwise).
+    let (already_completed, active_game_id) = match ctx.auth.user.as_ref() {
+        Some(user) => {
+            let completed: bool = sqlx::query_scalar(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1 FROM "CompletedGame" cg
+                    JOIN "GameMember" gm ON gm."completedGameId" = cg.id
+                    WHERE cg."gameId" = $1 AND gm."userId" = $2
+                )
+                "#,
+            )
+            .bind(&game_id)
+            .bind(&user.id)
+            .fetch_one(&ctx.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+            // Most recently played active session on this game, if any.
+            let active: Option<String> = sqlx::query_scalar(
+                r#"
+                SELECT ag.id FROM "ActiveGame" ag
+                JOIN "GameMember" gm ON gm."activeGameId" = ag.id
+                WHERE ag."gameId" = $1 AND gm."userId" = $2
+                ORDER BY ag."updatedAt" DESC
+                LIMIT 1
+                "#,
+            )
+            .bind(&game_id)
+            .bind(&user.id)
+            .fetch_optional(&ctx.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+            (completed, active)
+        }
+        None => (false, None),
+    };
+
+    Ok(json!({
+        "gameId": game_id,
+        "title": title,
+        "clues": clues,
+        "alreadyCompleted": already_completed,
+        "activeGameId": active_game_id,
+    }))
 }
 
 /// gameList.get({ email }) — returns published unstarted Games, the caller's

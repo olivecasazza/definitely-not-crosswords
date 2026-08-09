@@ -3,6 +3,7 @@ use crate::ctx::Ctx;
 use crossword_db::Role;
 use serde_json::{json, Value};
 use sqlx::Row;
+use std::collections::{HashMap, HashSet};
 
 /// Decide whether a row's email may be exposed to the current caller.
 ///
@@ -23,6 +24,7 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
     match proc {
         "stats.getGlobalLeaderboard" => Some(global_leaderboard(ctx).await),
         "stats.getUserStats" => Some(user_stats(input, ctx).await),
+        "stats.getUserHistory" => Some(user_history(ctx).await),
         "stats.getAllPlayers" => Some(all_players(input, ctx).await),
         "stats.getHeadToHead" => Some(head_to_head(input, ctx).await),
         "stats.getCompletedGame" => Some(completed_game(input, ctx).await),
@@ -228,6 +230,150 @@ async fn user_stats(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         "totalPlayers":   total_players,
         "recentGames":    recent_games,
     }))
+}
+
+/// Canonical per-user match history (protected — always scoped to the caller,
+/// never a client-supplied identity). Full history, `completedAt` DESC, no LIMIT.
+///
+/// Per-game score/correct/incorrect/rank/participants mirror
+/// `getUserStats.recentGames` exactly (same ranked_ms CTE: ROW_NUMBER over each
+/// GameStats' MemberScores ordered score DESC — the same ordering
+/// `getCompletedGame` presents as standings). `gridSize` mirrors game_list.rs's
+/// batched Question-geometry fold (one query for every game in the history).
+///
+/// `durationSecs` = completedAt − startedAt when `CompletedGame."startedAt"` is
+/// set (clamped: a negative span yields null). Rows predating the startedAt
+/// migration have no recoverable duration: completing a game deletes its
+/// ActiveGame, which cascades away the GameActions (and GameAction only ever
+/// references activeGameId), so there is no action span to fall back to — null.
+async fn user_history(ctx: &Ctx) -> Result<Value, String> {
+    let user = ctx.require_user()?;
+
+    let rows = sqlx::query(
+        r#"
+        WITH ranked_ms AS (
+            SELECT ms."memberId",
+                   ms."gameStatsId",
+                   ms.score::bigint                    AS score,
+                   ms."correctGuesses"::bigint         AS correct_guesses,
+                   ms."incorrectGuesses"::bigint       AS incorrect_guesses,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY ms."gameStatsId"
+                       ORDER BY ms.score DESC
+                   )::bigint                           AS rank,
+                   COUNT(*) OVER (
+                       PARTITION BY ms."gameStatsId"
+                   )::bigint                           AS total_participants
+            FROM "MemberScore" ms
+        )
+        SELECT g.id  AS game_id,
+               cg.id AS completed_game_id,
+               g.title,
+               to_char(cg."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS completed_at,
+               to_char(cg."startedAt", 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS started_at,
+               CASE
+                   WHEN cg."startedAt" IS NOT NULL
+                    AND cg."createdAt" >= cg."startedAt"
+                   THEN FLOOR(EXTRACT(EPOCH FROM (cg."createdAt" - cg."startedAt")))::bigint
+               END AS duration_secs,
+               COALESCE(r.score, 0)              AS score,
+               COALESCE(r.correct_guesses, 0)    AS correct_guesses,
+               COALESCE(r.incorrect_guesses, 0)  AS incorrect_guesses,
+               COALESCE(r.rank, 1)               AS rank,
+               COALESCE(r.total_participants, 0) AS total_participants
+        FROM "GameMember" gm
+        JOIN "CompletedGame" cg ON cg.id = gm."completedGameId"
+        JOIN "Game" g           ON g.id  = cg."gameId"
+        JOIN "GameStats" gs     ON gs.id = cg."gameStatsId"
+        LEFT JOIN ranked_ms r   ON r."memberId" = gm.id
+                               AND r."gameStatsId" = gs.id
+        WHERE gm."userId" = $1
+          AND gm."completedGameId" IS NOT NULL
+        ORDER BY cg."createdAt" DESC
+        "#,
+    )
+    .bind(&user.id)
+    .fetch_all(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Grid dimensions for every game in the history, in one batched query —
+    // same cell-walk as game_list.rs: each answer occupies rootX+i (ACROSS) or
+    // rootY+i (DOWN); the board is the max occupied coordinate +1 per axis.
+    let game_ids: Vec<String> = {
+        let mut seen: HashSet<String> = HashSet::new();
+        rows.iter()
+            .map(|r| r.get::<String, _>("game_id"))
+            .filter(|id| seen.insert(id.clone()))
+            .collect()
+    };
+
+    let question_rows = sqlx::query(
+        r#"
+        SELECT "gameId" AS game_id, "rootX", "rootY",
+               length(answer) AS len, direction::text AS direction
+        FROM "Question"
+        WHERE "gameId" = ANY($1::text[])
+        "#,
+    )
+    .bind(game_ids.as_slice())
+    .fetch_all(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let grid_size: HashMap<String, (i32, i32)> = {
+        // gameId -> set of occupied (x, y) cells.
+        let mut cells: HashMap<String, HashSet<(i32, i32)>> = HashMap::new();
+        for r in &question_rows {
+            let game_id: String = r.get("game_id");
+            let root_x: i32 = r.get("rootX");
+            let root_y: i32 = r.get("rootY");
+            let len: i32 = r.get("len");
+            let direction: String = r.get("direction");
+            let entry = cells.entry(game_id).or_default();
+            for i in 0..len {
+                if direction == "ACROSS" {
+                    entry.insert((root_x + i, root_y));
+                } else {
+                    entry.insert((root_x, root_y + i));
+                }
+            }
+        }
+        cells
+            .into_iter()
+            .map(|(game_id, set)| {
+                let w = set.iter().map(|c| c.0).max().unwrap_or(-1) + 1;
+                let h = set.iter().map(|c| c.1).max().unwrap_or(-1) + 1;
+                (game_id, (w, h))
+            })
+            .collect()
+    };
+
+    let history: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let game_id: String = r.get("game_id");
+            // Games with no questions (shouldn't happen, but don't 500 the panel).
+            let (w, h) = grid_size.get(&game_id).copied().unwrap_or((0, 0));
+            json!({
+                "gameId":          game_id,
+                "completedGameId": r.get::<String, _>("completed_game_id"),
+                "title":           r.get::<String, _>("title"),
+                "completedAt":     r.get::<String, _>("completed_at"),
+                // NULL for games completed before the startedAt migration.
+                "startedAt":       r.get::<Option<String>, _>("started_at"),
+                "score":           r.get::<i64, _>("score"),
+                "correct":         r.get::<i64, _>("correct_guesses"),
+                "incorrect":       r.get::<i64, _>("incorrect_guesses"),
+                "rank":            r.get::<i64, _>("rank"),
+                "participants":    r.get::<i64, _>("total_participants"),
+                "gridSize":        { "w": w, "h": h },
+                "durationSecs":    r.get::<Option<i64>, _>("duration_secs"),
+            })
+        })
+        .collect();
+
+    Ok(json!(history))
 }
 
 /// Players selectable in the H2H opponent dropdown. Ports `getAllPlayers`, but

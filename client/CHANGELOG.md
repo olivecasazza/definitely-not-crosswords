@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.38](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.37...v0.1.38) - 2026-08-10
+
+### Other
+
+- changelog for v0.1.37 [skip ci]
+- *(e2e)* guard the reset form against dropping its token
+
+
 ## [0.1.37](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.36...v0.1.37) - 2026-08-10
 
 ### Fixed

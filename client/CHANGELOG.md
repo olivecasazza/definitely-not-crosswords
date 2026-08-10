@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.37](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.36...v0.1.37) - 2026-08-10
+
+### Fixed
+
+- *(web)* never navigate from outside the Dioxus runtime
+- *(web)* stop the reset form reloading the page and dropping the token
+
+### Other
+
+- changelog for v0.1.36 [skip ci]
+- *(e2e)* fresh-start regression spec — the path the canary never walked
+
+
 ## [0.1.36](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.35...v0.1.36) - 2026-08-09
 
 ### Added

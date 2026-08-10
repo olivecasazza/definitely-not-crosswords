@@ -153,6 +153,14 @@ pub fn ResetPassword() -> Element {
             } else if !in_request {
                 form {
                     class: "auth-form",
+                    // Declarative, not just e.prevent_default() in the handler:
+                    // the handler's call lost the race against the browser's
+                    // native submit, which reloaded /auth/reset-password without
+                    // the ?token= (the inputs have no `name`, so it's dropped).
+                    // The page then remounted into request mode and the in-flight
+                    // resetPassword POST was cancelled — intermittently, so the
+                    // password sometimes changed and usually didn't.
+                    prevent_default: "onsubmit",
                     onsubmit: reset_submit,
                     div { class: "auth-group",
                         label { r#for: "new-password", class: "auth-label", "New Password" }
@@ -186,6 +194,7 @@ pub fn ResetPassword() -> Element {
             } else {
                 form {
                     class: "auth-form",
+                    prevent_default: "onsubmit",
                     onsubmit: request_submit,
                     p { class: "muted auth-note",
                         "Enter your email and we'll send you a link to choose a new password."

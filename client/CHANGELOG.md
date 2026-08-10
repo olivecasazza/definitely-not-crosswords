@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.39](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.38...v0.1.39) - 2026-08-10
+
+### Fixed
+
+- *(web)* cancel the reset form's native submit with a real DOM listener
+
+### Other
+
+- changelog for v0.1.38 [skip ci]
+
+
 ## [0.1.38](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.37...v0.1.38) - 2026-08-10
 
 ### Other

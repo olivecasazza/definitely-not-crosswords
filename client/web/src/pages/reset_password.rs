@@ -22,6 +22,27 @@ fn query_param(name: &str) -> Option<String> {
     })
 }
 
+/// Cancel a form's native submit with a real DOM listener.
+///
+/// Neither of Dioxus 0.6's mechanisms can do this: `e.prevent_default()` in the
+/// handler runs after the browser has already acted, and `prevent_default:
+/// "onsubmit"` renders `dioxus-prevent-default="onsubmit"` into the DOM but the
+/// 0.6 runtime ignores it. Both were verified failing against deployed staging
+/// in Chrome — the page navigated to `/auth/reset-password?` (a bare `?` is the
+/// tell: a GET submit with no named inputs), which drops the `?token=`,
+/// remounts the page into request mode, and cancels the in-flight POST.
+///
+/// ponytail: `forget()` leaks the closure. It's one per form mount on a page
+/// users hit once; a Closure stored in a signal and dropped on unmount is the
+/// upgrade if this pattern spreads.
+fn suppress_native_submit(el: &web_sys::Element) {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+    let cb = Closure::<dyn FnMut(web_sys::Event)>::new(|e: web_sys::Event| e.prevent_default());
+    let _ = el.add_event_listener_with_callback("submit", cb.as_ref().unchecked_ref());
+    cb.forget();
+}
+
 /// Does this `user.resetPassword` error mean the token itself is dead
 /// (invalid / expired / already used), as opposed to a transport failure?
 fn is_token_error(e: &str) -> bool {
@@ -153,14 +174,14 @@ pub fn ResetPassword() -> Element {
             } else if !in_request {
                 form {
                     class: "auth-form",
-                    // Declarative, not just e.prevent_default() in the handler:
-                    // the handler's call lost the race against the browser's
-                    // native submit, which reloaded /auth/reset-password without
-                    // the ?token= (the inputs have no `name`, so it's dropped).
-                    // The page then remounted into request mode and the in-flight
-                    // resetPassword POST was cancelled — intermittently, so the
-                    // password sometimes changed and usually didn't.
-                    prevent_default: "onsubmit",
+                    // Losing this listener means the browser reloads the route,
+                    // strips the ?token=, and cancels the POST — the password
+                    // silently doesn't change. See suppress_native_submit.
+                    onmounted: move |e: Event<MountedData>| {
+                        if let Some(el) = e.downcast::<web_sys::Element>() {
+                            suppress_native_submit(el);
+                        }
+                    },
                     onsubmit: reset_submit,
                     div { class: "auth-group",
                         label { r#for: "new-password", class: "auth-label", "New Password" }
@@ -194,7 +215,11 @@ pub fn ResetPassword() -> Element {
             } else {
                 form {
                     class: "auth-form",
-                    prevent_default: "onsubmit",
+                    onmounted: move |e: Event<MountedData>| {
+                        if let Some(el) = e.downcast::<web_sys::Element>() {
+                            suppress_native_submit(el);
+                        }
+                    },
                     onsubmit: request_submit,
                     p { class: "muted auth-note",
                         "Enter your email and we'll send you a link to choose a new password."

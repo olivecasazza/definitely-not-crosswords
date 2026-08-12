@@ -35,6 +35,7 @@ use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Clone)]
 struct AppState {
@@ -99,6 +100,19 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let events = EventBus::default();
+
+    // Reap orphaned generation jobs: one pass now (catches whatever the previous
+    // pod generation left behind), then every REAP_INTERVAL.
+    {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(REAP_INTERVAL);
+            loop {
+                tick.tick().await;
+                reap_stale_jobs(&pool).await;
+            }
+        });
+    }
 
     let mut app = Router::new()
         .route("/api/healthz", get(|| async { "ok" }))
@@ -179,6 +193,63 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("crossword-server listening on {addr}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// How long a job may sit QUEUED/RUNNING before the reaper treats its owner as
+/// gone. Observed generations finish in 60–120s, so 30 minutes is ~15x the
+/// worst case — and comfortably longer than a rolling update's two-pod overlap
+/// (replicas 1 + maxSurge 25% rounds up to 1 surge pod), so a booting pod can
+/// never reap the outgoing pod's in-flight job.
+const JOB_STALE_AFTER_MINS: i32 = 30;
+
+/// How often the reaper runs. `tokio::time::interval` fires its first tick
+/// immediately, so this doubles as the boot-time reconciliation pass.
+const REAP_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Fail generation jobs whose owner is gone.
+///
+/// Generation runs in-process: `create_job` writes the row as RUNNING and the
+/// same `run_generation` task is the only thing that ever writes a terminal
+/// status. So a row is orphaned whenever that task doesn't survive to the end —
+/// the client drops the subscription (`subscription.stop`, or just closing the
+/// tab, both of which used to `abort()` the task), the pod is replaced
+/// mid-generation, or the process is killed. Nothing revisited those rows, so
+/// they stayed RUNNING forever: prod displayed eight of them, stuck since
+/// 2026-05-29, for 74 days.
+///
+/// This is deliberately a sweep rather than a lease/heartbeat. There is exactly
+/// one writer per row and no work to hand off to anyone, so "stale means dead"
+/// is sound and needs no coordination, no extra columns, and no migration —
+/// including for the legacy rows predating `startedAt` (hence the COALESCE).
+///
+/// A reaped job that turns out to be alive is not a problem: the late task's
+/// `finalize_success` UPDATE is unconditional and simply overwrites FAILED with
+/// the real outcome, which is the answer we want.
+async fn reap_stale_jobs(pool: &PgPool) {
+    let res = sqlx::query(
+        r#"
+        UPDATE "CrosswordGenerationJob"
+           SET status = 'FAILED'::"GenerationStatus",
+               error = COALESCE(error, 'Interrupted: the generator stopped before this job finished.'),
+               "completedAt" = now(),
+               "updatedAt" = now()
+         WHERE status IN ('QUEUED', 'RUNNING')
+           AND COALESCE("startedAt", "createdAt") < now() - make_interval(mins => $1)
+        "#,
+    )
+    .bind(JOB_STALE_AFTER_MINS)
+    .execute(pool)
+    .await;
+
+    match res {
+        // Silent on the common no-op so this doesn't spam a log line every 5 min.
+        Ok(r) if r.rows_affected() > 0 => tracing::warn!(
+            "reaped {} generation job(s) still marked RUNNING after {JOB_STALE_AFTER_MINS}m",
+            r.rows_affected()
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::error!("generation job reaper failed: {e}"),
+    }
 }
 
 /// Batch-generate `count` published platform games under the Platform system
@@ -448,11 +519,19 @@ async fn handle_ws(socket: WebSocket, st: AppState, auth: AuthContext) {
                                 },
                             );
                             let pool = st.pool.clone();
-                            let handle = tokio::spawn(async move {
+                            // Detached on purpose — NOT tracked in `subs`. Every
+                            // other subscription is a pure event forwarder that's
+                            // safe to abort, but this one owns a database row it
+                            // must transition out of RUNNING. Aborting it on
+                            // `subscription.stop` or socket close (a closed tab, a
+                            // dropped network) stranded that row forever. Let it
+                            // run to completion instead; once the client is gone
+                            // `emit_ws` sends into a dropped receiver, which is
+                            // already ignored.
+                            tokio::spawn(async move {
                                 routers::generator::run_generation(pool, user, input, emit_ws)
                                     .await;
                             });
-                            subs.insert(id, handle);
                         }
                         Err(e) => {
                             let _ = tx.send(

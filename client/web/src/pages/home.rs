@@ -1,6 +1,6 @@
 //! Home: signed-out keeps the marketing Welcome + Get Started panels; signed-in
 //! is a "what do I play right now" dashboard — Play Now (resume + fresh
-//! puzzles), Pulse (career stat tiles), and a small demoted Brand panel.
+//! puzzles), Pulse (career stat tiles), and How to Play (a four-step tutorial).
 
 use crossword_core::fmt::{plural, rel_time};
 use dioxus::prelude::*;
@@ -56,26 +56,38 @@ impl PanelKind for GuestPanel {
     }
 }
 
-/// First-mount geometry, computed as viewport proportions (a saved layout
-/// always wins; panel-kit re-scales floating panels on window resize).
+/// First-mount geometry (a saved layout always wins; panel-kit re-scales
+/// floating panels on window resize). Heights are *content*-sized, not a
+/// viewport fraction: both panels hold a fixed block of copy, so stretching
+/// them to 55% of a tall screen only parks dead space under the last line.
 fn guest_layout() -> Vec<PanelWin<GuestPanel>> {
     let (vw, vh) = viewport();
     const GAP: f64 = 20.0;
     let welcome_w = (vw * 0.30).clamp(380.0, 620.0);
     let start_w = (vw * 0.20).clamp(280.0, 420.0);
-    let h = (vh * 0.55).clamp(420.0, 620.0);
+    // logo + title + tagline + four feature rows; two CTAs + footnote.
+    let welcome_h = 520.0_f64.min(vh - 2.0 * GAP);
+    let start_h = 250.0_f64.min(welcome_h);
     let x0 = ((vw - welcome_w - GAP - start_w) / 2.0).max(16.0);
-    let y0 = ((vh - h) / 2.0).max(16.0);
+    let y0 = ((vh - welcome_h) / 2.0).max(16.0);
     let mut b = LayoutBuilder::new();
     vec![
-        b.at(GuestPanel::Welcome, x0, y0, welcome_w, h),
-        b.at(GuestPanel::Start, x0 + welcome_w + GAP, y0, start_w, h),
+        b.at(GuestPanel::Welcome, x0, y0, welcome_w, welcome_h),
+        b.at(
+            GuestPanel::Start,
+            x0 + welcome_w + GAP,
+            y0,
+            start_w,
+            start_h,
+        ),
     ]
 }
 
 #[component]
 fn GuestHome() -> Element {
-    let ws = use_workspace("home_layout", guest_layout);
+    // "_v2": panel heights went content-sized — a persisted layout would keep
+    // the old viewport-fraction geometry forever.
+    let ws = use_workspace("home_layout_guest_v2", guest_layout);
     crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: GuestPanel, _max: bool| -> Element {
@@ -108,14 +120,14 @@ fn GuestHome() -> Element {
                                 p { class: "home-feature-title", "Stats & rankings" }
                                 p { class: "home-feature-desc", "Track solve times. Compare head-to-head. Climb." }
                             }
-                            // Pricing on the front door, visible without signing in.
-                            // Same literals as components/brand.rs — see README "Plans & pricing".
-                            div { class: "home-feature",
-                                span { class: "home-feature-icon", "★" }
-                                div { class: "home-feature-body",
-                                    p { class: "home-feature-title", "Free, or Pro for $10/year" }
-                                    p { class: "home-feature-desc", "Solving is always free; generate 5 puzzles a month and build teams of 4. Pro adds unlimited generation and teams of 10. Cancel anytime." }
-                                }
+                        }
+                        // Pricing on the front door, visible without signing in.
+                        // Same literals as components/brand.rs — see README "Plans & pricing".
+                        div { class: "home-feature",
+                            span { class: "home-feature-icon", "★" }
+                            div { class: "home-feature-body",
+                                p { class: "home-feature-title", "Free, or Pro for $10/year" }
+                                p { class: "home-feature-desc", "Solving is always free; generate 5 puzzles a month and build teams of 4. Pro adds unlimited generation and teams of 10. Cancel anytime." }
                             }
                         }
                     }
@@ -146,7 +158,7 @@ fn GuestHome() -> Element {
 }
 
 // ---------------------------------------------------------------------------
-// Signed-in: Play Now / Pulse / Brand dashboard
+// Signed-in: Play Now / Pulse / How to Play dashboard
 // ---------------------------------------------------------------------------
 
 /// Minimal projection of `gameList.get` items — only what Home renders. Same
@@ -265,7 +277,7 @@ struct PulseStats {
 enum Panel {
     PlayNow,
     Pulse,
-    Brand,
+    Learn,
 }
 
 impl PanelKind for Panel {
@@ -273,7 +285,7 @@ impl PanelKind for Panel {
         match self {
             Panel::PlayNow => "Play Now",
             Panel::Pulse => "Pulse",
-            Panel::Brand => "Welcome",
+            Panel::Learn => "How to Play",
         }
     }
 }
@@ -289,29 +301,33 @@ fn viewport() -> (f64, f64) {
         .unwrap_or((1440.0, 900.0))
 }
 
-/// First-mount geometry, viewport-proportional like the games library (a saved
-/// layout always wins). Vec order is also the mobile stacking order:
-/// Play Now → Pulse → Brand.
+/// First-mount geometry (a saved layout always wins). Vec order is also the
+/// mobile stacking order: Play Now → Pulse → How to Play.
+///
+/// Heights are content-sized rather than a viewport fraction. Pulse is a 2×2
+/// tile grid and How to Play is four fixed steps — sizing them off `vh` gave
+/// each panel two thirds of a tall screen and left most of it blank. Play Now
+/// then takes the height of the side column so the two columns line up.
 fn dash_layout() -> Vec<PanelWin<Panel>> {
     let (vw, vh) = viewport();
     const GAP: f64 = 16.0;
     let play_w = (vw * 0.52).clamp(460.0, 960.0);
     let side_w = (vw * 0.30).clamp(320.0, 520.0);
-    let h = (vh * 0.82).clamp(480.0, 1000.0);
-    let brand_h = (h * 0.26).clamp(170.0, 240.0);
-    let pulse_h = (h - brand_h - GAP).max(280.0);
+    let pulse_h = 320.0; // eyebrow + four stat tiles + "Full stats →"
+    let learn_h = 350.0; // eyebrow + four steps
+    let play_h = (pulse_h + GAP + learn_h).min(vh - 2.0 * GAP);
     let x0 = ((vw - play_w - GAP - side_w) / 2.0).max(16.0);
-    let y0 = ((vh - h) / 2.0).max(16.0);
+    let y0 = ((vh - play_h) / 2.0).max(16.0);
     let mut b = LayoutBuilder::new();
     vec![
-        b.at(Panel::PlayNow, x0, y0, play_w, h),
+        b.at(Panel::PlayNow, x0, y0, play_w, play_h),
         b.at(Panel::Pulse, x0 + play_w + GAP, y0, side_w, pulse_h),
         b.at(
-            Panel::Brand,
+            Panel::Learn,
             x0 + play_w + GAP,
             y0 + pulse_h + GAP,
             side_w,
-            brand_h,
+            learn_h,
         ),
     ]
 }
@@ -388,9 +404,10 @@ fn Dashboard() -> Element {
 
     let nav = use_navigator();
 
-    // "_v2": the panel set changed shape — don't let a persisted Welcome/Start
-    // layout fight the new defaults.
-    let ws = use_workspace("home_layout_v2", dash_layout);
+    // "_v3": the panel set changed shape again (Brand → Learn) and every
+    // height went content-sized — a persisted layout would keep the old
+    // viewport-fraction geometry forever.
+    let ws = use_workspace("home_layout_v3", dash_layout);
     crate::store::sync_panel_mode(ws.mode);
 
     let body = move |kind: Panel, _max: bool| -> Element {
@@ -579,14 +596,28 @@ fn Dashboard() -> Element {
                 }
             }
 
-            Panel::Brand => {
+            // A tutorial, not a splash: four steps that describe the actual
+            // game_play controls (clue select → letter boxes → Guess, Esc to
+            // clear). Deliberately no dismiss control — it's four lines, it
+            // costs nothing to leave up, and a hidden panel can't teach.
+            Panel::Learn => {
                 let name = user_name(&state);
                 rsx! {
-                    div { class: "home-brand",
-                        BrandLogo { size: 44 }
-                        p { class: "home-brand-greet", "Welcome back, {name}" }
-                        p { class: "home-brand-tag",
-                            "Cooperative, real-time crosswords — race the grid with friends."
+                    div { class: "home-learn",
+                        div { class: "home-head",
+                            span { class: "home-eyebrow", "HOW TO PLAY" }
+                            span { class: "home-learn-greet", "Hi, {name}" }
+                        }
+                        ol { class: "home-steps",
+                            for (n , title , desc) in STEPS {
+                                li { key: "{n}", class: "home-step",
+                                    span { class: "home-step-n", "{n}" }
+                                    div { class: "home-step-body",
+                                        p { class: "home-step-title", "{title}" }
+                                        p { class: "home-step-desc", "{desc}" }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -607,6 +638,31 @@ fn Dashboard() -> Element {
         }
     }
 }
+
+/// The How to Play steps. Kept in sync by hand with `pages/game_play.rs` —
+/// the Clues/Active Clue panels and `render_clue`'s Guess + "ESC to clear".
+const STEPS: [(u8, &str, &str); 4] = [
+    (
+        1,
+        "Pick a clue",
+        "Click a clue in the Clues panel, or click any cell on the board. The word you're on highlights across the grid.",
+    ),
+    (
+        2,
+        "Type the answer",
+        "Letters go into the boxes in the Active Clue panel. Typing advances automatically; Esc clears the selection.",
+    ),
+    (
+        3,
+        "Guess to lock it in",
+        "Hit Guess. Correct words stay on the board and score; wrong ones clear so someone else can try.",
+    ),
+    (
+        4,
+        "Solve together",
+        "Share the invite link. Everyone sees the grid live, and a coloured border shows which clue each player is on.",
+    ),
+];
 
 fn user_name(state: &crate::store::AppState) -> String {
     state
@@ -708,12 +764,21 @@ const HOME_DASH_CSS: &str = "
 .home-pulse-empty p { margin: 0; font-size: var(--fs-xs); color: var(--text-secondary);
   line-height: 1.5; }
 
-.home-brand { height: 100%; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; text-align: center; gap: .6rem; padding: 1.25rem 1rem; }
-.home-brand-greet { margin: 0; font-family: var(--mono, monospace); font-size: var(--fs-md);
-  font-weight: 800; color: var(--text-primary); }
-.home-brand-tag { margin: 0; font-size: var(--fs-2xs); color: var(--text-secondary);
-  line-height: 1.5; }
+.home-learn { height: 100%; display: flex; flex-direction: column; overflow-y: auto; }
+.home-learn-greet { margin-left: auto; font-family: var(--mono, monospace);
+  font-size: var(--fs-2xs); color: var(--text-secondary); }
+.home-steps { margin: 0; padding: 0 1rem 1rem; list-style: none; display: flex;
+  flex-direction: column; gap: .55rem; }
+.home-step { display: flex; align-items: flex-start; gap: .6rem; }
+/* Square step marker (house style: no radius anywhere). */
+.home-step-n { flex-shrink: 0; width: 1.25rem; height: 1.25rem; display: flex;
+  align-items: center; justify-content: center; border: 1px solid var(--border-app);
+  font-family: var(--mono, monospace); font-size: var(--fs-2xs); font-weight: 700;
+  color: var(--text-secondary); }
+.home-step-body { flex: 1; min-width: 0; }
+.home-step-title { margin: 0; font-size: var(--fs-xs); font-weight: 700; color: var(--text-primary); }
+.home-step-desc { margin: .15rem 0 0; font-size: var(--fs-2xs); color: var(--text-secondary);
+  line-height: 1.45; }
 
 @media (max-width: 760px) {
   /* Comfortable tap targets; no hover-stick on touch. */

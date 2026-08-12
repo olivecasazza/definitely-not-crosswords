@@ -97,9 +97,7 @@ pub fn rank_badge_style(index: usize) -> &'static str {
     match index {
         0 => "background: var(--pastel-yellow); color: var(--contrast-ink); border-color: var(--pastel-yellow);",
         1 => "background: var(--podium-silver); color: var(--contrast-ink); border-color: var(--podium-silver);",
-        // Bronze keeps a fixed near-white ink — a theme-flipping colour would go
-        // dark-on-dark-orange in light mode.
-        2 => "background: var(--podium-bronze); color: #f8fafc; border-color: var(--podium-bronze);",
+        2 => "background: var(--podium-bronze); color: var(--contrast-ink); border-color: var(--podium-bronze);",
         _ => "background: var(--bg-cell-empty); color: var(--text-secondary); border-color: var(--border-app);",
     }
 }

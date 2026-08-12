@@ -1,6 +1,8 @@
 //! App design tokens, ported from `assets/css/tailwind.css`. Injected once at
-//! the app root, layered after `panel_kit::CSS`. The `.light` class on
+//! the app root, layered after `panel_kit::CSS`. The `.light-mode` class on
 //! `<html>` flips the theme (toggled by the header, persisted to localStorage).
+//! Not `.light` — panel-kit owns that for its traffic-light dots; see
+//! `main::set_light_class`.
 //!
 //! The second block remaps panel-kit's own variables onto these tokens so the
 //! panel chrome on the play screen matches the rest of the app.
@@ -27,11 +29,42 @@ pub const DESIGN: &str = r#"
 
   /* Palette tokens: dark ink for text on pastel fills, plus podium metals. */
   --contrast-ink: #0f172a;
+  /* Selection fills: the solid backgrounds that mark a *state* — the focused
+     crossword cell, the active Clues direction tab. Their meaning is read off
+     relative brightness inside a set of siblings (the other cells, the other
+     tab), so these have to stay PALE with DARK ink in BOTH themes; --pastel-*
+     + --contrast-ink cannot, because light mode darkens the pastels and flips
+     the ink to white, which puts the darkest thing on the page exactly where
+     the lightest one belongs. Literal hex on purpose, not `var(--pastel-*)` /
+     `var(--contrast-ink)` aliases: custom properties resolve at use time, so an
+     alias would inherit the .light-mode flip and reintroduce the inversion.
+     Dark keeps today's values; the ink is dark in both themes so it is only
+     declared here. Borders stay --pastel-*, which is what outlines these
+     fills once it darkens in light mode. */
+  --fill-yellow: #feea99;
+  --fill-green: #a8e6cf;
+  --fill-ink: #0f172a;
   --podium-silver: #cbd5e1;
   --podium-bronze: #d97706;
   /* Modal/overlay scrim — deliberately theme-fixed: a dark veil reads
      correctly over both themes. */
   --scrim: rgba(0, 0, 0, .5);
+
+  /* Elevation. panel-kit hardcodes black shadows on `.panel` (#0007) and
+     `.tip-overlay` (#000c) that no variable reaches; the two rules near the
+     bottom of this sheet re-declare them against these vars so the shadow can
+     be retuned per theme instead of being tuned once for a near-black page.
+     Dark keeps panel-kit's original look: a wide, heavy diffusion. */
+  --shadow-panel: 0 6px 24px rgba(0, 0, 0, .45);
+  --shadow-pop: 0 10px 30px rgba(0, 0, 0, .75);
+
+  /* Co-op presence rings on the board (game_play.rs REMOTE_COLORS). Hue-
+     distinct from each other and from --pastel-yellow, which the local
+     player owns. */
+  --presence-1: #a8e6cf;
+  --presence-2: #a8c8f0;
+  --presence-3: #d0b8f0;
+  --presence-4: #f0b8d0;
 
   /* App fonts. --mono is defined in the panel-kit remap block below. */
   --font-sans: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -46,15 +79,84 @@ pub const DESIGN: &str = r#"
   --fs-xl: 1.5rem;
   --fs-2xl: 2rem;
 }
+/* Light palette. Two things it has to get right that a naive lightening misses.
+
+   ELEVATION DIRECTION. In dark, the card sits *above* the page (#18181b on
+   #121212). The old light values had it backwards — a #f4f4f5 card on a pure
+   #ffffff page — so panels read as dents, and the drop shadow had nothing but
+   pure white to fall on, which is exactly what makes it look like a grey
+   smudge. Here the page is the grey one and the card is the bright one, so
+   elevation runs the same way in both themes.
+
+   PASTEL DUTY. The --pastel-* tokens do double duty: as fills (with
+   --contrast-ink on top) and as raw text/border colours. Tuned against black,
+   they land at 1.2–2.2:1 on white — the yellow brand mark, every accent label,
+   and panel-kit's whole --accent chain (.skeleton, .spin-label, .ide-lang,
+   .snap-toggle.on, .panel-loading-fill) were effectively invisible. So light
+   mode darkens the pastels and flips --contrast-ink to white. That keeps both
+   duties legible from one place, without touching ~40 call sites. */
 .light-mode {
-  --bg-app: #ffffff;
-  --bg-card: #f4f4f5;
-  --bg-cell-empty: #e4e4e7;
-  --bg-cell-letter: #eaeaea;
-  --text-primary: #18181b;
-  --text-secondary: #71717a;
-  --border-app: #e4e4e7;
-  --border-hover: #d4d4d8;
+  /* Four surfaces, ordered the same way dark orders them: recessed cell <
+     page < card < raised cell. The card is deliberately held off pure white
+     so --bg-cell-letter has somewhere brighter to go — it is the `:hover` fill
+     for .game-row and the games/home lists, and a hover that brightens matches
+     dark (#202024 over #18181b). */
+  --bg-app: #ededf0;         /* page/workspace — the grey one */
+  --bg-card: #f7f7f8;        /* panel + card surface, raised above the page */
+  --bg-cell-empty: #dcdce0;  /* recessed: input fills, blocked cells, tracks */
+  --bg-cell-letter: #ffffff; /* raised: filled crossword cell, row hover, badge */
+  --text-primary: #18181b;   /* 16.6:1 on --bg-card */
+  /* was #71717a — 4.40:1 on a card, i.e. below AA for body text, the .app-btn
+     label and every panel-kit --dim consumer. #52525b restores the ~7.2:1 that
+     dark mode's secondary text already had. */
+  --text-secondary: #52525b;
+  /* was #e4e4e7 / #d4d4d8 — 1.27:1 and 1.48:1, near enough to invisible. These
+     draw every card, button, input, tab and panel edge in a UI made entirely of
+     boxes, so they carry the component boundary and need WCAG's 3:1 for one.
+     (--border-hover also paints panel-kit's .dock-empty text and .resize grip.) */
+  --border-app: #8a8a93;
+  --border-hover: #5c5c66;
+  /* Darkened per the note above: ≥4.8:1 as text on --bg-cell-empty (the least
+     forgiving surface they land on) and ≥6.1:1 on the card. Hue is preserved,
+     but a yellow that clears 4.5:1 on white is necessarily a dark amber. */
+  --pastel-red: #b02a20;
+  --pastel-green: #0d6a4e;
+  --pastel-yellow: #775600;
+  /* Ink on a pastel fill inverts along with the pastels — white, ≥5.1:1 against
+     every fill above and against both podium metals. Every call site pairs it
+     with a solid --pastel or --color fill, never a color-mix tint, so the flip
+     is safe. */
+  --contrast-ink: #ffffff;
+  /* The selection fills do NOT follow the pastels down — see :root for why.
+     Deepened a shade from dark's values so they still register against a
+     near-white board: #ffe066 is 13.7:1 under --fill-ink, sits above the
+     .cw-selected tint (L .755 vs .703) and the recessed --bg-cell-empty
+     (.718), and separates from a filled white cell by chroma (ΔE76 63) since
+     nothing can be brighter than #ffffff. #8fdcbf is 11.2:1 under the ink. */
+  --fill-yellow: #ffe066;
+  --fill-green: #8fdcbf;
+  /* Podium metals matched to the same bar: silver was 1.48:1 on white, and
+     bronze takes --contrast-ink like the gold/silver places beside it
+     (components/ui.rs, pages/stats.rs), so the fill has to be dark enough to
+     hold white text here. */
+  --podium-silver: #5b6a80;
+  --podium-bronze: #96560a;
+  /* Shadows retuned for a light field. Dark's wide 24px/45%-black diffusion
+     turns into a dirty grey haze on a pale surface, so: alpha drops by ~6x,
+     blur tightens, the offset stays small and downward, and the tint is
+     --text-primary's cool near-black rather than pure black. Two layers — a
+     1px contact edge plus a soft ambient — read as a lifted sheet of paper
+     instead of a blur. */
+  --shadow-panel: 0 1px 1px rgba(24, 24, 27, .06), 0 3px 10px rgba(24, 24, 27, .07);
+  --shadow-pop: 0 1px 2px rgba(24, 24, 27, .08), 0 6px 18px rgba(24, 24, 27, .12);
+  /* Presence rings darkened on the same bar as the pastels: ≥4.4:1 against
+     --bg-cell-empty (a blocked/unfilled cell, the least forgiving surface a
+     ring lands on) and ≥6.1:1 against a filled white one. Hues held apart so
+     four collaborators stay tellable. */
+  --presence-1: #0d6a4e;
+  --presence-2: #1a5fa8;
+  --presence-3: #6b3fa0;
+  --presence-4: #a8386b;
 }
 
 /* Map ALL of panel-kit's theme variables onto the app tokens so the panel
@@ -87,6 +189,18 @@ pub const DESIGN: &str = r#"
    leaderboard) scrolls inside the panel body instead of growing the panel and
    pushing the page. (Mobile keeps its stacked, page-scrolling behavior.) */
 .ws-root:not(.mobile) .ws.tiling .panel { max-height: 100%; }
+
+/* panel-kit hardcodes its drop shadows in literal black, which no theme
+   variable reaches, so the panel chrome kept a shadow tuned for a near-black
+   workspace even in light mode. main.rs injects DESIGN *after* panel_kit::CSS,
+   so these equal-specificity re-declarations win the cascade — cheaper and
+   safer than forking a crate with other consumers. Only the shadow (and the
+   tooltip's surface) is restated; all geometry stays panel-kit's. */
+.panel { box-shadow: var(--shadow-panel); }
+/* .tip-overlay also hardcodes `background:#0d0d0d` while inheriting `color`
+   from --fg. In light mode that is near-black text on a near-black card, i.e.
+   an unreadable tooltip; pin it to the themed surface instead. */
+.tip-overlay { background: var(--panel); color: var(--fg); box-shadow: var(--shadow-pop); }
 
 * { box-sizing: border-box; }
 body {
@@ -156,7 +270,10 @@ a { color: inherit; text-decoration: none; }
   text-transform: uppercase; letter-spacing: .05em; transition: color .15s ease, background .15s ease; }
 .section-tab:hover { color: var(--text-primary); }
 .section-tab + .section-tab { border-left: 1px solid var(--border-app); }
-.section-tab-active, .section-tab-active:hover { background: var(--pastel-yellow); color: var(--contrast-ink); }
+/* Active tab is a selection fill, not an accent fill — same reason as
+   .cw-focused: its meaning is "brighter than its siblings", so it takes
+   --fill-yellow/--fill-ink rather than the pastel, which inverts in light. */
+.section-tab-active, .section-tab-active:hover { background: var(--fill-yellow); color: var(--fill-ink); }
 @media (max-width: 760px) { .section-tabs { width: 100%; display: flex; } .section-tab { flex: 1 1 0; } }
 
 .rank-badge { width: 2rem; height: 2rem; border: 1px solid; font-weight: 700;

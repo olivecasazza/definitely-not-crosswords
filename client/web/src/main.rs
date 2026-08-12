@@ -84,7 +84,7 @@ fn main() {
 #[component]
 fn App() -> Element {
     provide_app_state();
-    // Theme: `.light` on <html>, persisted to localStorage (ported from app.vue).
+    // Theme: `.light-mode` on <html>, persisted to localStorage (ported from app.vue).
     use_hook(|| {
         let light = LocalStorage::get::<String>("theme")
             .map(|t| t == "light")
@@ -137,7 +137,7 @@ fn NotFound(segments: Vec<String>) -> Element {
     }
 }
 
-/// Toggle the `.light` class on `<html>` and persist. Shared by the header.
+/// Toggle the `.light-mode` class on `<html>` and persist. Shared by the header.
 pub fn set_light_class(light: bool) {
     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
         if let Some(html) = doc.document_element() {

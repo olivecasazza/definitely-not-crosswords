@@ -87,11 +87,19 @@ struct RemoteSelection {
 /// Presence entries older than this many seconds stop rendering.
 const PRESENCE_TTL_SECS: u64 = 45;
 
-/// Presence palette — pastel tones matching the design tokens. Yellow is
-/// reserved for the local player (matches the existing selection styling),
-/// red stays exclusive to incorrect guesses.
-const SELF_COLOR: &str = "#feea99";
-const REMOTE_COLORS: [&str; 4] = ["#a8e6cf", "#a8c8f0", "#d0b8f0", "#f0b8d0"];
+/// Presence palette. These land in a `box-shadow: inset 0 0 0 2px …` ring on
+/// the board cell, so they are `var()` references rather than literals — the
+/// dark pastels sit at ~1.3:1 on a light cell, i.e. an invisible ring. The
+/// per-theme values live in `styles.rs`. Yellow is reserved for the local
+/// player (matching the existing selection styling); red stays exclusive to
+/// incorrect guesses.
+const SELF_COLOR: &str = "var(--pastel-yellow)";
+const REMOTE_COLORS: [&str; 4] = [
+    "var(--presence-1)",
+    "var(--presence-2)",
+    "var(--presence-3)",
+    "var(--presence-4)",
+];
 
 /// Deterministic per-player color: remote players hash into the palette.
 fn player_color(user_id: &str, my_id: Option<&str>) -> String {
@@ -194,10 +202,17 @@ impl panel_kit::PanelKind for PanelId {
 fn default_layout() -> Vec<panel_kit::PanelWin<PanelId>> {
     let (vw, vh) = viewport();
     const M: f64 = 16.0; // workspace margin / inter-panel gap
+    const CHROME: f64 = 34.0; // panel border + the inset title row
+    const PLAYERS_H: f64 = 46.0; // `.cw-players` strip above the board
     let left_w = (vw * 0.34).clamp(360.0, 760.0);
     let usable_h = vh - 3.0 * M;
-    let board_h = (usable_h * 0.68).max(280.0);
-    let clue_h = (usable_h - board_h).max(160.0);
+    // The grid is square — `.cw-board-area` centres it and caps it at the
+    // smaller axis — so board height follows *width*. Taking a fraction of
+    // the viewport instead just parked dead space above and below the grid.
+    let board_h = (left_w + PLAYERS_H + CHROME).min(usable_h * 0.72);
+    // Active Clue is a clue line plus one row of letter boxes; it never needs
+    // whatever the board happens to leave over.
+    let clue_h = (usable_h - board_h).clamp(160.0, 280.0);
     let mut b = panel_kit::LayoutBuilder::new();
     vec![
         b.at(PanelId::Board, M, M, left_w, board_h),
@@ -890,7 +905,9 @@ pub fn GamePlay(id: String) -> Element {
 
 /// `use_workspace` with a stable storage key for this screen.
 fn use_workspace_local() -> panel_kit::Workspace<PanelId> {
-    panel_kit::use_workspace("crossword_game_play", default_layout)
+    // "_v2": board/clue heights went content-sized — a persisted layout would
+    // keep the old viewport-fraction geometry forever.
+    panel_kit::use_workspace("crossword_game_play_v2", default_layout)
 }
 
 // ---------------------------------------------------------------------------
@@ -1340,7 +1357,15 @@ const GAME_CSS: &str = r#"
 .cw-block { background: var(--bg-cell-empty); border: 1px solid color-mix(in srgb, var(--border-app) 25%, transparent); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
 .cw-letter:hover { border-color: var(--border-hover); }
-.cw-focused { background: var(--pastel-yellow); color: var(--contrast-ink); border: 1px solid var(--pastel-yellow); transform: scale(1.05); z-index: 2; }
+/* The cursor. --fill-yellow/--fill-ink rather than --pastel-yellow/
+   --contrast-ink: this cell is the brightest thing in the grid and that IS the
+   signal, but light mode darkens the pastels and flips the ink white, which
+   would make the one cell the player is looking at a black hole among white
+   ones. The fill tokens stay pale with dark ink in both themes (styles.rs); the
+   border keeps --pastel-yellow, dark in light mode, so the fill is outlined.
+   .cw-selected below is the rest of the word — a 18% tint of the same yellow,
+   so it tracks the theme on its own and needs no fill token. */
+.cw-focused { background: var(--fill-yellow); color: var(--fill-ink); border: 1px solid var(--pastel-yellow); transform: scale(1.05); z-index: 2; }
 .cw-selected { background: color-mix(in srgb, var(--pastel-yellow) 18%, transparent); color: var(--text-primary); border: 1px solid var(--pastel-yellow); }
 .cw-placeholder { border: 2px solid var(--pastel-yellow); }
 .cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 15%, transparent); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
@@ -1366,7 +1391,11 @@ const GAME_CSS: &str = r#"
 .cw-letters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 4px 0; }
 .cw-letter-input { width: 40px; height: 40px; text-align: center; font-size: 18px; font-weight: 700; text-transform: uppercase; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-primary); }
 .cw-letter-input:hover { border-color: var(--border-hover); }
-.cw-input-focused { border-color: var(--pastel-yellow); box-shadow: 0 0 12px color-mix(in srgb, var(--pastel-yellow) 25%, transparent); }
+/* Focus ring, not a glow: the old `0 0 12px` bloom only reads as light against
+   a dark page — on the light theme it smears into a muddy halo around the box.
+   A hard 2px ring at higher alpha is crisper and carries the same signal in
+   both themes, and squares off with the input instead of feathering. */
+.cw-input-focused { border-color: var(--pastel-yellow); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pastel-yellow) 35%, transparent); }
 .cw-clue-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: auto; }
 .cw-btn-cancel { font-family: var(--font-sans); padding: 8px 16px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; }
 .cw-btn-cancel:hover { color: var(--text-primary); border-color: var(--border-hover); }
@@ -1378,8 +1407,12 @@ const GAME_CSS: &str = r#"
 .cw-tabs { display: flex; gap: 4px; }
 .cw-tab { font-family: var(--font-sans); padding: 4px 12px; font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; }
 .cw-tab:hover { border-color: var(--border-hover); }
-.cw-tab-active-across { background: var(--pastel-yellow); color: var(--contrast-ink); border-color: var(--pastel-yellow); font-weight: 700; }
-.cw-tab-active-down { background: var(--pastel-green); color: var(--contrast-ink); border-color: var(--pastel-green); font-weight: 700; }
+/* Active direction tab: same reasoning as .cw-focused. "Active" is read against
+   the other tab, so the filled one has to be the lighter of the pair in both
+   themes — with --pastel-* it became the darkest chip on a pale panel. Fill and
+   ink come from the theme-stable tokens, the border still carries the hue. */
+.cw-tab-active-across { background: var(--fill-yellow); color: var(--fill-ink); border-color: var(--pastel-yellow); font-weight: 700; }
+.cw-tab-active-down { background: var(--fill-green); color: var(--fill-ink); border-color: var(--pastel-green); font-weight: 700; }
 .cw-clue-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
 .cw-clue-row { display: flex; gap: 10px; padding: 10px; border-radius: 0; border: 1px solid var(--border-app); cursor: pointer; }
 .cw-clue-row:hover { border-color: var(--border-hover); }

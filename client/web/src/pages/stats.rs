@@ -574,9 +574,7 @@ pub fn Stats() -> Element {
                                             // 3rd
                                             if entries.len() >= 3 {
                                                 div { class: "app-card st-podium-card",
-                                                    // Bronze keeps a fixed near-white ink — a theme-flipping colour would
-                                                // go dark-on-dark-orange in light mode (matches components/ui.rs).
-                                                div { class: "st-podium-badge", style: "background: var(--podium-bronze); color: #f8fafc; border-color: var(--podium-bronze);", "3" }
+                                                    div { class: "st-podium-badge", style: "background: var(--podium-bronze); color: var(--contrast-ink); border-color: var(--podium-bronze);", "3" }
                                                     span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary);", "{entries[2].name}" }
                                                     span { style: "font-size: .625rem; color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[2].total_score} pts" }
                                                     span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "{entries[2].games_played} games · {entries[2].accuracy}% Acc" }

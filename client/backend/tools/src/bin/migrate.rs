@@ -3,13 +3,23 @@
 //!
 //! Safe to run on every deploy:
 //! - Fresh DB → applies all migrations from scratch.
-//! - DB that already has the schema but no sqlx history (the one-time Prisma→sqlx
-//!   handover) → ADOPTS it: baselines the current migrations as already-applied so
-//!   we don't try to re-create existing tables, then applies nothing.
 //! - Thereafter → applies only the new (not-yet-applied) migrations.
+//!
+//! There used to be a third mode here: a one-time Prisma→sqlx "adoption" that,
+//! on a database with an app schema but no `_sqlx_migrations`, baselined every
+//! migration the binary knew about as already-applied. It has been removed — see
+//! `migrations/20260812000000_repair_adopted_schema_drift.sql` for why. It
+//! marked migrations applied without running or verifying them, so when the
+//! sqlx migrations directory had drifted ahead of what Prisma had actually
+//! applied, the extra migrations were silently swallowed and could never be
+//! replayed. That cost production `User."vipPass"` and the whole `Discount`
+//! table. Both live databases were adopted long ago and now carry a real
+//! `_sqlx_migrations` history, so the path is dead weight that can only cause
+//! that class of corruption again. A resurrected pre-sqlx database should fail
+//! loudly on `CREATE TABLE ... already exists` rather than be baselined blind.
 
 use anyhow::Context;
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::postgres::PgPoolOptions;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,8 +36,6 @@ async fn main() -> anyhow::Result<()> {
     let migrator = sqlx::migrate!("./migrations");
     let total = migrator.iter().count();
 
-    adopt_existing_schema_if_needed(&pool, &migrator).await?;
-
     migrator
         .run(&pool)
         .await
@@ -36,67 +44,5 @@ async fn main() -> anyhow::Result<()> {
     pool.close().await;
 
     println!("Migrations OK: {total} migrations tracked; new ones applied, existing ones skipped.");
-    Ok(())
-}
-
-/// One-time adoption of a database whose schema predates sqlx (it was created by
-/// Prisma). If the app schema exists (the `User` table) but sqlx's tracking table
-/// does not, mark every current migration as already-applied — with the embedded
-/// checksums, so `migrator.run` then treats them as done. No-op once adopted, and
-/// skipped entirely on a fresh database (so it migrates from scratch).
-async fn adopt_existing_schema_if_needed(
-    pool: &PgPool,
-    migrator: &sqlx::migrate::Migrator,
-) -> anyhow::Result<()> {
-    let has_sqlx_history: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_name = '_sqlx_migrations')",
-    )
-    .fetch_one(pool)
-    .await?;
-    let has_app_schema: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_name = 'User')",
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if has_sqlx_history || !has_app_schema {
-        return Ok(()); // already adopted, or a fresh DB → normal migrate path
-    }
-
-    eprintln!(
-        "adopting existing (pre-sqlx) schema: baselining {} migrations as applied",
-        migrator.iter().count()
-    );
-
-    // sqlx's own tracking-table layout (sqlx 0.8, Postgres).
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS _sqlx_migrations (
-            version BIGINT PRIMARY KEY,
-            description TEXT NOT NULL,
-            installed_on TIMESTAMPTZ NOT NULL DEFAULT now(),
-            success BOOLEAN NOT NULL,
-            checksum BYTEA NOT NULL,
-            execution_time BIGINT NOT NULL
-        )"#,
-    )
-    .execute(pool)
-    .await?;
-
-    for m in migrator.iter() {
-        sqlx::query(
-            r#"INSERT INTO _sqlx_migrations
-               (version, description, installed_on, success, checksum, execution_time)
-               VALUES ($1, $2, now(), true, $3, 0)
-               ON CONFLICT (version) DO NOTHING"#,
-        )
-        .bind(m.version)
-        .bind(m.description.as_ref())
-        .bind(m.checksum.as_ref())
-        .execute(pool)
-        .await?;
-    }
-
     Ok(())
 }

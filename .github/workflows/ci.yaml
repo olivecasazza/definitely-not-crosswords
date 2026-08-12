@@ -50,10 +50,112 @@ jobs:
             ./client#crossword-desktop \
             ./client#crossword-tools
 
+  # Migrations are applied by the `migrate-db` init container at pod start, so
+  # before this job the FIRST place any migration ever ran was a real database.
+  # That is how prod silently lost `User."vipPass"` and the whole `Discount`
+  # table for six weeks (see migrations/20260812000000_repair_adopted_schema_drift).
+  # Everything here runs against a throwaway Postgres; nothing touches a real one.
+  migrations:
+    name: Migrations Apply Cleanly
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: [ '5432:5432' ]
+        # Don't start the job until the server actually accepts connections.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build the migrate binary
+        run: |
+          nix build --option allow-import-from-derivation true -L ./client#crossword-tools
+
+      # 1. Fresh database → every migration must apply from scratch. Catches
+      #    syntax errors, bad ordering, and SQL that only works on a DB that
+      #    already happens to have the objects.
+      - name: Apply migrations to an empty database
+        run: ./result/bin/migrate
+
+      - name: Every migration ran, and none was merely marked applied
+        run: |
+          set -euo pipefail
+          files=$(ls client/backend/tools/migrations/*.sql | wc -l)
+          applied=$(psql "$DATABASE_URL" -At -c 'select count(*) from _sqlx_migrations')
+          echo "migration files: $files / applied: $applied"
+          if [ "$files" -ne "$applied" ]; then
+            echo "::error::$files migration files but $applied applied rows"
+            exit 1
+          fi
+          # The signature of the 2026-06-30 corruption: a row inserted by a
+          # baseline rather than by an actual run. Nothing may ever be recorded
+          # as applied without having executed.
+          baselined=$(psql "$DATABASE_URL" -At -c \
+            'select count(*) from _sqlx_migrations where execution_time = 0')
+          if [ "$baselined" -ne 0 ]; then
+            echo "::error::$baselined migration(s) recorded with execution_time=0 (marked applied without running)"
+            psql "$DATABASE_URL" -c \
+              'select version, description from _sqlx_migrations where execution_time = 0'
+            exit 1
+          fi
+          failed=$(psql "$DATABASE_URL" -At -c \
+            'select count(*) from _sqlx_migrations where success is not true')
+          [ "$failed" -eq 0 ] || { echo "::error::$failed migration(s) recorded as failed"; exit 1; }
+
+      # 2. Re-running must be a clean no-op. The init container runs `migrate` on
+      #    EVERY pod start, so a non-idempotent migration breaks the next rollout,
+      #    not the one that introduced it.
+      - name: Re-run is a no-op
+        run: |
+          set -euo pipefail
+          before=$(psql "$DATABASE_URL" -At -c 'select count(*) from _sqlx_migrations')
+          ./result/bin/migrate
+          after=$(psql "$DATABASE_URL" -At -c 'select count(*) from _sqlx_migrations')
+          [ "$before" = "$after" ] || { echo "::error::rerun changed applied count $before -> $after"; exit 1; }
+
+      # 3. The objects prod actually lost. A migration can apply "successfully"
+      #    and still leave the schema wrong — this asserts the end state, which
+      #    is the only thing the application cares about.
+      - name: Schema contains what the app queries
+        run: |
+          set -euo pipefail
+          check() {
+            got=$(psql "$DATABASE_URL" -At -c "$2")
+            [ "$got" = "t" ] || { echo "::error::missing $1"; exit 1; }
+            echo "ok  $1"
+          }
+          check 'User."vipPass"' \
+            "select exists(select 1 from information_schema.columns where table_name='User' and column_name='vipPass')"
+          check 'Discount table' \
+            "select exists(select 1 from information_schema.tables where table_name='Discount')"
+          check 'Team table' \
+            "select exists(select 1 from information_schema.tables where table_name='Team')"
+          check 'DailyPick table' \
+            "select exists(select 1 from information_schema.tables where table_name='DailyPick')"
+
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: checks
+    needs: [ checks, migrations ]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4

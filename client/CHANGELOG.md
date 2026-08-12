@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.40](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.39...v0.1.40) - 2026-08-12
+
+### Fixed
+
+- *(web)* content-size panels, add a How to Play tutorial, repair light theme
+- *(db)* repair prod schema drift and delete the adoption path
+- *(server)* reap generation jobs whose owner is gone
+
+### Other
+
+- changelog for v0.1.39 [skip ci]
+- apply migrations to a throwaway postgres before shipping
+
+
 ## [0.1.39](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.38...v0.1.39) - 2026-08-10
 
 ### Fixed

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.41](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.40...v0.1.41) - 2026-08-16
+
+### Added
+
+- *(chart)* optional Kueue queueing for the game-seed CronJob
+
+### Other
+
+- changelog for v0.1.40 [skip ci]
+
+### Performance
+
+- *(server)* batch candidate embedding through the ONNX session
+
+
 ## [0.1.40](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.39...v0.1.40) - 2026-08-12
 
 ### Fixed

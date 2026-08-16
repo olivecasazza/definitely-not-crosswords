@@ -144,6 +144,19 @@ gameSeed:
   count: 5
   topics: "animals,science,music,history,food,sports,geography,movies,space,nature"
 
+# Kueue integration — applies ONLY to the gameSeed batch CronJob; the web
+# Deployment is never queue-managed. When queueName is set, seed Jobs are
+# created with spec.suspend=true and the kueue.x-k8s.io/queue-name label, so
+# Kueue admits them against the LocalQueue's quota and unsuspends on admission.
+# Requires a cluster running Kueue with the batch/job integration.
+kueue:
+  # Name of the LocalQueue in the release namespace. "" disables Kueue entirely
+  # (default — Jobs schedule directly, exactly as before this knob existed).
+  queueName: ""
+  # Optional WorkloadPriorityClass name, emitted as the
+  # kueue.x-k8s.io/priority-class label. Ignored unless queueName is set.
+  priorityClass: ""
+
 # Database Configuration (PostgreSQL)
 database:
   migrations:

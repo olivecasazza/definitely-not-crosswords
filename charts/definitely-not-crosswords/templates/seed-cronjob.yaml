@@ -14,7 +14,20 @@ spec:
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 2
   jobTemplate:
+    {{- if .Values.kueue.queueName }}
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: {{ .Values.kueue.queueName | quote }}
+        {{- with .Values.kueue.priorityClass }}
+        kueue.x-k8s.io/priority-class: {{ . | quote }}
+        {{- end }}
+    {{- end }}
     spec:
+      {{- if .Values.kueue.queueName }}
+      # Created suspended: Kueue admits the Job against the LocalQueue's quota
+      # and flips suspend off. Without this, the Job would race admission.
+      suspend: true
+      {{- end }}
       backoffLimit: 1
       template:
         metadata:

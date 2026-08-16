@@ -755,7 +755,7 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crossword-auth"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -771,7 +771,7 @@ dependencies = [
 
 [[package]]
 name = "crossword-core"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "serde",
  "serde_json",
@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "crossword-db"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "serde",
  "serde_json",
@@ -788,7 +788,7 @@ dependencies = [
 
 [[package]]
 name = "crossword-desktop"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "tauri",
  "tauri-build",
@@ -796,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "crossword-events"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "crossword-db",
  "tokio",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "crossword-server"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "anyhow",
  "axum",
@@ -836,7 +836,7 @@ dependencies = [
 
 [[package]]
 name = "crossword-tools"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "anyhow",
  "hex",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "crossword-web"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "crossword-core",
  "dioxus",

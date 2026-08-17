@@ -1,10 +1,7 @@
 //! One module per route. Each is owned by its file — do not move components
 //! between files (the router in `main.rs` imports them by path).
 
-pub mod admin_discounts;
-pub mod admin_generator;
 pub mod admin_index;
-pub mod admin_users;
 pub mod game_completed;
 pub mod game_new;
 pub mod game_play;

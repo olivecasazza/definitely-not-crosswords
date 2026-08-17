@@ -21,13 +21,7 @@ pub fn TabBar() -> Element {
         route,
         Route::Profile {} | Route::Login {} | Route::Signup {}
     );
-    let admin_active = matches!(
-        route,
-        Route::AdminIndex {}
-            | Route::AdminGenerator {}
-            | Route::AdminUsers {}
-            | Route::AdminDiscounts {}
-    );
+    let admin_active = matches!(route, Route::AdminIndex {});
     let tab = |active: bool| {
         if active {
             "tab-bar-tab tab-bar-tab-active"

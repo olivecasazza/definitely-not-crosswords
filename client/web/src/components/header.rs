@@ -27,13 +27,7 @@ pub fn AppHeader() -> Element {
 
     let games_active = matches!(route, Route::Games {});
     let stats_active = matches!(route, Route::Stats {});
-    let admin_active = matches!(
-        route,
-        Route::AdminIndex {}
-            | Route::AdminGenerator {}
-            | Route::AdminUsers {}
-            | Route::AdminDiscounts {}
-    );
+    let admin_active = matches!(route, Route::AdminIndex {});
     let navlink = |active: bool| {
         if active {
             "navlink navlink-active"
@@ -59,6 +53,15 @@ pub fn AppHeader() -> Element {
 
     let show_beta_chip = state.feature(|f| f.staging_banner) && *state.banner_dismissed.read();
 
+    // Environment chip (admins only): the one allowed header carries the
+    // env signal now that the admin tab strip is gone (GH-61).
+    let admin_env = state
+        .config
+        .read()
+        .as_ref()
+        .map(|c| c.environment.clone())
+        .filter(|e| !e.is_empty() && state.is_admin());
+
     rsx! {
         header { class: "site-header",
             Link { to: Route::Home {}, class: "brand",
@@ -79,6 +82,9 @@ pub fn AppHeader() -> Element {
                         "▶ "
                         span { class: "resume-label", "Resume" }
                     }
+                }
+                if let Some(env) = admin_env {
+                    {crate::components::admin::env_badge(&env)}
                 }
                 if show_beta_chip {
                     div { class: "beta-wrap",

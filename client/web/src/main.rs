@@ -12,8 +12,8 @@ mod store;
 mod styles;
 
 use components::{
-    admin_nav::AdminStrip, footer::AppFooter, header::AppHeader, staging_banner::StagingBanner,
-    tab_bar::TabBar, ui::ToastHost,
+    footer::AppFooter, header::AppHeader, staging_banner::StagingBanner, tab_bar::TabBar,
+    ui::ToastHost,
 };
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, Storage};
@@ -50,21 +50,15 @@ pub enum Route {
     ResetPassword {},
     #[route("/admin")]
     AdminIndex {},
-    #[route("/admin/generator")]
-    AdminGenerator {},
-    #[route("/admin/users")]
-    AdminUsers {},
-    #[route("/admin/discounts")]
-    AdminDiscounts {},
+    #[redirect("/admin/generator", || Route::AdminIndex {})]
+    #[redirect("/admin/users", || Route::AdminIndex {})]
+    #[redirect("/admin/discounts", || Route::AdminIndex {})]
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },
 }
 
 // Re-export page components into scope for the `Routable` derive.
-pub use pages::admin_discounts::AdminDiscounts;
-pub use pages::admin_generator::AdminGenerator;
 pub use pages::admin_index::AdminIndex;
-pub use pages::admin_users::AdminUsers;
 pub use pages::game_completed::GameCompleted;
 pub use pages::game_new::GameNew;
 pub use pages::game_play::GamePlay;
@@ -99,25 +93,15 @@ fn App() -> Element {
     }
 }
 
-/// Layout shell wrapping every route: sticky header, admin strip on `/admin*`,
-/// routed `Outlet`, toasts, footer (desktop), tab bar (mobile).
+/// Layout shell wrapping every route: sticky header, routed `Outlet`, toasts,
+/// footer (desktop), tab bar (mobile). The admin view owns its own workspace
+/// chrome (panels + dock) — no extra nav strips here.
 #[component]
 fn Shell() -> Element {
-    let route = use_route::<Route>();
-    let is_admin_route = matches!(
-        route,
-        Route::AdminIndex {}
-            | Route::AdminGenerator {}
-            | Route::AdminUsers {}
-            | Route::AdminDiscounts {}
-    );
     rsx! {
         div { class: "app-shell",
             StagingBanner {}
             AppHeader {}
-            if is_admin_route {
-                AdminStrip {}
-            }
             main { class: "app-main", Outlet::<Route> {} }
             ToastHost {}
             AppFooter {}

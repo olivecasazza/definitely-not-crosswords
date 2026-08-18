@@ -587,10 +587,32 @@ async fn finalize_failed(
 }
 
 /// Authorize a `generator.runGeneration` subscription before it starts. Returns
-/// the authenticated user, or a tRPC-style error string. The free/Pro/admin
-/// distinction is enforced downstream by `check_quota`, so any signed-in user
-/// may reach generation here.
+/// the authenticated user, or a tRPC-style error string. Requires the
+/// `JobCreate` capability; free/Pro quota is enforced downstream by
+/// `check_quota`.
 pub fn authorize(auth: &AuthContext) -> Result<AuthUser, String> {
     let user = auth.require_user().map_err(|e| e.to_string())?;
+    if !user.role.has(Capability::JobCreate) {
+        return Err(format!("{} required", Capability::JobCreate));
+    }
     Ok(user.clone())
+}
+
+/// REST endpoint: `POST /api/jobs` — validates job creation capability and
+/// enqueues a generation job. Returns 201 with `{jobId}` on success,
+/// 403 if the caller lacks `job:create`, or 400 on validation error.
+pub async fn rest_create_job(
+    ctx: &Ctx,
+    params_json: Value,
+) -> Result<Value, (String, i32)> {
+    ctx.auth
+        .require_capability(Capability::JobCreate)
+        .map_err(|e| (e.to_string(), 403))?;
+    let user = ctx.require_user().map_err(|e| (e.to_string(), 401))?;
+    let (params, _raw, title) =
+        parse_params(&params_json).map_err(|e| (e, 400))?;
+    let job_id = create_job(&ctx.pool, &user.id, &params, &params_json, title.as_deref())
+        .await
+        .map_err(|e| (e.to_string(), 500))?;
+    Ok(json!({ "jobId": job_id }))
 }

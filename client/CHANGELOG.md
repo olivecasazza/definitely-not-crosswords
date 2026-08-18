@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.44](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.43...v0.1.44) - 2026-08-18
+
+### Added
+
+- *(server)* GET /api/grids/:id REST endpoint for generated grids (DEF-59)
+
+### Other
+
+- changelog for v0.1.43 [skip ci]
+
+
 ## [0.1.43](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.42...v0.1.43) - 2026-08-18
 
 ### Added

@@ -131,7 +131,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/webhooks/lemonsqueezy", post(webhook::lemonsqueezy))
         .route("/api/trpc-ws", get(trpc_ws))
         .route("/api/trpc/:proc", get(trpc_get).post(trpc_post))
-        .route("/api/jobs", post(jobs_create));
+        .route("/api/jobs", post(jobs_create))
+        .route("/api/grids/:id", get(grid_get));
     // The `local-dev` callback issues a valid session for any account with NO
     // password check — a dev/E2E convenience. Only mount it in local so it can
     // never be reached on staging/prod.
@@ -606,6 +607,26 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
             "direction": direction,
         })),
         _ => None,
+    }
+}
+
+/// `GET /api/grids/:id` — retrieve a generated grid as JSON.
+async fn grid_get(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let ctx = Ctx {
+        pool: st.pool.clone(),
+        auth: st.auth.authenticate(&req_auth(&HeaderMap::new())),
+        events: st.events.clone(),
+        mailer: st.mailer.clone(),
+    };
+    match routers::generator::rest_get_grid(&ctx, &id).await {
+        Ok(v) => (axum::http::StatusCode::OK, Json(v)),
+        Err((msg, status)) => (
+            axum::http::StatusCode::from_u16(status as u16).unwrap_or(axum::http::StatusCode::BAD_REQUEST),
+            Json(json!({ "error": msg })),
+        ),
     }
 }
 

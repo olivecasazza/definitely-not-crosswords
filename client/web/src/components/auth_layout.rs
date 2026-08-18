@@ -12,7 +12,7 @@ use dioxus::prelude::*;
 /// Injected once per auth page (only one `AuthLayout` is ever mounted at a
 /// time). Layout + the shared field/label/error/button rules.
 const AUTH_CSS: &str = r#"
-.auth-shell { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+.auth-shell { flex: 1 1 auto; min-height: 100%; overflow-y: auto;
   display: flex; align-items: center; justify-content: center; padding: 2rem 1rem; }
 .auth-frame { display: flex; flex-direction: row; align-items: center; justify-content: center;
   gap: 3rem; width: 100%; max-width: 60rem; margin: 0 auto; }

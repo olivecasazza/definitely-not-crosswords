@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.42](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.41...v0.1.42) - 2026-08-18
+
+### Added
+
+- *(admin)* collapse admin routes into one panel-kit view with dock nav (#68)
+
+### Documentation
+
+- postmortem for GH-#60 vipPass column drift (#66)
+
+### Other
+
+- changelog for v0.1.41 [skip ci]
+
+
 ## [0.1.41](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.40...v0.1.41) - 2026-08-16
 
 ### Added

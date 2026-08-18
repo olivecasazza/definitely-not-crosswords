@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.43](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.42...v0.1.43) - 2026-08-18
+
+### Added
+
+- *(server)* add job:create RBAC gate and POST /api/jobs endpoint (#70)
+- *(web)* consolidate footer and dock (GH-58) (#71)
+
+### Fixed
+
+- *(web)* scale board cell font with the panel, not the viewport (GH-#56) (#69)
+- *(web)* login title-panel UI bug (GH-57) (#73)
+
+### Other
+
+- changelog for v0.1.42 [skip ci]
+
+
 ## [0.1.42](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.41...v0.1.42) - 2026-08-18
 
 ### Added

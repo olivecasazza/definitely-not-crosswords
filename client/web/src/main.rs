@@ -94,8 +94,7 @@ fn App() -> Element {
 }
 
 /// Layout shell wrapping every route: sticky header, routed `Outlet`, toasts,
-/// footer (desktop), tab bar (mobile). The admin view owns its own workspace
-/// chrome (panels + dock) — no extra nav strips here.
+/// tab bar (mobile). The admin view owns its own workspace chrome (panels + dock).
 #[component]
 fn Shell() -> Element {
     rsx! {
@@ -103,8 +102,8 @@ fn Shell() -> Element {
             StagingBanner {}
             AppHeader {}
             main { class: "app-main", Outlet::<Route> {} }
-            ToastHost {}
             AppFooter {}
+            ToastHost {}
             TabBar {}
         }
     }

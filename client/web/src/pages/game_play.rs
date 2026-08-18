@@ -1353,7 +1353,7 @@ const GAME_CSS: &str = r#"
    automatic minimum size floors each 1fr track at the cell's content size. The
    tracks then blow past the board's own width and `.cw-board-area`'s
    `overflow:hidden` clips the last columns/rows off. */
-.cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 2.4vw, 20px); min-width: 0; min-height: 0; }
+.cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 4.5cqw, 26px); min-width: 0; min-height: 0; }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid color-mix(in srgb, var(--border-app) 25%, transparent); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
 .cw-letter:hover { border-color: var(--border-hover); }
@@ -1370,7 +1370,7 @@ const GAME_CSS: &str = r#"
 .cw-placeholder { border: 2px solid var(--pastel-yellow); }
 .cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 15%, transparent); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
 .cw-correct { background: color-mix(in srgb, var(--pastel-green) 15%, transparent); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
-.cw-num { position: absolute; top: 2px; left: 3px; font-size: clamp(6px, 1.2vw, 9px); line-height: 1; color: var(--text-secondary); opacity: 0.85; font-weight: 700; pointer-events: none; }
+.cw-num { position: absolute; top: 2px; left: 3px; font-size: clamp(6px, 2cqw, 10px); line-height: 1; color: var(--text-secondary); opacity: 0.85; font-weight: 700; pointer-events: none; }
 .cw-char { pointer-events: none; }
 
 .cw-clue { display: flex; flex-direction: column; gap: 12px; height: 100%; }

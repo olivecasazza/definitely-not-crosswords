@@ -12,8 +12,8 @@ mod store;
 mod styles;
 
 use components::{
-    footer::AppFooter, header::AppHeader, staging_banner::StagingBanner, tab_bar::TabBar,
-    ui::ToastHost,
+    footer_dock::FooterDock, header::AppHeader, staging_banner::StagingBanner,
+    tab_bar::TabBar, ui::ToastHost,
 };
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, Storage};
@@ -94,7 +94,7 @@ fn App() -> Element {
 }
 
 /// Layout shell wrapping every route: sticky header, routed `Outlet`, toasts,
-/// footer (desktop), tab bar (mobile). The admin view owns its own workspace
+/// footer+dock (desktop), tab bar (mobile). The admin view owns its own workspace
 /// chrome (panels + dock) — no extra nav strips here.
 #[component]
 fn Shell() -> Element {
@@ -104,7 +104,7 @@ fn Shell() -> Element {
             AppHeader {}
             main { class: "app-main", Outlet::<Route> {} }
             ToastHost {}
-            AppFooter {}
+            FooterDock {}
             TabBar {}
         }
     }

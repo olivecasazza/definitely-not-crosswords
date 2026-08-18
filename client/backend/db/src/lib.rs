@@ -14,12 +14,17 @@ pub enum Role {
 impl Role {
     pub const fn capabilities(self) -> &'static [Capability] {
         match self {
-            Self::User => &[Capability::GamePlay, Capability::ProfileManage],
+            Self::User => &[
+                Capability::GamePlay,
+                Capability::ProfileManage,
+                Capability::JobCreate,
+            ],
             Self::Admin => &[
                 Capability::GamePlay,
                 Capability::ProfileManage,
                 Capability::AdminAccess,
                 Capability::GeneratorManage,
+                Capability::JobCreate,
             ],
         }
     }
@@ -36,6 +41,7 @@ pub enum Capability {
     ProfileManage,
     AdminAccess,
     GeneratorManage,
+    JobCreate,
 }
 
 impl fmt::Display for Capability {
@@ -45,6 +51,7 @@ impl fmt::Display for Capability {
             Self::ProfileManage => "profile:manage",
             Self::AdminAccess => "admin:access",
             Self::GeneratorManage => "generator:manage",
+            Self::JobCreate => "job:create",
         };
         f.write_str(value)
     }
@@ -222,6 +229,12 @@ mod tests {
     fn admin_inherits_generator_capability() {
         assert!(Role::Admin.has(Capability::GeneratorManage));
         assert!(!Role::User.has(Capability::GeneratorManage));
+    }
+
+    #[test]
+    fn job_create_granted_to_user_and_admin() {
+        assert!(Role::User.has(Capability::JobCreate));
+        assert!(Role::Admin.has(Capability::JobCreate));
     }
 
     #[test]

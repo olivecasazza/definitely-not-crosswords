@@ -130,7 +130,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/checkout", post(checkout::checkout))
         .route("/api/webhooks/lemonsqueezy", post(webhook::lemonsqueezy))
         .route("/api/trpc-ws", get(trpc_ws))
-        .route("/api/trpc/:proc", get(trpc_get).post(trpc_post));
+        .route("/api/trpc/:proc", get(trpc_get).post(trpc_post))
+        .route("/api/jobs", post(jobs_create));
     // The `local-dev` callback issues a valid session for any account with NO
     // password check — a dev/E2E convenience. Only mount it in local so it can
     // never be reached on staging/prod.
@@ -605,5 +606,28 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
             "direction": direction,
         })),
         _ => None,
+    }
+}
+
+/// `POST /api/jobs` — create a generation job (REST endpoint for CI/testing).
+/// Returns 201 with `{"jobId"}` on success, 403 if the caller lacks
+/// `job:create`, or 400/500 on validation/server errors.
+async fn jobs_create(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let ctx = Ctx {
+        pool: st.pool.clone(),
+        auth: st.auth.authenticate(&req_auth(&headers)),
+        events: st.events.clone(),
+        mailer: st.mailer.clone(),
+    };
+    match routers::generator::rest_create_job(&ctx, body).await {
+        Ok(v) => (axum::http::StatusCode::CREATED, Json(v)),
+        Err((msg, status)) => (
+            axum::http::StatusCode::from_u16(status as u16).unwrap_or(axum::http::StatusCode::BAD_REQUEST),
+            Json(json!({ "error": msg })),
+        ),
     }
 }

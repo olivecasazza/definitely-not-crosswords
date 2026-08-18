@@ -12,7 +12,7 @@ mod store;
 mod styles;
 
 use components::{
-    footer_dock::FooterDock, header::AppHeader, staging_banner::StagingBanner,
+    footer::AppFooter, header::AppHeader, staging_banner::StagingBanner,
     tab_bar::TabBar, ui::ToastHost,
 };
 use dioxus::prelude::*;
@@ -103,8 +103,8 @@ fn Shell() -> Element {
             StagingBanner {}
             AppHeader {}
             main { class: "app-main", Outlet::<Route> {} }
+            AppFooter {}
             ToastHost {}
-            FooterDock {}
             TabBar {}
         }
     }

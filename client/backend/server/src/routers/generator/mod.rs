@@ -616,3 +616,118 @@ pub async fn rest_create_job(
         .map_err(|e| (e.to_string(), 500))?;
     Ok(json!({ "jobId": job_id }))
 }
+
+/// REST endpoint: `GET /api/grids/:id` — retrieve a generated grid as JSON.
+/// Returns the grid shape, cell letters, and numbered clues in the same format
+/// the Dioxus client uses for manually-created games (active_game.getStartDetails).
+///
+/// Response shape:
+/// ```json
+/// {
+///   "id": "<game-id>",
+///   "title": "<game-title>",
+///   "grid": { "w": <width>, "h": <height> },
+///   "cells": [[<col0>, ...], ...],
+///   "questions": [{ "number": 1, "direction": "ACROSS", "rootX": 0, "rootY": 0, "answer": "CRANE", "clue": "A large bird" }, ...]
+/// }
+/// ```
+///
+/// Returns 404 if the grid does not exist or is not a generated game.
+pub async fn rest_get_grid(ctx: &Ctx, id: &str) -> Result<Value, (String, i32)> {
+    let row = sqlx::query(
+        r#"
+        SELECT g.id, g.title, g.source::text AS source,
+               g."createdAt", g."updatedAt", g.published
+        FROM "Game" g
+        WHERE g.id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let row = match row {
+        Some(r) => r,
+        None => return Err(("Grid not found.".to_string(), 404)),
+    };
+
+    let source: String = row.get("source");
+    if source != "GENERATED" {
+        return Err(("Grid is not a generated game.".to_string(), 404));
+    }
+
+    let q_rows = sqlx::query(
+        r#"
+        SELECT "number", "rootX", "rootY", answer, "questionText", direction::text AS direction
+        FROM "Question"
+        WHERE "gameId" = $1
+        ORDER BY "number" ASC, direction ASC
+        "#,
+    )
+    .bind(id)
+    .fetch_all(&ctx.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let questions: Vec<Value> = q_rows
+        .iter()
+        .map(|r| {
+            json!({
+                "number": r.get::<i32, _>("number"),
+                "direction": r.get::<String, _>("direction"),
+                "rootX": r.get::<i32, _>("rootX"),
+                "rootY": r.get::<i32, _>("rootY"),
+                "answer": r.get::<String, _>("answer"),
+                "clue": r.get::<String, _>("questionText"),
+            })
+        })
+        .collect();
+
+    if questions.is_empty() {
+        return Err(("Grid has no questions.".to_string(), 404));
+    }
+
+    let mut max_x: i32 = 0;
+    let mut max_y: i32 = 0;
+    for r in &q_rows {
+        let rx: i32 = r.get("rootX");
+        let ry: i32 = r.get("rootY");
+        let ans: String = r.get("answer");
+        let dir: String = r.get("direction");
+        if dir == "ACROSS" {
+            max_x = max_x.max(rx + ans.len() as i32);
+        } else {
+            max_y = max_y.max(ry + ans.len() as i32);
+        }
+        max_x = max_x.max(rx + 1);
+        max_y = max_y.max(ry + 1);
+    }
+
+    let w = max_x;
+    let h = max_y;
+
+    let mut cells: Vec<Vec<Option<String>>> = vec![vec![None; w as usize]; h as usize];
+    for r in &q_rows {
+        let ans: String = r.get("answer");
+        let rx: i32 = r.get("rootX");
+        let ry: i32 = r.get("rootY");
+        let dir: String = r.get("direction");
+        for (i, ch) in ans.chars().enumerate() {
+            let x = if dir == "ACROSS" { rx + i as i32 } else { rx };
+            let y = if dir == "DOWN" { ry + i as i32 } else { ry };
+            if y as usize >= cells.len() || x as usize >= cells[0].len() {
+                continue;
+            }
+            cells[y as usize][x as usize] = Some(ch.to_string());
+        }
+    }
+
+    Ok(json!({
+        "id": row.get::<String, _>("id"),
+        "title": row.get::<String, _>("title"),
+        "grid": { "w": w, "h": h },
+        "cells": cells,
+        "questions": questions,
+    }))
+}

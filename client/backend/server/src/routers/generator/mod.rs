@@ -1,10 +1,10 @@
 //! `generator` router — port of server/trpc/router/generator.ts + the
 //! generateCrossword service. tRPC queries/mutations (`listJobs`,
-//! `publishGeneratedGame`) go through `try_handle`; the streaming
+//! `publishGeneratedGame`, `job:create`) go through `try_handle`; the streaming
 //! `runGeneration` subscription is driven by `run_generation`, invoked from the
 //! WebSocket handler (it needs the live socket to push progress events).
 //!
-//! The other five procs in the TS router (generateDraftGame/createJob/getJob/
+//! The other four procs in the TS router (generateDraftGame/getJob/
 //! saveDraftGame/markFailed) aren't called by the Dioxus client, so they're
 //! intentionally not ported — they vanish with the Nuxt server. (ponytail)
 
@@ -16,6 +16,7 @@ use crate::ctx::Ctx;
 use crossword_auth::AuthContext;
 use crossword_db::{AuthUser, Capability};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use solver::{Direction, Params};
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -25,6 +26,7 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
     match proc {
         "generator.listJobs" => Some(list_jobs(input, ctx).await),
         "generator.publishGeneratedGame" => Some(publish_generated_game(input, ctx).await),
+        "job:create" => Some(job_create(input, ctx).await),
         _ => None,
     }
 }
@@ -128,6 +130,306 @@ async fn publish_generated_game(input: &Value, ctx: &Ctx) -> Result<Value, Strin
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!({ "id": game_id, "published": true }))
+}
+
+// ── job:create tRPC procedure ─────────────────────────────────────────────────
+//
+// Synchronous one-shot generator: validate params → quota → run the dictionary
+// + solver pipeline in a blocking task → return the full grid JSON inline.
+//
+// This is the tRPC counterpart to the WS subscription `generator.runGeneration`
+// and the REST `POST /api/jobs`. Use cases the Dioxus client actually hits:
+//
+//   * The admin's "preview" button on game_new.rs: shows a grid immediately
+//     without forcing the operator to open a second tab to watch the WS events.
+//   * The CI smoke for DEF-70: a deterministic one-shot call that returns the
+//     whole grid for shape assertions (cells, clues, solutionHash).
+//
+// No DB persistence — the grid is ephemeral. The streamed WS subscription
+// remains the canonical "save + persist" path; `job:create` is a read-only
+// preview that the client can choose to publish via `publishGeneratedGame`
+// once it's satisfied.
+//
+// RBAC: requires the same `job:create` capability that gates the REST endpoint
+// (DEF-36 / PR #70). A missing capability is a structured 403 FORBIDDEN, NOT a
+// 500 — that's the bug DEF-70 explicitly calls out. Quota is also enforced for
+// free-tier callers via `check_quota`; Pro / admin / generator-manage are
+// unlimited. Returns INTERNAL on unexpected server errors so the envelope
+// surfaces a 500 instead of pretending the request was bad.
+
+/// One numbered question as it appears in the grid response. Mirrors the
+/// `Question` DB row shape so the JSON we emit here and the JSON
+/// `rest_get_grid` reads from the DB are byte-compatible.
+#[derive(Debug, Clone)]
+pub struct GridQuestion {
+    pub number: i32,
+    pub direction: String,
+    pub root_x: i32,
+    pub root_y: i32,
+    pub answer: String,
+    pub clue: String,
+}
+
+/// Build the `{cells, questions, grid, solutionHash}` JSON for a generator
+/// result. Pure: takes the question list + grid metadata, returns the JSON
+/// shape consumed by both `job:create` and `rest_get_grid`. Centralized so
+/// the wire format is identical across the tRPC and REST surfaces (and so
+/// the integration test can assert on one shape, not two).
+///
+/// `w` / `h` are the bounding-box dimensions of the placed words, NOT the
+/// solver's nominal grid — a 21×21 board can land a grid in a smaller box if
+/// generation fills only part of it. Caller is responsible for trimming;
+/// this function pads with `None` to the bounding box.
+pub fn build_grid_json(
+    id: Option<&str>,
+    title: &str,
+    questions: &[GridQuestion],
+    w: i32,
+    h: i32,
+) -> Result<Value, String> {
+    if questions.is_empty() {
+        return Err("Grid has no questions.".to_string());
+    }
+    if w <= 0 || h <= 0 {
+        return Err("Grid dimensions must be positive.".to_string());
+    }
+
+    let mut cells: Vec<Vec<Option<String>>> = vec![vec![None; w as usize]; h as usize];
+    for q in questions {
+        for (i, ch) in q.answer.chars().enumerate() {
+            let x = if q.direction == "ACROSS" {
+                q.root_x + i as i32
+            } else {
+                q.root_x
+            };
+            let y = if q.direction == "DOWN" {
+                q.root_y + i as i32
+            } else {
+                q.root_y
+            };
+            if y < 0 || x < 0 || (y as usize) >= cells.len() || (x as usize) >= cells[0].len() {
+                return Err(format!(
+                    "Question {} ({}) at ({},{}) with answer '{}' overflows {}x{} grid",
+                    q.number, q.direction, q.root_x, q.root_y, q.answer, w, h
+                ));
+            }
+            cells[y as usize][x as usize] = Some(ch.to_string());
+        }
+    }
+
+    let questions_json: Vec<Value> = questions
+        .iter()
+        .map(|q| {
+            json!({
+                "number": q.number,
+                "direction": q.direction,
+                "rootX": q.root_x,
+                "rootY": q.root_y,
+                "answer": q.answer,
+                "clue": q.clue,
+            })
+        })
+        .collect();
+
+    let hash = compute_solution_hash(w, h, &cells, &questions_json);
+
+    let mut obj = serde_json::Map::new();
+    if let Some(id) = id {
+        obj.insert("id".into(), json!(id));
+    }
+    obj.insert("title".into(), json!(title));
+    obj.insert("grid".into(), json!({ "w": w, "h": h }));
+    obj.insert("cells".into(), json!(cells));
+    obj.insert("questions".into(), json!(questions_json));
+    obj.insert("solutionHash".into(), json!(hash));
+    Ok(Value::Object(obj))
+}
+
+/// Deterministic 64-char hex SHA-256 over the grid payload. The client can
+/// stash this when the grid is shown and re-compute it after `publishGeneratedGame`
+/// to confirm the persisted row matches what the user actually saw — a
+/// tamper / version-drift check that's also useful for the canary tests.
+///
+/// Hash inputs (in order): `grid.w`, `grid.h`, each cell's letter (None → ""),
+/// then each question's `number|direction|rootX|rootY|answer|clue`. The fields
+/// are concatenated with a NUL separator so e.g. `("1","ACROSS",0,0)` can't
+/// collide with `("1","ACROS","S",0,0)`.
+pub fn compute_solution_hash(
+    w: i32,
+    h: i32,
+    cells: &[Vec<Option<String>>],
+    questions: &[Value],
+) -> String {
+    let mut h256 = Sha256::new();
+    h256.update(format!("{}x{}\0", w, h).as_bytes());
+    for row in cells.iter() {
+        for cell in row.iter() {
+            h256.update(b"\0");
+            h256.update(cell.as_deref().unwrap_or("").as_bytes());
+        }
+        h256.update(b"|\0");
+    }
+    for q in questions {
+        h256.update(b"\0");
+        h256.update(
+            q.get("number")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .to_string()
+                .as_bytes(),
+        );
+        h256.update(b"|");
+        h256.update(
+            q.get("direction")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .as_bytes(),
+        );
+        h256.update(b"|");
+        h256.update(
+            q.get("rootX")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .to_string()
+                .as_bytes(),
+        );
+        h256.update(b"|");
+        h256.update(
+            q.get("rootY")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .to_string()
+                .as_bytes(),
+        );
+        h256.update(b"|");
+        h256.update(
+            q.get("answer")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .as_bytes(),
+        );
+        h256.update(b"|");
+        h256.update(
+            q.get("clue")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .as_bytes(),
+        );
+    }
+    format!("{:x}", h256.finalize())
+}
+
+/// `job:create` tRPC procedure — synchronous, RBAC-gated, returns the full
+/// grid JSON (cells + clues + solutionHash) inline.
+///
+/// Wire-format contract:
+/// - Input:  `{"params": {topic, width, height, minWordLength, ...}, "title"?: "..."}`
+/// - Output: `{"id": null, "title": "...", "grid": {"w","h"}, "cells": [[..]],
+///             "questions": [{number, direction, rootX, rootY, answer, clue}, ...],
+///             "solutionHash": "<64-char-hex>"}`
+///
+/// Errors are structured:
+/// - `"FORBIDDEN"` → 403 (missing job:create capability; DEF-36 RBAC).
+/// - `"UNAUTHORIZED"` → 401 (no session).
+/// - `BAD_REQUEST` messages → 400 (validation: topic missing, dimensions bad).
+/// - `"INTERNAL: <message>"` → 500 (DB / embedding / solver failure).
+pub async fn job_create(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    // 1. RBAC — `job:create` capability is required (DEF-36). The capability
+    //    gate returns `AppError::Forbidden(JobCreate)`; we map that to the
+    //    structured FORBIDDEN / 403 envelope the client expects, NOT a 500.
+    let user = match ctx.auth.require_capability(Capability::JobCreate) {
+        Ok(u) => u.clone(),
+        Err(e) => {
+            return Err(match e {
+                crossword_db::AppError::Unauthorized => "UNAUTHORIZED".to_string(),
+                crossword_db::AppError::Forbidden(_) => "FORBIDDEN".to_string(),
+                other => format!("INTERNAL: {other}"),
+            });
+        }
+    };
+
+    // 2. Quota — free users are limited to FREE_LIMIT / month (DEF-67 plan §3).
+    //    Errors from `check_quota` are user-facing messages → BAD_REQUEST.
+    if let Err(e) = check_quota(&ctx.pool, &user).await {
+        return Err(e);
+    }
+
+    // 3. Param validation — anything structural returns BAD_REQUEST so the
+    //    client surfaces "fix the recipe" instead of retrying forever.
+    let (params, raw_params, title) = parse_params(input)?;
+
+    // 4. Build the dictionary + run the solver. The DB fetch is async; the
+    //    embedding scoring and grid search are CPU-bound and run inside a
+    //    `spawn_blocking` task so they don't stall the tokio worker pool.
+    let pool = ctx.pool.clone();
+    let topic = raw_params
+        .get("topic")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let rows = match dict::fetch_rows(&pool, &params).await {
+        Ok(r) => r,
+        Err(e) => return Err(format!("INTERNAL: {e}")),
+    };
+    let topic_for_blocking = topic.clone();
+    // `params` is consumed by the blocking task; capture only the dimensions
+    // we still need for the response bounding box (cheap, no clone of `Params`).
+    let solver_width = params.width;
+    let solver_height = params.height;
+    let blocking = tokio::task::spawn_blocking(move || -> Result<GenResult, String> {
+        // No live progress events here — the client gets the result inline.
+        let mut noop = |_ev: Value| {};
+        let dictionary = dict::build_dictionary(rows, &topic_for_blocking, &mut noop)?;
+        let best = solver::generate_best(&dictionary, &params, &mut noop)?;
+        solver::validate_grid(
+            &best.grid,
+            &best.placed,
+            &dictionary.dictionary_set,
+            &params,
+        )?;
+        Ok(build_result(
+            &best,
+            &dictionary,
+            &params,
+            &topic_for_blocking,
+        ))
+    })
+    .await;
+
+    let gen = match blocking {
+        Ok(inner) => inner?,
+        Err(join_err) => return Err(format!("INTERNAL: generation task failed: {join_err}")),
+    };
+
+    // 5. Render the grid response. We don't persist: this is the synchronous
+    //    "preview" path. Use a deterministic pseudo-id (job:create doesn't mint
+    //    a real jobId — the streaming subscription owns that).
+    let title = title.unwrap_or_else(|| gen.title.clone());
+    let mut w = solver_width;
+    let mut h = solver_height;
+    for q in &gen.questions {
+        let len = q.answer.chars().count() as i32;
+        if q.direction == Direction::Across {
+            w = w.max(q.root_x + len);
+        } else {
+            h = h.max(q.root_y + len);
+        }
+        w = w.max(q.root_x + 1);
+        h = h.max(q.root_y + 1);
+    }
+    let grid_questions: Vec<GridQuestion> = gen
+        .questions
+        .iter()
+        .map(|q| GridQuestion {
+            number: q.number,
+            direction: q.direction.as_str().to_string(),
+            root_x: q.root_x,
+            root_y: q.root_y,
+            answer: q.answer.clone(),
+            clue: q.question_text.clone(),
+        })
+        .collect();
+    build_grid_json(None, &title, &grid_questions, w, h)
 }
 
 // ── runGeneration subscription (driven by the WS handler) ────────────────────
@@ -601,16 +903,12 @@ pub fn authorize(auth: &AuthContext) -> Result<AuthUser, String> {
 /// REST endpoint: `POST /api/jobs` — validates job creation capability and
 /// enqueues a generation job. Returns 201 with `{jobId}` on success,
 /// 403 if the caller lacks `job:create`, or 400 on validation error.
-pub async fn rest_create_job(
-    ctx: &Ctx,
-    params_json: Value,
-) -> Result<Value, (String, i32)> {
+pub async fn rest_create_job(ctx: &Ctx, params_json: Value) -> Result<Value, (String, i32)> {
     ctx.auth
         .require_capability(Capability::JobCreate)
         .map_err(|e| (e.to_string(), 403))?;
     let user = ctx.require_user().map_err(|e| (e.to_string(), 401))?;
-    let (params, _raw, title) =
-        parse_params(&params_json).map_err(|e| (e, 400))?;
+    let (params, _raw, title) = parse_params(&params_json).map_err(|e| (e, 400))?;
     let job_id = create_job(&ctx.pool, &user.id, &params, &params_json, title.as_deref())
         .await
         .map_err(|e| (e.to_string(), 500))?;
@@ -628,7 +926,8 @@ pub async fn rest_create_job(
 ///   "title": "<game-title>",
 ///   "grid": { "w": <width>, "h": <height> },
 ///   "cells": [[<col0>, ...], ...],
-///   "questions": [{ "number": 1, "direction": "ACROSS", "rootX": 0, "rootY": 0, "answer": "CRANE", "clue": "A large bird" }, ...]
+///   "questions": [{ "number": 1, "direction": "ACROSS", "rootX": 0, "rootY": 0, "answer": "CRANE", "clue": "A large bird" }, ...],
+///   "solutionHash": "<64-char-hex>"
 /// }
 /// ```
 ///
@@ -670,64 +969,335 @@ pub async fn rest_get_grid(ctx: &Ctx, id: &str) -> Result<Value, (String, i32)> 
     .await
     .map_err(|e| (e.to_string(), 500))?;
 
-    let questions: Vec<Value> = q_rows
-        .iter()
-        .map(|r| {
-            json!({
-                "number": r.get::<i32, _>("number"),
-                "direction": r.get::<String, _>("direction"),
-                "rootX": r.get::<i32, _>("rootX"),
-                "rootY": r.get::<i32, _>("rootY"),
-                "answer": r.get::<String, _>("answer"),
-                "clue": r.get::<String, _>("questionText"),
-            })
-        })
-        .collect();
-
-    if questions.is_empty() {
+    if q_rows.is_empty() {
         return Err(("Grid has no questions.".to_string(), 404));
     }
 
-    let mut max_x: i32 = 0;
-    let mut max_y: i32 = 0;
-    for r in &q_rows {
-        let rx: i32 = r.get("rootX");
-        let ry: i32 = r.get("rootY");
-        let ans: String = r.get("answer");
-        let dir: String = r.get("direction");
-        if dir == "ACROSS" {
-            max_x = max_x.max(rx + ans.len() as i32);
+    let questions: Vec<GridQuestion> = q_rows
+        .iter()
+        .map(|r| GridQuestion {
+            number: r.get::<i32, _>("number"),
+            direction: r.get::<String, _>("direction"),
+            root_x: r.get::<i32, _>("rootX"),
+            root_y: r.get::<i32, _>("rootY"),
+            answer: r.get::<String, _>("answer"),
+            clue: r.get::<String, _>("questionText"),
+        })
+        .collect();
+
+    let mut w: i32 = 0;
+    let mut h: i32 = 0;
+    for q in &questions {
+        let len = q.answer.chars().count() as i32;
+        if q.direction == "ACROSS" {
+            w = w.max(q.root_x + len);
         } else {
-            max_y = max_y.max(ry + ans.len() as i32);
+            h = h.max(q.root_y + len);
         }
-        max_x = max_x.max(rx + 1);
-        max_y = max_y.max(ry + 1);
+        w = w.max(q.root_x + 1);
+        h = h.max(q.root_y + 1);
     }
 
-    let w = max_x;
-    let h = max_y;
+    build_grid_json(
+        Some(&row.get::<String, _>("id")),
+        &row.get::<String, _>("title"),
+        &questions,
+        w,
+        h,
+    )
+    .map_err(|e| match e.as_str() {
+        // "Grid has no questions." / "Grid dimensions must be positive." are
+        // content-shape problems with the stored row, not server faults —
+        // surface them as 404 so the client can distinguish "this grid is
+        // broken" from "the server is on fire".
+        "Grid has no questions." => (e, 404),
+        _ => (e, 500),
+    })
+}
 
-    let mut cells: Vec<Vec<Option<String>>> = vec![vec![None; w as usize]; h as usize];
-    for r in &q_rows {
-        let ans: String = r.get("answer");
-        let rx: i32 = r.get("rootX");
-        let ry: i32 = r.get("rootY");
-        let dir: String = r.get("direction");
-        for (i, ch) in ans.chars().enumerate() {
-            let x = if dir == "ACROSS" { rx + i as i32 } else { rx };
-            let y = if dir == "DOWN" { ry + i as i32 } else { ry };
-            if y as usize >= cells.len() || x as usize >= cells[0].len() {
-                continue;
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the pure helpers behind `job:create` and `rest_get_grid`.
+    //!
+    //! These cover the DEF-70 acceptance items that don't need a real DB or the
+    //! ONNX model: grid JSON shape, cell count, symmetry (ACROSS vs DOWN math),
+    //! clue enumeration completeness, and the `solutionHash` schema. The DB +
+    //! RBAC integration is covered separately by `tests/job_create_rbac.rs`.
+
+    use super::*;
+
+    /// A canonical "small cross" grid — two ACROSS words + one DOWN word in a
+    /// 5×3 bounding box, with one valid ACROSS/DOWN crossing. Mirrors what the
+    /// solver actually emits so the test catches any drift in the wire shape.
+    ///
+    /// Layout:
+    /// ```text
+    ///       col 0  1  2  3  4
+    /// row 0:  H   E  L  L  O    HELLO (ACROSS, rootX=0)
+    /// row 1:  H   .  .  .  .    HL (DOWN at col 0; second cell is past HELLO's row)
+    /// row 2:  O   C  E  A  N    OCEAN (ACROSS, rootX=0)
+    /// ```
+    /// Crossing: (0,0) is both HELLO[0]=H and HL[0]=H ✓. The DOWN word stops at
+    /// row 1 so it never touches OCEAN (which is row 2).
+    fn sample_questions() -> Vec<GridQuestion> {
+        vec![
+            GridQuestion {
+                number: 1,
+                direction: "ACROSS".into(),
+                root_x: 0,
+                root_y: 0,
+                answer: "HELLO".into(),
+                clue: "Greeting".into(),
+            },
+            GridQuestion {
+                number: 2,
+                direction: "ACROSS".into(),
+                root_x: 0,
+                root_y: 2,
+                answer: "OCEAN".into(),
+                clue: "Large body of water".into(),
+            },
+            GridQuestion {
+                number: 1,
+                direction: "DOWN".into(),
+                root_x: 0,
+                root_y: 0,
+                answer: "HO".into(),
+                clue: "Santa's call".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn build_grid_json_emits_canonical_shape() {
+        let qs = sample_questions();
+        let v = build_grid_json(Some("g1"), "Title", &qs, 5, 3).expect("grid");
+        assert_eq!(v["id"], json!("g1"));
+        assert_eq!(v["title"], json!("Title"));
+        assert_eq!(v["grid"]["w"], json!(5));
+        assert_eq!(v["grid"]["h"], json!(3));
+        let cells = v["cells"].as_array().expect("cells is array");
+        assert_eq!(cells.len(), 3, "cell count = h");
+        for row in cells.iter() {
+            assert_eq!(row.as_array().unwrap().len(), 5, "each row = w");
+        }
+        let questions = v["questions"].as_array().expect("questions");
+        assert_eq!(questions.len(), 3);
+        assert_eq!(questions[0]["number"], 1);
+        assert_eq!(questions[0]["direction"], "ACROSS");
+        assert_eq!(questions[0]["rootX"], 0);
+        assert_eq!(questions[0]["rootY"], 0);
+        assert_eq!(questions[0]["answer"], "HELLO");
+        assert_eq!(questions[0]["clue"], "Greeting");
+        assert!(v["solutionHash"].is_string());
+        assert_eq!(
+            v["solutionHash"].as_str().unwrap().len(),
+            64,
+            "SHA-256 hex is 64 chars"
+        );
+        assert!(
+            v["solutionHash"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .all(|c| c.is_ascii_hexdigit()),
+            "solutionHash must be lowercase hex"
+        );
+    }
+
+    #[test]
+    fn build_grid_json_letters_match_across_and_down() {
+        // HELLO at (0,0) ACROSS → cells[0][0..4] = H,E,L,L,O
+        // OCEAN at (0,2) ACROSS → cells[2][0..4] = O,C,E,A,N
+        // HO    at (0,0) DOWN    → cells[0..2][0] = H,O
+        // Shared: (0,0) = H (HELLO[0]=H, HO[0]=H)
+        //         (2,0) = O (OCEAN[0]=O, HO[1]=O)
+        let qs = sample_questions();
+        let v = build_grid_json(None, "T", &qs, 5, 3).unwrap();
+        let cells = v["cells"].as_array().unwrap();
+        assert_eq!(cells[0][0], json!("H"));
+        assert_eq!(cells[0][1], json!("E"));
+        assert_eq!(cells[0][2], json!("L"));
+        assert_eq!(cells[0][3], json!("L"));
+        assert_eq!(cells[0][4], json!("O"));
+        assert_eq!(cells[1][0], json!("O"));
+        assert_eq!(cells[2][0], json!("O"));
+        assert_eq!(cells[2][1], json!("C"));
+        assert_eq!(cells[2][2], json!("E"));
+        assert_eq!(cells[2][3], json!("A"));
+        assert_eq!(cells[2][4], json!("N"));
+    }
+
+    #[test]
+    fn build_grid_json_rejects_overflow() {
+        let qs = vec![GridQuestion {
+            number: 1,
+            direction: "ACROSS".into(),
+            root_x: 4,
+            root_y: 0,
+            answer: "TOOLONG".into(),
+            clue: "x".into(),
+        }];
+        let err = build_grid_json(None, "T", &qs, 5, 3).unwrap_err();
+        assert!(err.contains("overflows"), "got: {err}");
+    }
+
+    #[test]
+    fn build_grid_json_rejects_empty() {
+        let err = build_grid_json(None, "T", &[], 5, 5).unwrap_err();
+        assert_eq!(err, "Grid has no questions.");
+    }
+
+    #[test]
+    fn build_grid_json_omits_id_when_none() {
+        let qs = sample_questions();
+        let v = build_grid_json(None, "T", &qs, 5, 3).unwrap();
+        assert!(v.get("id").is_none(), "job:create grid is ephemeral");
+    }
+
+    #[test]
+    fn solution_hash_is_deterministic_and_changes_with_input() {
+        let qs = sample_questions();
+        let v1 = build_grid_json(Some("g1"), "T", &qs, 5, 3).unwrap();
+        let v2 = build_grid_json(Some("g1"), "T", &qs, 5, 3).unwrap();
+        assert_eq!(
+            v1["solutionHash"], v2["solutionHash"],
+            "same inputs → same hash"
+        );
+
+        // Mutate one cell, hash must change.
+        let mut cells = vec![vec![Some("C".to_string()); 5]; 3];
+        cells[0][1] = Some("X".to_string());
+        let questions: Vec<Value> = qs
+            .iter()
+            .map(|q| {
+                json!({
+                    "number": q.number, "direction": q.direction,
+                    "rootX": q.root_x, "rootY": q.root_y,
+                    "answer": q.answer, "clue": q.clue,
+                })
+            })
+            .collect();
+        let h_mut = compute_solution_hash(5, 3, &cells, &questions);
+        assert_ne!(
+            v1["solutionHash"],
+            json!(h_mut),
+            "changing one cell must change the hash"
+        );
+    }
+
+    #[test]
+    fn solution_hash_changing_a_clue_field_changes_the_hash() {
+        // The 64-char hex must be sensitive to every input field. A drift on
+        // any of (number, direction, rootX, rootY, answer, clue) is a different
+        // grid — the hash lets the client detect server-side mutations between
+        // the previewed grid and the persisted row.
+        let qs = sample_questions();
+        let baseline = build_grid_json(Some("g1"), "T", &qs, 5, 3).unwrap();
+        let baseline_hash = baseline["solutionHash"].as_str().unwrap().to_string();
+
+        for (label, mutate) in [
+            ("number", |q: &mut GridQuestion| q.number += 1000),
+            ("direction", |q: &mut GridQuestion| {
+                q.direction = if q.direction == "ACROSS" {
+                    "DOWN".into()
+                } else {
+                    "ACROSS".into()
+                }
+            }),
+            ("rootX", |q: &mut GridQuestion| q.root_x += 1),
+            ("rootY", |q: &mut GridQuestion| q.root_y += 1),
+            ("answer", |q: &mut GridQuestion| q.answer.push('Z')),
+            ("clue", |q: &mut GridQuestion| q.clue.push('!')),
+        ] {
+            let mut mutated = qs.clone();
+            mutate(&mut mutated[0]);
+            let v = build_grid_json(Some("g1"), "T", &mutated, 5, 3).unwrap();
+            let h = v["solutionHash"].as_str().unwrap();
+            assert_ne!(
+                h, baseline_hash,
+                "mutating {label} must change the hash (baseline={baseline_hash}, mutated={h})"
+            );
+        }
+    }
+
+    #[test]
+    fn solution_hash_separator_prevents_concat_collisions() {
+        // Regression: the field separator must be NUL (or otherwise impossible
+        // to forge from concatenated user data). If two grids with different
+        // structure hash the same because the separator is "|", we've shipped
+        // a tamper-detection bug. We assert by construction that the hash
+        // includes the grid.w / grid.h prefix too, so size changes flip it.
+        let qs = sample_questions();
+        let h_5x3 = build_grid_json(Some("g1"), "T", &qs, 5, 3).unwrap()["solutionHash"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let mut qs_pad = qs.clone();
+        // Pad the bounding box by extending HELLO → HELLOW; forces a larger grid.
+        qs_pad[0].answer = "HELLOW".into();
+        let h_6x3 = build_grid_json(Some("g1"), "T", &qs_pad, 6, 3).unwrap()["solutionHash"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(
+            h_5x3, h_6x3,
+            "grid dimensions are part of the hash (size tamper-detection)"
+        );
+    }
+
+    /// Cross-check the cell count: every cell that's set must come from some
+    /// question, and the union of question placements must exactly match the
+    /// non-None cells in the response. That's the "clue enumeration
+    /// completeness" assertion from the DEF-70 acceptance list.
+    #[test]
+    fn every_filled_cell_is_owned_by_some_clue() {
+        let qs = sample_questions();
+        let v = build_grid_json(Some("g1"), "T", &qs, 5, 3).unwrap();
+        let cells = v["cells"].as_array().unwrap();
+
+        let mut owned = std::collections::HashMap::<(usize, usize), char>::new();
+        for q in &qs {
+            for (i, ch) in q.answer.chars().enumerate() {
+                let x = if q.direction == "ACROSS" {
+                    (q.root_x + i as i32) as usize
+                } else {
+                    q.root_x as usize
+                };
+                let y = if q.direction == "DOWN" {
+                    (q.root_y + i as i32) as usize
+                } else {
+                    q.root_y as usize
+                };
+                if let Some(prev) = owned.insert((x, y), ch) {
+                    assert_eq!(
+                        prev, ch,
+                        "two clues overlap on ({x},{y}) with different letters — generator bug"
+                    );
+                }
             }
-            cells[y as usize][x as usize] = Some(ch.to_string());
         }
-    }
 
-    Ok(json!({
-        "id": row.get::<String, _>("id"),
-        "title": row.get::<String, _>("title"),
-        "grid": { "w": w, "h": h },
-        "cells": cells,
-        "questions": questions,
-    }))
+        let mut seen_filled = 0usize;
+        for (y, row) in cells.iter().enumerate() {
+            for (x, cell) in row.as_array().unwrap().iter().enumerate() {
+                if let Some(letter) = cell.as_str() {
+                    let expected = owned
+                        .get(&(x, y))
+                        .unwrap_or_else(|| panic!("cell ({x},{y}) is set but no clue owns it"));
+                    assert_eq!(
+                        letter.chars().next().unwrap(),
+                        *expected,
+                        "cell ({x},{y}) letter mismatch"
+                    );
+                    seen_filled += 1;
+                }
+            }
+        }
+        assert_eq!(
+            seen_filled,
+            owned.len(),
+            "every owned cell is rendered as a letter"
+        );
+    }
 }

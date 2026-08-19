@@ -1,0 +1,83 @@
+name: deploy-production
+
+# Production deploy. Triggered when a release tag (v*) is pushed to main, or
+# manually via workflow_dispatch. Mirrors deploy-staging.yml but targets the
+# production image policy marker in nixlab's crosswords.nix.
+#
+# Unlike staging (which deploys every main-branch SHA continuously), production
+# only promotes release-tag builds. The production marker in crosswords.nix is
+# the stable/pinned tag; this workflow bumps it to the release tag on each promotion.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to deploy to production (e.g. v0.1.3)"
+        required: true
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-production:
+    name: Bump production tag + regenerate manifests
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    steps:
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            access-tokens = github.com=${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Setup Nix caching
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Bump production tag + regenerate manifests in nixlab
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          NIXLAB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          if [ -z "${NIXLAB_TOKEN:-}" ]; then
+            echo "RELEASE_PLZ_TOKEN not set — skipping production deploy."
+            exit 0
+          fi
+          set -euo pipefail
+          git clone "https://x-access-token:${NIXLAB_TOKEN}@github.com/casazza-info/nixlab.git" nixlab
+          cd nixlab
+          file=modules/k8s/apps/crosswords.nix
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/casazza-info/".insteadOf "git@github.com:casazza-info/"
+
+          for attempt in 1 2 3; do
+            git fetch origin main -q
+            git reset -q --hard origin/main
+            # Rewrite only the line carrying the crosswords-prod $imagepolicy marker.
+            # The current value may be a v-tag — match anything quoted.
+            sed -i -E 's|tag = "[^"]+"; # \{"\$imagepolicy": "apps:crosswords-prod"\}|tag = "'"$TAG"'"; # {"$imagepolicy": "apps:crosswords-prod"}|' "$file"
+            if git diff --quiet -- "$file"; then
+              echo "Production already at $TAG — nothing to do."
+              exit 0
+            fi
+            git commit -qm "chore(k8s): deploy crosswords production to $TAG" -- "$file"
+            git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "git@github.com:olivecasazza/"
+            git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "ssh://git@github.com/olivecasazza/"
+            nix build .#k8s-manifests
+            cp -L result modules/k8s/manifests.yaml
+            rm -f result
+            git add modules/k8s/manifests.yaml
+            git commit -q --amend --no-edit
+            if git push origin HEAD:main; then
+              echo "Bumped nixlab crosswords production to $TAG (+ regenerated manifests)"
+              exit 0
+            fi
+            echo "nixlab main moved under us; retrying from the new head ($attempt/3)"
+          done
+          echo "Could not land the production bump after 3 attempts."; exit 1

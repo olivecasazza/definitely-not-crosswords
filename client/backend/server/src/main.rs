@@ -15,6 +15,7 @@ mod ctx;
 mod mailer;
 mod routers;
 mod webhook;
+mod wire;
 
 use axum::{
     extract::{
@@ -36,6 +37,8 @@ use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use wire::envelope;
+use uuid::Uuid;
 
 #[derive(Clone)]
 struct AppState {
@@ -132,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/trpc-ws", get(trpc_ws))
         .route("/api/trpc/:proc", get(trpc_get).post(trpc_post))
         .route("/api/jobs", post(jobs_create))
+        .route("/api/admin/jobs/:id/visibility", post(set_job_visibility))
         .route("/api/grids/:id", get(grid_get));
     // The `local-dev` callback issues a valid session for any account with NO
     // password check — a dev/E2E convenience. Only mount it in local so it can
@@ -453,16 +457,6 @@ async fn trpc_post(
     envelope(routers::dispatch(&proc, &input, &ctx).await)
 }
 
-fn envelope(res: Result<Value, String>) -> Json<Value> {
-    match res {
-        Ok(data) => Json(json!([{ "result": { "data": data } }])),
-        Err(e) => Json(json!([{
-            "error": { "message": e, "code": -32600,
-                       "data": { "code": "BAD_REQUEST", "httpStatus": 400 } }
-        }])),
-    }
-}
-
 // ── tRPC WebSocket subscriptions ─────────────────────────────────────────────
 // The client opens /api/trpc-ws and sends
 //   {id, method:"subscription", params:{path, input}}
@@ -611,10 +605,7 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
 }
 
 /// `GET /api/grids/:id` — retrieve a generated grid as JSON.
-async fn grid_get(
-    State(st): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn grid_get(State(st): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let ctx = Ctx {
         pool: st.pool.clone(),
         auth: st.auth.authenticate(&req_auth(&HeaderMap::new())),
@@ -624,7 +615,8 @@ async fn grid_get(
     match routers::generator::rest_get_grid(&ctx, &id).await {
         Ok(v) => (axum::http::StatusCode::OK, Json(v)),
         Err((msg, status)) => (
-            axum::http::StatusCode::from_u16(status as u16).unwrap_or(axum::http::StatusCode::BAD_REQUEST),
+            axum::http::StatusCode::from_u16(status as u16)
+                .unwrap_or(axum::http::StatusCode::BAD_REQUEST),
             Json(json!({ "error": msg })),
         ),
     }
@@ -647,8 +639,78 @@ async fn jobs_create(
     match routers::generator::rest_create_job(&ctx, body).await {
         Ok(v) => (axum::http::StatusCode::CREATED, Json(v)),
         Err((msg, status)) => (
-            axum::http::StatusCode::from_u16(status as u16).unwrap_or(axum::http::StatusCode::BAD_REQUEST),
+            axum::http::StatusCode::from_u16(status as u16)
+                .unwrap_or(axum::http::StatusCode::BAD_REQUEST),
             Json(json!({ "error": msg })),
+        ),
+    }
+}
+
+async fn set_job_visibility(
+    State(st): State<AppState>,
+    axum::extract::Path(job_id): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let ctx = Ctx {
+        pool: st.pool.clone(),
+        auth: st.auth.authenticate(&req_auth(&headers)),
+        events: st.events.clone(),
+        mailer: st.mailer.clone(),
+    };
+    let user = match ctx.require_user() {
+        Ok(u) => u,
+        Err(e) => {
+            return (
+                axum::http::StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": e })),
+            )
+        }
+    };
+    if !user.role.has(Capability::AdminAccess) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            Json(json!({ "error": "FORBIDDEN" })),
+        );
+    }
+    let visibility = match body.get("visibility").and_then(|v| v.as_str()) {
+        Some("PUBLIC") => "PUBLIC",
+        Some("TEAM") => "TEAM",
+        _ => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "visibility must be TEAM or PUBLIC" })),
+            )
+        }
+    };
+    let result = sqlx::query(
+        r#"UPDATE "CrosswordGenerationJob" SET visibility = $2::"JobVisibility", "updatedAt" = now() WHERE id = $1 RETURNING id"#,
+    )
+    .bind(&job_id)
+    .bind(visibility)
+    .fetch_optional(&ctx.pool)
+    .await;
+    match result {
+        Ok(Some(_)) => {
+            let actor_id = &user.id;
+            let _ = sqlx::query(
+                r#"INSERT INTO "JobAuditLog" (id, "jobId", "actorId", "eventType", payload, "createdAt") VALUES ($1, $2, $3, 'acl_changed', $4::jsonb, now())"#,
+            )
+            .bind(&Uuid::new_v4().to_string())
+            .bind(&job_id)
+            .bind(actor_id)
+            .bind(json!({ "visibility": visibility }))
+            .execute(&ctx.pool)
+            .await;
+            (axum::http::StatusCode::OK, Json(json!({ "visibility": visibility })))
+        }
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({ "error": "job not found" })),
+        ),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
         ),
     }
 }

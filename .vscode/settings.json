@@ -1,9 +1,0 @@
-{
-    "search.exclude": {
-        "**/node_modules": false
-    },
-    "search.useGlobalIgnoreFiles": true,
-    "search.useIgnoreFiles": true,
-    "typescript.tsdk": "node_modules/typescript/lib",
-    "search.useParentIgnoreFiles": true
-}

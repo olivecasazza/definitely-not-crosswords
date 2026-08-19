@@ -645,7 +645,7 @@ pub async fn rest_get_grid(ctx: &Ctx, id: &str) -> Result<Value, (String, i32)> 
     .bind(id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| (e.to_string(), 500))?;
 
     let row = match row {
         Some(r) => r,
@@ -668,7 +668,7 @@ pub async fn rest_get_grid(ctx: &Ctx, id: &str) -> Result<Value, (String, i32)> 
     .bind(id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| (e.to_string(), 500))?;
 
     let questions: Vec<Value> = q_rows
         .iter()

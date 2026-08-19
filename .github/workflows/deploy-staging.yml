@@ -73,6 +73,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # Rewrite git@github.com:casazza-info/ SSH URLs to HTTPS with token so
+          # nix build can fetch private flake inputs (e.g. inputs.agentctx) in CI.
+          git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/casazza-info/".insteadOf "git@github.com:casazza-info/"
+
           # manifests.yaml is kubenix-generated and nixlab regenerates it on EVERY
           # change, so it must never take part in a rebase — the old
           # regenerate-then-rebase order put it in one and conflicted every single

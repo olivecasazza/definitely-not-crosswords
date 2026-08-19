@@ -15,6 +15,7 @@ mod ctx;
 mod mailer;
 mod routers;
 mod webhook;
+mod wire;
 
 use axum::{
     extract::{
@@ -36,6 +37,7 @@ use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use wire::envelope;
 
 #[derive(Clone)]
 struct AppState {
@@ -453,16 +455,6 @@ async fn trpc_post(
     envelope(routers::dispatch(&proc, &input, &ctx).await)
 }
 
-fn envelope(res: Result<Value, String>) -> Json<Value> {
-    match res {
-        Ok(data) => Json(json!([{ "result": { "data": data } }])),
-        Err(e) => Json(json!([{
-            "error": { "message": e, "code": -32600,
-                       "data": { "code": "BAD_REQUEST", "httpStatus": 400 } }
-        }])),
-    }
-}
-
 // ── tRPC WebSocket subscriptions ─────────────────────────────────────────────
 // The client opens /api/trpc-ws and sends
 //   {id, method:"subscription", params:{path, input}}
@@ -611,10 +603,7 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
 }
 
 /// `GET /api/grids/:id` — retrieve a generated grid as JSON.
-async fn grid_get(
-    State(st): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn grid_get(State(st): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let ctx = Ctx {
         pool: st.pool.clone(),
         auth: st.auth.authenticate(&req_auth(&HeaderMap::new())),
@@ -624,7 +613,8 @@ async fn grid_get(
     match routers::generator::rest_get_grid(&ctx, &id).await {
         Ok(v) => (axum::http::StatusCode::OK, Json(v)),
         Err((msg, status)) => (
-            axum::http::StatusCode::from_u16(status as u16).unwrap_or(axum::http::StatusCode::BAD_REQUEST),
+            axum::http::StatusCode::from_u16(status as u16)
+                .unwrap_or(axum::http::StatusCode::BAD_REQUEST),
             Json(json!({ "error": msg })),
         ),
     }
@@ -647,7 +637,8 @@ async fn jobs_create(
     match routers::generator::rest_create_job(&ctx, body).await {
         Ok(v) => (axum::http::StatusCode::CREATED, Json(v)),
         Err((msg, status)) => (
-            axum::http::StatusCode::from_u16(status as u16).unwrap_or(axum::http::StatusCode::BAD_REQUEST),
+            axum::http::StatusCode::from_u16(status as u16)
+                .unwrap_or(axum::http::StatusCode::BAD_REQUEST),
             Json(json!({ "error": msg })),
         ),
     }

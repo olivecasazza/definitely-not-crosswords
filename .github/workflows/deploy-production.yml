@@ -59,9 +59,9 @@ jobs:
           for attempt in 1 2 3; do
             git fetch origin main -q
             git reset -q --hard origin/main
-            # Rewrite only the line carrying the crosswords-prod $imagepolicy marker.
-            # The current value may be a v-tag — match anything quoted.
-            sed -i -E 's|tag = "[^"]+"; # \{"\$imagepolicy": "apps:crosswords-prod"\}|tag = "'"$TAG"'"; # {"$imagepolicy": "apps:crosswords-prod"}|' "$file"
+            # Rewrite the production tag line.  The imagepolicy comment may or may not
+            # be present yet (first promotion adds it); make the comment group optional.
+            sed -i -E 's|tag = "[^"]+";( # \{"\$imagepolicy": "apps:crosswords-prod"\})?|tag = "'"$TAG"'"; \1|' "$file"
             if git diff --quiet -- "$file"; then
               echo "Production already at $TAG — nothing to do."
               exit 0

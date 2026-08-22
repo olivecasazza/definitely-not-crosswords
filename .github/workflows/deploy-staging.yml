@@ -99,8 +99,10 @@ jobs:
             # new tag (no dirty-tree ambiguity), then fold the regenerated manifest in.
             git commit -qm "chore(k8s): deploy crosswords staging to $TAG" -- "$file"
             # Rewrite SSH URLs for agentctx (private repo, olivecasazza org) to HTTPS
-            # with token auth (DEF-64/DEF-66/DEF-78).
+            # with token auth (DEF-64/DEF-66/DEF-78). The colon form (git@github.com:)
+            # is caught by the global rewrite above; add the ssh:// form here too.
             git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "git@github.com:olivecasazza/"
+            git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "ssh://git@github.com/olivecasazza/"
             nix build .#k8s-manifests
             cp -L result modules/k8s/manifests.yaml
             rm -f result

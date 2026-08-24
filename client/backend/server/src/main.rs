@@ -16,7 +16,6 @@ mod mailer;
 mod routers;
 mod webhook;
 mod wire;
-
 use axum::{
     extract::{
         ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},

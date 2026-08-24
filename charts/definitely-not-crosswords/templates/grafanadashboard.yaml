@@ -1,5 +1,24 @@
 {{- if .Values.observability.grafanaDashboard.enabled -}}
 {{- $dashboardNamespace := default .Release.Namespace .Values.observability.grafanaDashboard.namespace -}}
+{{/*
+  Which of these render data, verified against the live Prometheus rather than
+  assumed:
+
+  platform-health and resource-efficiency query only kube-state-metrics,
+  cAdvisor and Longhorn. All present and populated — these work as soon as this
+  is enabled.
+
+  frontend-errors, backend-errors and testing-regressions query
+  definitely_not_crosswords_* series, which nothing emits: the Rust server has
+  no /metrics route and service.yaml never exposes the otel-metrics port. They
+  stay dark until that ships.
+
+  delivery is mixed. Its Kubernetes and CronJob panels work; its GitOps panels
+  read gotk_* from the Flux controllers, which Prometheus could not scrape until
+  nixlab febdedd96 (host-networked Prometheus was dropped by Flux's own
+  NetworkPolicy). Those panels backfill from the point that landed, not before —
+  there is no history to draw.
+*/}}
 {{- $dashboards := list
   (dict
     "name" "frontend-errors"
@@ -18,6 +37,24 @@
     "title" "Crosswords Testing Regressions"
     "uid" "crosswords-testing-regressions"
     "file" "testing-regressions.json"
+  )
+  (dict
+    "name" "platform-health"
+    "title" "Crosswords Platform Health"
+    "uid" "crosswords-platform-health"
+    "file" "platform-health.json"
+  )
+  (dict
+    "name" "resource-efficiency"
+    "title" "Crosswords Resource Efficiency"
+    "uid" "crosswords-resource-efficiency"
+    "file" "resource-efficiency.json"
+  )
+  (dict
+    "name" "delivery"
+    "title" "Crosswords Delivery & GitOps"
+    "uid" "crosswords-delivery"
+    "file" "delivery.json"
   )
 -}}
 {{- range $dashboards }}

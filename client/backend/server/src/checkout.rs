@@ -6,7 +6,7 @@
 //!
 //! Needs LEMONSQUEEZY_API_KEY, LEMONSQUEEZY_STORE_ID, LEMONSQUEEZY_VARIANT_ID.
 
-use crate::AppState;
+use crate::state::AppState;
 use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -17,7 +17,7 @@ pub async fn checkout(
     body: Option<Json<Value>>,
 ) -> Response {
     // Authenticate via the next-auth cookie.
-    let auth = st.auth.authenticate(&crate::req_auth(&headers));
+    let auth = st.auth.authenticate(&crate::state::req_auth(&headers));
     let Some(user) = auth.user else {
         return err(401, "Unauthorized");
     };

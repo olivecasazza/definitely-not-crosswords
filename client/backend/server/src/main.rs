@@ -9,13 +9,6 @@
 //! `routers/<name>.rs`, one module per tRPC router. WS subscriptions land with
 //! the events crate (Phase C).
 
-mod auth_routes;
-mod checkout;
-mod ctx;
-mod mailer;
-mod routers;
-mod webhook;
-mod wire;
 use axum::{
     extract::{
         ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
@@ -26,30 +19,25 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use crossword_auth::{AuthContext, AuthService, RequestAuth};
+use crossword_auth::{AuthContext, AuthService};
 use crossword_db::AppEvent;
 use crossword_events::EventBus;
-use ctx::Ctx;
+use crossword_server::{
+    auth_routes, checkout,
+    ctx::Ctx,
+    mailer::Mailer,
+    routers::{self},
+    state::{req_auth, AppState},
+    webhook,
+    wire::envelope,
+};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use wire::envelope;
 use uuid::Uuid;
-
-#[derive(Clone)]
-struct AppState {
-    pool: PgPool,
-    auth: AuthService,
-    events: EventBus,
-    mailer: mailer::Mailer,
-    /// Deploy environment: "local" | "staging" | "production" (from APP_ENV).
-    /// The wasm bundle is shared across envs, so the frontend learns the env at
-    /// runtime from `/api/config` rather than a build-time constant.
-    env: String,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -146,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         auth,
         events,
-        mailer: mailer::Mailer::from_env(&env),
+        mailer: Mailer::from_env(&env),
         env,
     });
 
@@ -350,21 +338,6 @@ async fn seed_games(pool: PgPool, count: usize) -> anyhow::Result<()> {
     .rows_affected();
     tracing::info!("seeding complete: published {published} platform games");
     Ok(())
-}
-
-/// Build the auth request from headers (next-auth cookie + optional bearer).
-pub(crate) fn req_auth(headers: &HeaderMap) -> RequestAuth {
-    RequestAuth {
-        cookie_header: headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string()),
-        bearer_token: headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.strip_prefix("Bearer "))
-            .map(|s| s.to_string()),
-    }
 }
 
 /// GET /api/config — runtime config for the shared wasm bundle: the deploy
@@ -701,7 +674,10 @@ async fn set_job_visibility(
             .bind(json!({ "visibility": visibility }))
             .execute(&ctx.pool)
             .await;
-            (axum::http::StatusCode::OK, Json(json!({ "visibility": visibility })))
+            (
+                axum::http::StatusCode::OK,
+                Json(json!({ "visibility": visibility })),
+            )
         }
         Ok(None) => (
             axum::http::StatusCode::NOT_FOUND,

@@ -2,7 +2,7 @@
 //! the app can authenticate entirely against the Rust backend.
 //! Ports: /api/auth/csrf, /api/auth/callback/{credentials,local-dev}, /signout.
 
-use crate::AppState;
+use crate::state::AppState;
 use axum::{
     extract::{Form, State},
     http::header::SET_COOKIE,

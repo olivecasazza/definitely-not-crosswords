@@ -1275,22 +1275,27 @@ mod tests {
         let baseline = build_grid_json(Some("g1"), "T", &qs, 5, 3).unwrap();
         let baseline_hash = baseline["solutionHash"].as_str().unwrap().to_string();
 
-        for (label, mutate) in [
-            ("number", |q: &mut GridQuestion| q.number += 1000),
-            ("direction", |q: &mut GridQuestion| {
+        // (label, question index to mutate, mutation). The direction flip
+        // targets the DOWN entry (idx 2): flipping the 5-letter ACROSS
+        // entry to DOWN would overflow the 5x3 grid before hashing.
+        type QuestionMutation = fn(&mut GridQuestion);
+        let mutations: [(&str, usize, QuestionMutation); 6] = [
+            ("number", 0, |q: &mut GridQuestion| q.number += 1000),
+            ("direction", 2, |q: &mut GridQuestion| {
                 q.direction = if q.direction == "ACROSS" {
                     "DOWN".into()
                 } else {
                     "ACROSS".into()
                 }
             }),
-            ("rootX", |q: &mut GridQuestion| q.root_x += 1),
-            ("rootY", |q: &mut GridQuestion| q.root_y += 1),
-            ("answer", |q: &mut GridQuestion| q.answer.push('Z')),
-            ("clue", |q: &mut GridQuestion| q.clue.push('!')),
-        ] {
+            ("rootX", 2, |q: &mut GridQuestion| q.root_x += 1),
+            ("rootY", 2, |q: &mut GridQuestion| q.root_y += 1),
+            ("answer", 2, |q: &mut GridQuestion| q.answer.push('Z')),
+            ("clue", 0, |q: &mut GridQuestion| q.clue.push('!')),
+        ];
+        for (label, idx, mutate) in mutations {
             let mut mutated = qs.clone();
-            mutate(&mut mutated[0]);
+            mutate(&mut mutated[idx]);
             let v = build_grid_json(Some("g1"), "T", &mutated, 5, 3).unwrap();
             let h = v["solutionHash"].as_str().unwrap();
             assert_ne!(

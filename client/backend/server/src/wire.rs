@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn success_envelope_keeps_data_payload() {
-        let v = envelope(Ok(json!({ "jobId": "abc" }))).0();
+        let v = envelope(Ok(json!({ "jobId": "abc" }))).0;
         assert_eq!(v[0]["result"]["data"]["jobId"], "abc");
         assert!(v[0].get("error").is_none());
     }
@@ -63,7 +63,7 @@ mod tests {
     fn forbidden_envelope_is_403_not_500() {
         // Regression for DEF-70: the router's `Err("FORBIDDEN")` MUST surface
         // as a structured 403, not a 500 / BAD_REQUEST.
-        let v = envelope(Err("FORBIDDEN".into())).0();
+        let v = envelope(Err("FORBIDDEN".into())).0;
         assert_eq!(v[0]["error"]["data"]["code"], "FORBIDDEN");
         assert_eq!(v[0]["error"]["data"]["httpStatus"], 403);
         assert_eq!(v[0]["error"]["code"], -32600);
@@ -71,14 +71,14 @@ mod tests {
 
     #[test]
     fn unauthorized_envelope_is_401() {
-        let v = envelope(Err("UNAUTHORIZED".into())).0();
+        let v = envelope(Err("UNAUTHORIZED".into())).0;
         assert_eq!(v[0]["error"]["data"]["code"], "UNAUTHORIZED");
         assert_eq!(v[0]["error"]["data"]["httpStatus"], 401);
     }
 
     #[test]
     fn internal_prefix_is_500() {
-        let v = envelope(Err("INTERNAL: db is on fire".into())).0();
+        let v = envelope(Err("INTERNAL: db is on fire".into())).0;
         assert_eq!(v[0]["error"]["data"]["code"], "INTERNAL_SERVER_ERROR");
         assert_eq!(v[0]["error"]["data"]["httpStatus"], 500);
         assert_eq!(v[0]["error"]["code"], -32603);
@@ -90,7 +90,7 @@ mod tests {
         // Anything that doesn't match the structured prefixes falls through
         // as BAD_REQUEST / 400 — preserves the old behavior for all the
         // existing validation-error paths.
-        let v = envelope(Err("topic is required".into())).0();
+        let v = envelope(Err("topic is required".into())).0;
         assert_eq!(v[0]["error"]["data"]["code"], "BAD_REQUEST");
         assert_eq!(v[0]["error"]["data"]["httpStatus"], 400);
         assert_eq!(v[0]["error"]["message"], "topic is required");

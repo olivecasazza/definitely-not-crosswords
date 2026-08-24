@@ -1,0 +1,14 @@
+{
+  "name": "crossword-e2e",
+  "private": true,
+  "description": "Playwright e2e canary + demo-video for definitely-not-crosswords. Deterministic, semantic-locator based (resilient to UI refactors).",
+  "scripts": {
+    "test": "playwright test",
+    "canary": "playwright test smoke.spec.ts",
+    "demo": "playwright test demo.spec.ts",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0"
+  }
+}

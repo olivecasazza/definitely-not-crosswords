@@ -1,0 +1,26 @@
+# release-plz: this is a deployable app (Axum server + wasm + desktop), not a
+# crates.io library — so no publish. The 8 workspace crates share one version
+# (`version.workspace = true`), and we want ONE app version, ONE tag, ONE
+# changelog and ONE GitHub release. Achieve that by disabling release artifacts
+# for every crate by default and enabling them only on the deployable
+# `crossword-server` crate (whose version is the app version).
+
+[workspace]
+publish = false
+git_release_enable = false
+git_tag_enable = false
+changelog_update = false
+
+[[package]]
+name = "crossword-server"
+git_release_enable = true
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+# The changelog is NOT release-plz's job here — see the "Rewrite release notes"
+# step in .github/workflows/release-plz.yml and .github/cliff.toml. release-plz
+# can't locate the previous release for this repo (publish = false so there's no
+# registry package, and the Cargo workspace sits in client/ while .git is one
+# level up, which also rules out git_only), so it fed git-cliff the entire repo
+# history and every release re-published the same block. git-cliff run over
+# `<prev-tag>..<new-tag>` gets it right, so CI does that after the tag exists.
+changelog_update = false

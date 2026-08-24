@@ -1,0 +1,9 @@
+[package]
+name = "crossword-events"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+crossword-db = { path = "../db" }
+tokio.workspace = true

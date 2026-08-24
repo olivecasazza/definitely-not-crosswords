@@ -1,0 +1,15 @@
+//! Shared components. Each is owned by its file.
+
+pub mod admin;
+pub mod auth_layout;
+pub mod brand;
+pub mod footer;
+pub mod footer_dock;
+pub mod game_list;
+pub mod generation_progress;
+pub mod header;
+pub mod identicon;
+pub mod pro_upgrade;
+pub mod staging_banner;
+pub mod tab_bar;
+pub mod ui;

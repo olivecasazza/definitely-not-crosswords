@@ -1,0 +1,294 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]   # release tags (from release-plz) → push the versioned image
+  pull_request:
+    types: [ opened, synchronize, reopened, edited ]
+    branches: [ main ]
+  pull_request_review:
+    types: [ submitted ]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write # Required for Google OIDC Workload Identity Federation
+
+env:
+  GAR_LOCATION: us-central1
+  GAR_REGISTRY: us-central1-docker.pkg.dev
+  PROJECT_ID: casazza-identity
+  REPOSITORY: nixlab
+  IMAGE: definitely-not-crosswords
+  WIF_PROVIDER: projects/943444128204/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+  WIF_SERVICE_ACCOUNT: crosswords-ci@casazza-identity.iam.gserviceaccount.com
+
+jobs:
+  checks:
+    name: Nix Build & Checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      # Build every deliverable from the Rust workspace. IFD is needed because the
+      # client flake vendors panel-kit into a derivation it reads manifests from.
+      - name: Build server, web, desktop, tools
+        run: |
+          nix build --option allow-import-from-derivation true -L \
+            ./client#crossword-server \
+            ./client#crossword-web \
+            ./client#crossword-desktop \
+            ./client#crossword-tools
+
+  # Migrations are applied by the `migrate-db` init container at pod start, so
+  # before this job the FIRST place any migration ever ran was a real database.
+  # That is how prod silently lost `User."vipPass"` and the whole `Discount`
+  # table for six weeks (see migrations/20260812000000_repair_adopted_schema_drift).
+  # Everything here runs against a throwaway Postgres; nothing touches a real one.
+  migrations:
+    name: Migrations Apply Cleanly
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: [ '5432:5432' ]
+        # Don't start the job until the server actually accepts connections.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build the migrate binary
+        run: |
+          nix build --option allow-import-from-derivation true -L ./client#crossword-tools
+
+      # 1. Fresh database → every migration must apply from scratch. Catches
+      #    syntax errors, bad ordering, and SQL that only works on a DB that
+      #    already happens to have the objects.
+      - name: Apply migrations to an empty database
+        run: ./result/bin/migrate
+
+      - name: Every migration ran, and none was merely marked applied
+        run: |
+          set -euo pipefail
+          files=$(ls client/backend/tools/migrations/*.sql | wc -l)
+          applied=$(psql "$DATABASE_URL" -At -c 'select count(*) from _sqlx_migrations')
+          echo "migration files: $files / applied: $applied"
+          if [ "$files" -ne "$applied" ]; then
+            echo "::error::$files migration files but $applied applied rows"
+            exit 1
+          fi
+          # The signature of the 2026-06-30 corruption: a row inserted by a
+          # baseline rather than by an actual run. Nothing may ever be recorded
+          # as applied without having executed.
+          baselined=$(psql "$DATABASE_URL" -At -c \
+            'select count(*) from _sqlx_migrations where execution_time = 0')
+          if [ "$baselined" -ne 0 ]; then
+            echo "::error::$baselined migration(s) recorded with execution_time=0 (marked applied without running)"
+            psql "$DATABASE_URL" -c \
+              'select version, description from _sqlx_migrations where execution_time = 0'
+            exit 1
+          fi
+          failed=$(psql "$DATABASE_URL" -At -c \
+            'select count(*) from _sqlx_migrations where success is not true')
+          [ "$failed" -eq 0 ] || { echo "::error::$failed migration(s) recorded as failed"; exit 1; }
+
+      # 2. Re-running must be a clean no-op. The init container runs `migrate` on
+      #    EVERY pod start, so a non-idempotent migration breaks the next rollout,
+      #    not the one that introduced it.
+      - name: Re-run is a no-op
+        run: |
+          set -euo pipefail
+          before=$(psql "$DATABASE_URL" -At -c 'select count(*) from _sqlx_migrations')
+          ./result/bin/migrate
+          after=$(psql "$DATABASE_URL" -At -c 'select count(*) from _sqlx_migrations')
+          [ "$before" = "$after" ] || { echo "::error::rerun changed applied count $before -> $after"; exit 1; }
+
+      # 3. The objects prod actually lost. A migration can apply "successfully"
+      #    and still leave the schema wrong — this asserts the end state, which
+      #    is the only thing the application cares about.
+      - name: Schema contains what the app queries
+        run: |
+          set -euo pipefail
+          check() {
+            got=$(psql "$DATABASE_URL" -At -c "$2")
+            [ "$got" = "t" ] || { echo "::error::missing $1"; exit 1; }
+            echo "ok  $1"
+          }
+          check 'User."vipPass"' \
+            "select exists(select 1 from information_schema.columns where table_name='User' and column_name='vipPass')"
+          check 'Discount table' \
+            "select exists(select 1 from information_schema.tables where table_name='Discount')"
+          check 'Team table' \
+            "select exists(select 1 from information_schema.tables where table_name='Team')"
+          check 'DailyPick table' \
+            "select exists(select 1 from information_schema.tables where table_name='DailyPick')"
+
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [ checks, migrations ]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      # Authenticate to Google Cloud via OIDC Workload Identity Federation
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GAR_REGISTRY }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      # Build the layered image with nix and load it into the local docker daemon.
+      - name: Build image (nix)
+        run: |
+          IMAGE_TAR=$(nix build --option allow-import-from-derivation true --no-link --print-out-paths .#dockerImage)
+          docker load < "$IMAGE_TAR"
+
+      - name: Tag and push
+        if: github.event_name == 'push'
+        run: |
+          BASE="${GAR_REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            # Release tag (from release-plz) → publish the versioned image. Flux's
+            # semver ImagePolicy promotes this to the cluster.
+            VERSION="${GITHUB_REF#refs/tags/}"
+            docker tag "${BASE}:latest" "${BASE}:${VERSION}"
+            docker push "${BASE}:${VERSION}"
+            echo "pushed ${BASE}:${VERSION}"
+          elif [[ "${GITHUB_REF}" == refs/heads/main ]]; then
+            # Continuous build on main: keep :latest + :sha (current deploy tracks
+            # :latest until the ImagePolicy is flipped to semver).
+            docker tag "${BASE}:latest" "${BASE}:${GITHUB_SHA}"
+            docker push "${BASE}:${GITHUB_SHA}"
+            docker push "${BASE}:latest"
+            echo "pushed ${BASE}:latest + :${GITHUB_SHA}"
+          fi
+
+  conventional-commits-check:
+    name: Conventional Commits Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    outputs:
+      is_major: ${{ steps.check_commits.outputs.is_major }}
+    steps:
+      - name: Check commits for breaking changes
+        id: check_commits
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
+          fi
+
+          echo "PR Number: $PR_NUMBER"
+
+          # Breaking change: "type!:" prefix or "BREAKING CHANGE(S)" in the body.
+          # Note: the API can return a null commit message (release-plz's commit
+          # on the release PR does) — `. // ""` keeps jq's test() from dying on it.
+          has_breaking=$(gh pr view $PR_NUMBER -R ${{ github.repository }} --json commits --jq '[.commits[].message | . // "" | select(test("^[a-zA-Z]+!:") or contains("BREAKING CHANGE") or contains("BREAKING CHANGES"))] | length > 0')
+
+          if [ "$has_breaking" = "true" ]; then
+            echo "is_major=true" >> $GITHUB_OUTPUT
+            echo "🚨 BREAKING CHANGE (Major Version Change) detected in PR commits!"
+          else
+            echo "is_major=false" >> $GITHUB_OUTPUT
+            echo "✅ Only Minor/Patch commits detected."
+          fi
+
+  approval-check:
+    name: Dynamic Approval Check
+    runs-on: ubuntu-latest
+    needs: conventional-commits-check
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    steps:
+      - name: Verify Review Status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IS_MAJOR: ${{ needs.conventional-commits-check.outputs.is_major }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
+          fi
+
+          if [ "$IS_MAJOR" = "true" ]; then
+            approvals=$(gh pr view $PR_NUMBER -R ${{ github.repository }} --json reviews --jq '[.reviews[] | select(.state == "APPROVED")] | length')
+            if [ "$approvals" -eq 0 ]; then
+              echo "❌ Major version change requires at least one APPROVED review to merge!"
+              exit 1
+            else
+              echo "✅ Major version change has $approvals approved reviews."
+            fi
+          else
+            echo "✅ Minor/Patch version change. Approved review is not required."
+          fi
+
+  auto-merge:
+    name: Auto-Merge Minor/Patch PR
+    runs-on: ubuntu-latest
+    needs: [ checks, build-and-push, conventional-commits-check, approval-check ]
+    if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
+    steps:
+      - name: Enable Auto-Merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
+          fi
+          # Needs the repo's "Allow auto-merge" setting. It was off, so this step
+          # red-X'd every PR while the code itself was green. Don't fail CI over a
+          # repo setting — report it and move on; the PR is still mergeable by hand.
+          if gh pr merge "$PR_NUMBER" -R ${{ github.repository }} --auto --squash; then
+            echo "✅ Auto-merge enabled for PR #$PR_NUMBER (squash)."
+          else
+            echo "::warning::Could not enable auto-merge for PR #$PR_NUMBER — check that"
+            echo "::warning::Settings → General → 'Allow auto-merge' is enabled. Merge manually."
+          fi

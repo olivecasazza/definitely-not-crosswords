@@ -1,0 +1,64 @@
+{{- if .Values.observability.grafanaDashboard.enabled -}}
+{{- $dashboardNamespace := default .Release.Namespace .Values.observability.grafanaDashboard.namespace -}}
+{{- $dashboards := list
+  (dict
+    "name" "frontend-errors"
+    "title" "Crosswords Frontend Error Rate"
+    "uid" "crosswords-frontend-errors"
+    "file" "frontend-errors.json"
+  )
+  (dict
+    "name" "backend-errors"
+    "title" "Crosswords Backend Error Rate"
+    "uid" "crosswords-backend-errors"
+    "file" "backend-errors.json"
+  )
+  (dict
+    "name" "testing-regressions"
+    "title" "Crosswords Testing Regressions"
+    "uid" "crosswords-testing-regressions"
+    "file" "testing-regressions.json"
+  )
+-}}
+{{- range $dashboards }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "definitely-not-crosswords.fullname" $ }}-grafana-dashboard-{{ .name }}
+  namespace: {{ $dashboardNamespace }}
+  labels:
+    {{- include "definitely-not-crosswords.labels" $ | nindent 4 }}
+    {{- with $.Values.observability.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    grafana_dashboard_name: {{ .name | quote }}
+data:
+  {{ .file }}: |
+{{ $.Files.Get (printf "dashboards/%s" .file) | nindent 4 }}
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: {{ include "definitely-not-crosswords.fullname" $ }}-{{ .name }}
+  namespace: {{ $dashboardNamespace }}
+  labels:
+    {{- include "definitely-not-crosswords.labels" $ | nindent 4 }}
+spec:
+  {{- if $.Values.observability.grafanaDashboard.allowCrossNamespaceImport }}
+  allowCrossNamespaceImport: true
+  {{- end }}
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  folder: {{ $.Values.observability.grafanaDashboard.folder | quote }}
+  uid: {{ .uid | quote }}
+  datasources:
+    - inputName: DS_PROMETHEUS
+      datasourceName: Prometheus
+  configMapRef:
+    name: {{ include "definitely-not-crosswords.fullname" $ }}-grafana-dashboard-{{ .name }}
+    key: {{ .file }}
+{{- end }}
+{{- end -}}

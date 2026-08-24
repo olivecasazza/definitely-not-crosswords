@@ -1,0 +1,79 @@
+name: Build GCE Images (disabled — migrated to Hydra CI)
+
+on:
+  # Disabled: GCE image builds now run on Hydra (hydra.casazza.io)
+  # push:
+  #   branches: [main]
+    paths:
+      - 'systems/x86_64-linux/gcp-*/**'
+      - 'modules/nixos/**'
+      - 'lib/wireguard-peers.nix'
+      - 'lib/hosts.nix'
+      - 'lib/keys.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+  workflow_dispatch:
+    inputs:
+      hosts:
+        description: 'Comma-separated hosts (empty = all)'
+        required: false
+        default: 'gcp-cp,gcp-hydra'
+
+# Cancel in-progress runs on new push
+concurrency:
+  group: gce-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Upload ${{ matrix.host }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        host:
+          - gcp-cp
+          - gcp-hydra
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build NixOS GCE image
+        run: |
+          echo "Building NixOS GCE image for ${{ matrix.host }}..."
+          nix build \
+            .#nixosConfigurations.${{ matrix.host }}.config.system.build.googleComputeImage \
+            --out-link result \
+            --print-build-logs
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Upload to GCS and create GCE image
+        run: |
+          DATE=$(date +%Y%m%d-%H%M)
+          IMAGE_NAME="${{ matrix.host }}-${DATE}"
+          IMAGE_FILE=$(ls result/*.raw.tar.gz | head -1)
+
+          echo "Uploading to gs://nixlab-images/${IMAGE_NAME}.raw.tar.gz"
+          gsutil cp "$IMAGE_FILE" "gs://nixlab-images/${IMAGE_NAME}.raw.tar.gz"
+
+          echo "Creating GCE image in family ${{ matrix.host }}"
+          gcloud compute images create "$IMAGE_NAME" \
+            --source-uri="gs://nixlab-images/${IMAGE_NAME}.raw.tar.gz" \
+            --family="${{ matrix.host }}" \
+            --project=casazza-identity \
+            --description="NixOS from ${{ github.sha }} built $(date -Iseconds)"
+
+          echo "::notice::Image $IMAGE_NAME created in family ${{ matrix.host }}"

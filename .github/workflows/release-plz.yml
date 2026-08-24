@@ -1,0 +1,191 @@
+name: release-plz
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # manual trigger — e.g. to cut the first release after adding the PAT
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Only one release-plz run at a time (it commits to main / opens the release PR).
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # `secrets` can't be referenced in a job-level `if`, so a tiny guard job turns
+  # the PAT's presence into a `needs` output. release-plz is INERT until a PAT is
+  # provisioned: tags created with the default GITHUB_TOKEN don't trigger the
+  # image-build workflow (GitHub anti-recursion), which would yield a tag with no
+  # image. Provision `RELEASE_PLZ_TOKEN` (contents + pull-requests write) to
+  # activate — or install the release-plz GitHub App and remove this gate.
+  guard:
+    name: Check release token
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"; else echo "enabled=false" >> "$GITHUB_OUTPUT"; fi
+
+  release-plz:
+    name: Release-plz
+    needs: guard
+    if: needs.guard.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      # web/Cargo.toml pins panel-kit by absolute host path (the flake rewrites it
+      # at build time; release-plz runs plain `cargo metadata`, which needs the
+      # path to exist). Clone it there — outside the repo tree, so release-plz's
+      # clean-tree check is unaffected.
+      - name: Vendor panel-kit at its pinned path
+        run: |
+          sudo mkdir -p /home/olive/Repositories
+          sudo chown -R "$(id -un)" /home/olive
+          git clone https://github.com/olivecasazza/panel-kit /home/olive/Repositories/panel-kit
+          git -C /home/olive/Repositories/panel-kit checkout dac9f0061b73fa8fdb554a9575985a413facaebb
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # We run the release-plz CLI directly instead of release-plz/action, because
+      # the action can't pass `--registry-manifest-path`. These crates are
+      # publish=false, so release-plz's default baseline (the crates.io package)
+      # doesn't exist — it finds nothing to diff against and never bumps the
+      # version. We hand it the last released version instead, via a worktree
+      # checked out at the last tag: release-plz's supported "the released version
+      # is already available locally" path. Everything downstream (bump PR,
+      # Cargo.lock, changelog, tag, GitHub release) is release-plz as designed.
+      - name: Install release-plz
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://github.com/release-plz/release-plz/releases/download/release-plz-v0.3.159/release-plz-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C "$HOME/.local/bin" release-plz
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/release-plz" --version
+
+      - name: Configure git identity for release commits
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Check out the last release as the version baseline
+        id: baseline
+        run: |
+          last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -n "$last_tag" ]; then
+            echo "Baselining version detection against $last_tag"
+            git worktree add --detach /tmp/release-baseline "$last_tag"
+            echo "flag=--registry-manifest-path /tmp/release-baseline/client/Cargo.toml" >> "$GITHUB_OUTPUT"
+          else
+            echo "No prior v* tag — first release, no baseline needed"
+            echo "flag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: release-plz release-pr (open/update the version-bump PR)
+        env:
+          GIT_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          release-plz release-pr \
+            --manifest-path client/Cargo.toml \
+            ${{ steps.baseline.outputs.flag }} \
+            --git-token "$GIT_TOKEN"
+
+      # Cuts the tag + GitHub release when Cargo.toml is ahead of the tags (i.e.
+      # right after a release PR merges). No baseline needed — it only compares the
+      # manifest version against existing tags. The PAT (not GITHUB_TOKEN) is what
+      # lets the new tag trigger the image-build workflow.
+      - name: release-plz release (tag + GitHub release)
+        env:
+          GIT_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          release-plz release \
+            --manifest-path client/Cargo.toml \
+            --git-token "$GIT_TOKEN"
+
+      # release-plz can't work out where the previous release ended for this repo
+      # (publish = false → no registry package; the Cargo workspace is in client/
+      # while .git is a level up → git_only is out too), so it hands git-cliff the
+      # whole repo history and every release re-published the SAME block —
+      # identical 26 lines from v0.1.14 to v0.1.25, while frontend/build work
+      # never appeared at all. git-cliff over `<prev-tag>..<new-tag>` is correct,
+      # so we generate the notes here, once the tag exists.
+      # Best-effort: a failure here must not fail a release that already shipped.
+      - name: Rewrite release notes + changelog from the tag range
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch origin --tags --force
+          new=$(git tag --sort=-v:refname --list 'v*' | sed -n 1p)
+          prev=$(git tag --sort=-v:refname --list 'v*' | sed -n 2p)
+          # Only act when THIS run cut the tag (tag points at HEAD). Ordinary
+          # pushes to main leave the newest tag behind HEAD — nothing to do.
+          if [ -z "$new" ] || [ -z "$prev" ] || \
+             [ "$(git rev-parse "$new^{commit}")" != "$(git rev-parse HEAD)" ]; then
+            echo "No tag cut this run (new=${new:-none}); skipping."; exit 0
+          fi
+          curl -fsSL https://github.com/orhun/git-cliff/releases/download/v2.10.1/git-cliff-2.10.1-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C /tmp --strip-components=1 git-cliff-2.10.1/git-cliff
+          /tmp/git-cliff --config .github/cliff.toml --tag "$new" "$prev..$new" -o /tmp/notes.md
+          sed -i '/./,$!d' /tmp/notes.md  # drop the template's leading blank lines
+          if [ ! -s /tmp/notes.md ]; then echo "no notable commits in $prev..$new"; exit 0; fi
+          echo "--- notes for $new ($prev..$new) ---"; cat /tmp/notes.md
+          gh release edit "$new" --notes-file /tmp/notes.md
+
+          # Prepend the same section to the changelog and push it to main.
+          compare="https://github.com/${GITHUB_REPOSITORY}/compare/$prev...$new"
+          {
+            printf '## [%s](%s) - %s\n\n' "${new#v}" "$compare" "$(date -u +%F)"
+            cat /tmp/notes.md
+            printf '\n'
+          } > /tmp/section.md
+          python3 - "$new" <<'PY'
+          import sys, pathlib
+          p = pathlib.Path("client/CHANGELOG.md")
+          text = p.read_text()
+          section = pathlib.Path("/tmp/section.md").read_text()
+          marker = "## [Unreleased]\n"
+          if f"## [{sys.argv[1].lstrip('v')}]" in text:
+              print("changelog already has this version; leaving it alone")
+          elif marker in text:
+              p.write_text(text.replace(marker, marker + "\n" + section, 1))
+          else:
+              print("no [Unreleased] marker; leaving changelog alone")
+          PY
+          if ! git diff --quiet client/CHANGELOG.md; then
+            git add client/CHANGELOG.md
+            git commit -m "chore: changelog for $new [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      # release-plz opens a NEW timestamped branch every run and never deletes
+      # the old ones. The repo's delete-branch-on-merge covers merged PRs; this
+      # sweeps the rest: any release-plz-* branch older than 7 days with no
+      # open PR. (A branch an open release PR sits on is always kept.)
+      - name: Prune stale release-plz branches
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          git fetch origin --prune
+          cutoff=$(date -d '7 days ago' +%s)
+          for ref in $(git branch -r --format='%(refname:short)' | grep '^origin/release-plz-' || true); do
+            b=${ref#origin/}
+            [ "$(git log -1 --format=%ct "$ref")" -lt "$cutoff" ] || continue
+            open=$(gh pr list -R ${{ github.repository }} --state open --head "$b" --json number --jq length)
+            [ "$open" = "0" ] || { echo "keeping $b (open PR)"; continue; }
+            echo "deleting stale branch $b"
+            git push origin --delete "$b" || true
+          done

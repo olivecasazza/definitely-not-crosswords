@@ -1,0 +1,24 @@
+{{- if .Values.database.cnpg.enabled -}}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "definitely-not-crosswords.fullname" . }}-db
+  labels:
+    {{- include "definitely-not-crosswords.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.database.cnpg.instances }}
+  
+  # Persistent storage configuration
+  storage:
+    size: {{ .Values.database.cnpg.storageSize | quote }}
+    
+  # DB Initialization parameters
+  bootstrap:
+    initdb:
+      database: {{ .Values.database.cnpg.databaseName | quote }}
+      owner: {{ .Values.database.cnpg.ownerName | quote }}
+      
+  # Premium feature: Enable automated backups (local/mock config) or monitoring
+  monitoring:
+    enablePodMonitor: true
+{{- end -}}

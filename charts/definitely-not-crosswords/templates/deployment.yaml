@@ -1,0 +1,258 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "definitely-not-crosswords.fullname" . }}
+  labels:
+    {{- include "definitely-not-crosswords.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "definitely-not-crosswords.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "definitely-not-crosswords.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "definitely-not-crosswords.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if or .Values.database.migrations.enabled .Values.adminUsers.enabled .Values.dictionarySeed.enabled .Values.e2eUsers.enabled }}
+      initContainers:
+        {{- if .Values.database.migrations.enabled }}
+        - name: migrate-db
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["migrate"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.database.cnpg.enabled }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-db-app
+                  key: uri
+                  {{- else if .Values.database.external.existingSecret }}
+                  name: {{ .Values.database.external.existingSecret }}
+                  key: {{ .Values.database.external.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                  key: DATABASE_URL
+                  {{- end }}
+        {{- end }}
+        {{- if .Values.adminUsers.enabled }}
+        - name: seed-admin-users
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["seed_admin"]
+          env:
+            - name: ADMIN_USERS_JSON
+              value: {{ toJson .Values.adminUsers | quote }}
+            # Initial passwords for the seeded admins, as {"<email>":"<password>"}.
+            # From a Secret, never from values — adminUsers above is rendered into
+            # the pod spec in plaintext. Absent -> admins are created with a NULL
+            # password, which cannot sign in and cannot be recovered in-product.
+            - name: ADMIN_PASSWORDS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adminUsers.passwordsSecret | default (printf "%s-secrets" (include "definitely-not-crosswords.fullname" .)) }}
+                  key: ADMIN_PASSWORDS_JSON
+                  optional: true
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.database.cnpg.enabled }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-db-app
+                  key: uri
+                  {{- else if .Values.database.external.existingSecret }}
+                  name: {{ .Values.database.external.existingSecret }}
+                  key: {{ .Values.database.external.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                  key: DATABASE_URL
+                  {{- end }}
+        {{- end }}
+        {{- if .Values.e2eUsers.enabled }}
+        {{- $e2e := .Values.e2eUsers.existingSecret | default (printf "%s-secrets" (include "definitely-not-crosswords.fullname" .)) }}
+        - name: seed-e2e-users
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["seed_test_users"]
+          env:
+            - name: E2E_USERS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $e2e }}
+                  key: E2E_USERS_JSON
+                  # Environments without test users skip the seed gracefully.
+                  optional: true
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.database.cnpg.enabled }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-db-app
+                  key: uri
+                  {{- else if .Values.database.external.existingSecret }}
+                  name: {{ .Values.database.external.existingSecret }}
+                  key: {{ .Values.database.external.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                  key: DATABASE_URL
+                  {{- end }}
+        {{- end }}
+        {{- if .Values.dictionarySeed.enabled }}
+        - name: seed-dictionary
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["seed", "--skip-if-present"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.database.cnpg.enabled }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-db-app
+                  key: uri
+                  {{- else if .Values.database.external.existingSecret }}
+                  name: {{ .Values.database.external.existingSecret }}
+                  key: {{ .Values.database.external.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                  key: DATABASE_URL
+                  {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            {{- if .Values.observability.otel.enabled }}
+            - name: otel-metrics
+              containerPort: {{ .Values.observability.otel.port | default 9464 }}
+              protocol: TCP
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          env:
+            # PORT and WEB_DIST (the bundled wasm frontend, served single-origin
+            # with /api) are baked into the image; only secrets are injected here.
+            - name: APP_ENV
+              value: {{ .Values.environment | quote }}
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.auth.existingSecret }}
+                  name: {{ .Values.auth.existingSecret }}
+                  {{- else }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                  {{- end }}
+                  key: NEXTAUTH_SECRET
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.database.cnpg.enabled }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-db-app
+                  key: uri
+                  {{- else if .Values.database.external.existingSecret }}
+                  name: {{ .Values.database.external.existingSecret }}
+                  key: {{ .Values.database.external.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "definitely-not-crosswords.fullname" . }}-secrets
+                  key: DATABASE_URL
+                  {{- end }}
+            {{- if .Values.mail.existingSecret }}
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mail.existingSecret }}
+                  key: SMTP_USER
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mail.existingSecret }}
+                  key: SMTP_PASSWORD
+            {{- end }}
+            {{- if .Values.mail.host }}
+            - name: SMTP_HOST
+              value: {{ .Values.mail.host | quote }}
+            {{- end }}
+            {{- if .Values.mail.port }}
+            - name: SMTP_PORT
+              value: {{ .Values.mail.port | quote }}
+            {{- end }}
+            {{- if .Values.mail.from }}
+            - name: MAIL_FROM
+              value: {{ .Values.mail.from | quote }}
+            {{- end }}
+            {{- if .Values.mail.origin }}
+            - name: APP_ORIGIN
+              value: {{ .Values.mail.origin | quote }}
+            {{- end }}
+            {{- if .Values.billing.proDiscountCode }}
+            # Auto-applied to Pro checkouts (staging sets this so Pro is $1).
+            - name: PRO_CHECKOUT_DISCOUNT_CODE
+              value: {{ .Values.billing.proDiscountCode | quote }}
+            {{- end }}
+            {{- if .Values.billing.lemonSqueezy.enabled }}
+            {{- $ls := .Values.billing.lemonSqueezy.existingSecret | default (printf "%s-secrets" (include "definitely-not-crosswords.fullname" .)) }}
+            - name: LEMONSQUEEZY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ls }}
+                  key: LEMONSQUEEZY_API_KEY
+            - name: LEMONSQUEEZY_STORE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ls }}
+                  key: LEMONSQUEEZY_STORE_ID
+            - name: LEMONSQUEEZY_VARIANT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ls }}
+                  key: LEMONSQUEEZY_VARIANT_ID
+            # Enables webhook signature verification (/api/webhooks/lemonsqueezy).
+            - name: LEMONSQUEEZY_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ls }}
+                  key: LEMONSQUEEZY_WEBHOOK_SECRET
+                  optional: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

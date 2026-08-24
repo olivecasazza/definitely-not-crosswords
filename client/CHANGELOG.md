@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.46](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.45...v0.1.46) - 2026-08-24
+
+### Added
+
+- *(k8s)* add deploy-production GitHub Actions workflow (#90)
+- *(server)* add job audit log and per-job visibility ACLs [DEF-72] (#83)
+- *(server)* job:create tRPC procedure + structured RBAC envelope [DEF-70] (#81)
+
+### Fixed
+
+- *(ci)* rewrite git@ SSH URLs to HTTPS before nix build in deploy-staging (#84)
+- *(deploy)* rewrite git@github.com:olivecasazza/ SSH URLs to HTTPS before nix build (#86)
+- *(def-78)* add ssh:// git URL rewrite for agentctx (#88)
+- *(def-78)* add ssh:// git URL rewrite for agentctx (v3)
+- *(k8s)* handle bare production tag in deploy-production sed (#91)
+- *(def-85)* restore the 157 files deleted by #88 (#93)
+- *(def-85)* restore main tree deleted by PR #88 (#92)
+- *(ci)* replace magic-nix-cache with cachix-action to avoid HTTP 418 throttle (#87)
+- *(ci)* pin cachix/cachix-action to v17 (#94)
+- *(server)* repair crossword-server test compile errors [DEF-90] (#95)
+- *(ci)* pin cachix/cachix-action to v17 in deploy-staging [DEF-69] (#97)
+
+
 ## [0.1.44](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.43...v0.1.44) - 2026-08-18
 
 ### Added

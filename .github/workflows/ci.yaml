@@ -38,7 +38,10 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Cache Nix store
-        uses: DeterminateSystems/magic-nix-cache-action@main
+        uses: cachix/cachix-action@main
+        with:
+          name: nix-community
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       # Build every deliverable from the Rust workspace. IFD is needed because the
       # client flake vendors panel-kit into a derivation it reads manifests from.
@@ -84,7 +87,10 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Cache Nix store
-        uses: DeterminateSystems/magic-nix-cache-action@main
+        uses: cachix/cachix-action@main
+        with:
+          name: nix-community
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Build the migrate binary
         run: |
@@ -164,7 +170,10 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Cache Nix store
-        uses: DeterminateSystems/magic-nix-cache-action@main
+        uses: cachix/cachix-action@main
+        with:
+          name: nix-community
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       # Authenticate to Google Cloud via OIDC Workload Identity Federation
       - name: Authenticate to Google Cloud

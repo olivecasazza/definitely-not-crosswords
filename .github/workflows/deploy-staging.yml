@@ -52,7 +52,10 @@ jobs:
             access-tokens = github.com=${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Setup Nix caching
-        uses: DeterminateSystems/magic-nix-cache-action@main
+        uses: cachix/cachix-action@main
+        with:
+          name: nix-community
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Bump staging tag + regenerate manifests in nixlab
         env:
@@ -72,6 +75,10 @@ jobs:
           file=modules/k8s/apps/crosswords.nix
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Rewrite git@github.com:casazza-info/ SSH URLs to HTTPS with token so
+          # nix build can fetch private flake inputs (e.g. inputs.agentctx) in CI.
+          git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/casazza-info/".insteadOf "git@github.com:casazza-info/"
 
           # manifests.yaml is kubenix-generated and nixlab regenerates it on EVERY
           # change, so it must never take part in a rebase — the old
@@ -94,6 +101,11 @@ jobs:
             # Commit the tag bump first so `nix build` evaluates a clean tree at the
             # new tag (no dirty-tree ambiguity), then fold the regenerated manifest in.
             git commit -qm "chore(k8s): deploy crosswords staging to $TAG" -- "$file"
+            # Rewrite SSH URLs for agentctx (private repo, olivecasazza org) to HTTPS
+            # with token auth (DEF-64/DEF-66/DEF-78). The colon form (git@github.com:)
+            # is caught by the global rewrite above; add the ssh:// form here too.
+            git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "git@github.com:olivecasazza/"
+            git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "ssh://git@github.com/olivecasazza/"
             nix build .#k8s-manifests
             cp -L result modules/k8s/manifests.yaml
             rm -f result

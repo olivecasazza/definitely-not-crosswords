@@ -45,6 +45,7 @@ fn with_at(mut ev: Value) -> Value {
 // ── queries / mutations ──────────────────────────────────────────────────────
 
 async fn list_jobs(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let user = ctx.require_user()?;
     ctx.auth
         .require_capability(Capability::AdminAccess)
         .map_err(|e| e.to_string())?;
@@ -54,20 +55,43 @@ async fn list_jobs(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .unwrap_or(25)
         .clamp(1, 100);
 
-    let rows = sqlx::query(
-        r#"
-        SELECT j.id, j.status::text AS status, j.topic, j.width, j.height,
-               to_char(j."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
-               g.id AS game_id, g.title AS game_title, g.published AS game_published
-        FROM "CrosswordGenerationJob" j
-        LEFT JOIN "Game" g ON g.id = j."resultGameId"
-        ORDER BY j."createdAt" DESC
-        LIMIT $1
-        "#,
-    )
-    .bind(take)
-    .fetch_all(&ctx.pool)
-    .await
+    let is_generator_admin = user.role.has(Capability::GeneratorManage);
+
+    let rows = if is_generator_admin {
+        sqlx::query(
+            r#"
+            SELECT j.id, j.status::text AS status, j.topic, j.width, j.height,
+                   j.visibility::text AS visibility,
+                   to_char(j."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
+                   g.id AS game_id, g.title AS game_title, g.published AS game_published
+            FROM "CrosswordGenerationJob" j
+            LEFT JOIN "Game" g ON g.id = j."resultGameId"
+            ORDER BY j."createdAt" DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(take)
+        .fetch_all(&ctx.pool)
+        .await
+    } else {
+        sqlx::query(
+            r#"
+            SELECT j.id, j.status::text AS status, j.topic, j.width, j.height,
+                   j.visibility::text AS visibility,
+                   to_char(j."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
+                   g.id AS game_id, g.title AS game_title, g.published AS game_published
+            FROM "CrosswordGenerationJob" j
+            LEFT JOIN "Game" g ON g.id = j."resultGameId"
+            WHERE j.visibility = 'PUBLIC' OR j."createdById" = $2
+            ORDER BY j."createdAt" DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(take)
+        .bind(&user.id)
+        .fetch_all(&ctx.pool)
+        .await
+    }
     .map_err(|e| e.to_string())?;
 
     let jobs: Vec<Value> = rows
@@ -87,6 +111,7 @@ async fn list_jobs(input: &Value, ctx: &Ctx) -> Result<Value, String> {
                 "topic": r.get::<String, _>("topic"),
                 "width": r.get::<i32, _>("width"),
                 "height": r.get::<i32, _>("height"),
+                "visibility": r.get::<String, _>("visibility"),
                 "createdAt": r.get::<Option<String>, _>("created_at"),
                 "resultGame": result_game,
             })
@@ -636,11 +661,12 @@ pub async fn run_generation(
         Err(e) => return fail(&emit_ws, None, e),
     };
     emit(json!({ "type": "started", "jobId": job_id }));
+    write_audit_log(&pool, &job_id, &user.id, "job_started", json!({})).await;
 
     let rows = match dict::fetch_rows(&pool, &params).await {
         Ok(r) => r,
         Err(e) => {
-            finalize_failed(&pool, &job_id, &e, &log, started_at).await;
+            finalize_failed(&pool, &job_id, &e, &log, started_at, &user.id).await;
             return fail(&emit_ws, Some(&job_id), e);
         }
     };
@@ -702,13 +728,13 @@ pub async fn run_generation(
                     })));
                 }
                 Err(e) => {
-                    finalize_failed(&pool, &job_id, &e, &log, started_at).await;
+                    finalize_failed(&pool, &job_id, &e, &log, started_at, &user.id).await;
                     fail(&emit_ws, Some(&job_id), e);
                 }
             }
         }
         Err(e) => {
-            finalize_failed(&pool, &job_id, &e, &log, started_at).await;
+            finalize_failed(&pool, &job_id, &e, &log, started_at, &user.id).await;
             fail(&emit_ws, Some(&job_id), e);
         }
     }
@@ -720,6 +746,29 @@ fn fail(emit_ws: &Arc<dyn Fn(Value) + Send + Sync>, job_id: Option<&str>, error:
         "jobId": job_id,
         "error": error,
     })));
+}
+
+async fn write_audit_log(
+    pool: &PgPool,
+    job_id: &str,
+    actor_id: &str,
+    event_type: &str,
+    payload: Value,
+) {
+    let id = Uuid::new_v4().to_string();
+    let _ = sqlx::query(
+        r#"
+        INSERT INTO "JobAuditLog" (id, "jobId", "actorId", "eventType", payload, "createdAt")
+        VALUES ($1, $2, $3, $4, $5::jsonb, now())
+        "#,
+    )
+    .bind(&id)
+    .bind(job_id)
+    .bind(actor_id)
+    .bind(event_type)
+    .bind(&payload)
+    .execute(pool)
+    .await;
 }
 
 async fn create_job(
@@ -761,6 +810,16 @@ async fn create_job(
     .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
+
+    write_audit_log(
+        pool,
+        &id,
+        creator_id,
+        "job_created",
+        json!({ "topic": raw_params.get("topic").and_then(|v| v.as_str()).unwrap_or(""), "grid": format!("{}x{}", p.width, p.height) }),
+    )
+    .await;
+
     Ok(id)
 }
 
@@ -848,6 +907,16 @@ async fn finalize_success(
     .map_err(|e| e.to_string())?;
 
     tx.commit().await.map_err(|e| e.to_string())?;
+
+    write_audit_log(
+        pool,
+        job_id,
+        created_by,
+        "job_completed",
+        json!({ "gameId": game_id, "durationMs": duration }),
+    )
+    .await;
+
     Ok(game_id)
 }
 
@@ -868,6 +937,7 @@ async fn finalize_failed(
     error: &str,
     log: &Arc<std::sync::Mutex<Vec<Value>>>,
     started_at: i64,
+    created_by: &str,
 ) {
     let completed_at = now_ms();
     let duration = (completed_at - started_at) as i32;
@@ -885,6 +955,15 @@ async fn finalize_failed(
     .bind(json!(event_log))
     .bind(duration)
     .execute(pool)
+    .await;
+
+    write_audit_log(
+        pool,
+        job_id,
+        created_by,
+        "job_failed",
+        json!({ "error": error, "durationMs": duration }),
+    )
     .await;
 }
 

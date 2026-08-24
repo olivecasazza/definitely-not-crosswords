@@ -6,7 +6,7 @@
 //! (subscription.getStatus treats ACTIVE/CANCELLED as Pro). `custom_data.user_id`
 //! is the id we attached at checkout.
 
-use crate::AppState;
+use crate::state::AppState;
 use axum::{body::Bytes, extract::State, http::HeaderMap, response::IntoResponse};
 use hmac::{Hmac, Mac};
 use serde_json::{json, Value};

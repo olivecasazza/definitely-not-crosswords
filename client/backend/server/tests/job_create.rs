@@ -15,8 +15,10 @@
 
 mod common;
 
-use crossword_db::{AuthUser, Capability, Role};
-use serde_json::{json, Value};
+use crossword_server::routers;
+
+use crossword_db::{AuthUser, Role};
+use serde_json::json;
 use std::time::Duration;
 
 /// Happy-path test: an Admin-caped user calls `job:create` and receives a valid
@@ -57,14 +59,22 @@ async fn job_create_returns_valid_grid_within_time_limit() {
 
     assert!(result.get("grid").is_some(), "grid field must be present");
     assert!(result.get("cells").is_some(), "cells field must be present");
-    assert!(result.get("questions").is_some(), "questions field must be present");
-    assert!(result.get("solutionHash").is_some(), "solutionHash field must be present");
+    assert!(
+        result.get("questions").is_some(),
+        "questions field must be present"
+    );
+    assert!(
+        result.get("solutionHash").is_some(),
+        "solutionHash field must be present"
+    );
 
     let grid = &result["grid"];
     assert!(grid.get("w").is_some() && grid["w"].as_i64().unwrap_or(0) > 0);
     assert!(grid.get("h").is_some() && grid["h"].as_i64().unwrap_or(0) > 0);
 
-    let cells = result["cells"].as_array().expect("cells must be a 2-D array");
+    let cells = result["cells"]
+        .as_array()
+        .expect("cells must be a 2-D array");
     let h = grid["h"].as_i64().unwrap() as usize;
     assert_eq!(cells.len(), h, "cells rows must equal grid.h");
     for row in cells.iter() {
@@ -84,7 +94,7 @@ async fn job_create_returns_valid_grid_within_time_limit() {
     for q in questions.iter() {
         assert!(q.get("number").is_some(), "question must have number");
         assert!(
-            q["direction"].as_str() == "ACROSS" || q["direction"].as_str() == "DOWN",
+            q["direction"].as_str() == Some("ACROSS") || q["direction"].as_str() == Some("DOWN"),
             "direction must be ACROSS or DOWN"
         );
         assert!(q.get("rootX").is_some(), "question must have rootX");
@@ -186,9 +196,7 @@ async fn job_create_requires_topic() {
 
     let err_str = result.expect_err("missing topic must error");
     assert!(
-        err_str != "FORBIDDEN"
-            && err_str != "UNAUTHORIZED"
-            && !err_str.starts_with("INTERNAL:"),
+        err_str != "FORBIDDEN" && err_str != "UNAUTHORIZED" && !err_str.starts_with("INTERNAL:"),
         "validation error must be BAD_REQUEST, got: {err_str}"
     );
 }
@@ -256,12 +264,8 @@ async fn job_create_grid_cells_match_clue_placements() {
         for (x, cell) in row.as_array().unwrap().iter().enumerate() {
             if let Some(letter) = cell.as_str() {
                 filled_count += 1;
-                let expected = owned.get(&(x, y)).expect(
-                    format!(
-                        "cell ({x},{y})='{letter}' is set but not owned by any clue",
-                    )
-                    .as_str(),
-                );
+                let msg = format!("cell ({x},{y})='{letter}' is set but not owned by any clue",);
+                let expected = owned.get(&(x, y)).expect(&msg);
                 assert_eq!(
                     letter.chars().next().unwrap(),
                     *expected,

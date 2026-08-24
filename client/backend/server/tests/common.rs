@@ -2,14 +2,14 @@
 
 use crossword_auth::AuthContext;
 use crossword_db::{AuthUser, Role};
-use ctx::Ctx;
+use crossword_server::ctx::Ctx;
+use crossword_server::mailer::Mailer;
 use std::env;
 
 /// Build a `PgPool` from `DATABASE_URL`.
 pub async fn pool() -> sqlx::PgPool {
-    let db_url = env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set for integration tests");
-    sqlx::PgPoolOptions::new()
+    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set for integration tests");
+    sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .connect(&db_url)
         .await
@@ -29,11 +29,12 @@ pub fn admin_user() -> AuthUser {
 pub fn ctx(pool: &sqlx::PgPool, user: &AuthUser) -> Ctx {
     let auth = AuthContext {
         user: Some(user.clone()),
+        ..Default::default()
     };
     Ctx {
         pool: pool.clone(),
         auth,
         events: crossword_events::EventBus::default(),
-        mailer: mailer::Mailer::from_env("test"),
+        mailer: Mailer::from_env("test"),
     }
 }

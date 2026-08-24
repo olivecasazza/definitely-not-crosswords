@@ -666,7 +666,7 @@ async fn set_job_visibility(
             )
         }
     };
-    if !user.role.has(Capability::AdminAccess) {
+    if !user.role.has(crossword_db::Capability::AdminAccess) {
         return (
             axum::http::StatusCode::FORBIDDEN,
             Json(json!({ "error": "FORBIDDEN" })),

@@ -1,8 +1,11 @@
 //! Crossword gameplay screen — Rust/Dioxus port of the Nuxt `pages/game/[id]`.
 //!
 //! Ports the Pinia `activeGame` store + `GameBoard`/`ActiveClueCard`/`QuestionsList`
-//! Vue components into a single panel-kit workspace with three panels: Board,
-//! Active Clue, and Clues. All board math comes from `crossword_core::game`.
+//! Vue components into a single panel-kit workspace with two panels: Board and
+//! Clues. `ActiveClueCard` is no longer a panel of its own — it renders inline
+//! inside Clues, expanded on whichever row is selected, so the clue you are
+//! answering and the list you picked it from are the same surface. All board
+//! math comes from `crossword_core::game`.
 //!
 //! State model (per advisor): `questions` + `actions` are the source of truth;
 //! `answer_maps`/`board_size`/`board` are derived via `use_memo`. The live
@@ -181,7 +184,6 @@ fn parse_members(data: &Value) -> Vec<MemberInfo> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum PanelId {
     Board,
-    Clue,
     Clues,
 }
 
@@ -189,7 +191,6 @@ impl panel_kit::PanelKind for PanelId {
     fn title(self) -> &'static str {
         match self {
             PanelId::Board => "Board",
-            PanelId::Clue => "Active Clue",
             PanelId::Clues => "Clues",
         }
     }
@@ -204,19 +205,14 @@ fn default_layout() -> Vec<panel_kit::PanelWin<PanelId>> {
     const M: f64 = 16.0; // workspace margin / inter-panel gap
     const CHROME: f64 = 34.0; // panel border + the inset title row
     const PLAYERS_H: f64 = 46.0; // `.cw-players` strip above the board
-    let left_w = (vw * 0.34).clamp(360.0, 760.0);
-    let usable_h = vh - 3.0 * M;
+    let left_w = (vw * 0.42).clamp(360.0, 900.0);
     // The grid is square — `.cw-board-area` centres it and caps it at the
     // smaller axis — so board height follows *width*. Taking a fraction of
     // the viewport instead just parked dead space above and below the grid.
-    let board_h = (left_w + PLAYERS_H + CHROME).min(usable_h * 0.72);
-    // Active Clue is a clue line plus one row of letter boxes; it never needs
-    // whatever the board happens to leave over.
-    let clue_h = (usable_h - board_h).clamp(160.0, 280.0);
+    let board_h = (left_w + PLAYERS_H + CHROME).min(vh - 2.0 * M);
     let mut b = panel_kit::LayoutBuilder::new();
     vec![
         b.at(PanelId::Board, M, M, left_w, board_h),
-        b.at(PanelId::Clue, M, 2.0 * M + board_h, left_w, clue_h),
         b.at(
             PanelId::Clues,
             2.0 * M + left_w,
@@ -869,23 +865,19 @@ pub fn GamePlay(id: String) -> Element {
                     }
                 }
             }
-            PanelId::Clue => render_clue(
-                &selected_q,
-                &game_action_data.read(),
-                *focused_index.read(),
-                input_refs,
-                handle_letter_input.clone(),
-                handle_key.clone(),
-                unselect.clone(),
-                submit_guess.clone(),
-            ),
             PanelId::Clues => render_clues(
                 &filtered,
                 *selected.read(),
                 *selected_direction.read(),
                 &game_action_data.read(),
+                *focused_index.read(),
+                input_refs,
                 select_question.clone(),
                 toggle_dir.clone(),
+                handle_letter_input,
+                handle_key,
+                unselect.clone(),
+                submit_guess.clone(),
             ),
         }
     };
@@ -905,9 +897,11 @@ pub fn GamePlay(id: String) -> Element {
 
 /// `use_workspace` with a stable storage key for this screen.
 fn use_workspace_local() -> panel_kit::Workspace<PanelId> {
-    // "_v2": board/clue heights went content-sized — a persisted layout would
-    // keep the old viewport-fraction geometry forever.
-    panel_kit::use_workspace("crossword_game_play_v2", default_layout)
+    // "_v3": the Active Clue panel was merged into Clues. A persisted `_v2`
+    // layout carries geometry for a panel that no longer exists — and now that
+    // the `Clue` variant is gone its `SavedLayout` won't deserialize at all, so
+    // the old key would silently fall back to defaults on every load anyway.
+    panel_kit::use_workspace("crossword_game_play_v3", default_layout)
 }
 
 // ---------------------------------------------------------------------------
@@ -937,8 +931,29 @@ fn render_board(
     // the panel area itself (not the viewport). Width is the largest size that
     // fits BOTH axes — derived from the height cap via the grid ratio — and
     // aspect-ratio derives height from it. No cqh guessing, no JS zoom hacks.
+    //
+    // `--cw-cell` publishes the resulting exact cell edge so descendants can
+    // size type as a fraction of the CELL rather than of the container. Sizing
+    // off the container (the old `clamp(10px, 4.5cqw, 26px)`) was wrong twice
+    // over: `cqw` ignores the column count, so the same 4.5cqw was ~68% of a
+    // cell at 15 columns and ~22% at 5, and the clamp bounds were hard
+    // discontinuities — at the floor the glyph stopped shrinking while the cell
+    // kept shrinking, which is how letters spilled out of their cells on zoom.
+    //
+    // The gap is a fraction of the board rather than a fixed 3px (a hairline on
+    // a big board, a quarter of a cell on a tiny one). Deriving the cell from
+    // the gap — not the reverse — keeps the arithmetic exact:
+    // cols*cell + (cols-1)*gap == the board edge, at every size.
+    const GAP_FRAC: f64 = 0.004;
+    let cell_frac = (1.0 - GAP_FRAC * (cols - 1) as f64) / cols as f64;
+    let edge = format!("min(100cqw, 100cqh * {cols} / {rows})");
     let style = format!(
-        "grid-template-columns: repeat({cols}, 1fr); grid-template-rows: repeat({rows}, 1fr); aspect-ratio: {cols} / {rows}; width: min(100cqw, 100cqh * {cols} / {rows});",
+        "grid-template-columns: repeat({cols}, 1fr); \
+         grid-template-rows: repeat({rows}, 1fr); \
+         aspect-ratio: {cols} / {rows}; \
+         width: {edge}; \
+         --cw-gap: calc({edge} * {GAP_FRAC}); \
+         --cw-cell: calc({edge} * {cell_frac:.6});",
     );
 
     // focused coord (the cell currently being typed in)
@@ -1035,101 +1050,26 @@ fn render_board(
     }
 }
 
+/// The clue list, and — on whichever row is selected — the editor for it.
+///
+/// The selected row swaps its read-only bubbles for the real letter inputs, so
+/// the clue you are answering and the list you picked it from are one surface.
+/// Everything from `focused_index` onward exists only to serve that inline
+/// editor; unselected rows never touch it.
 #[allow(clippy::too_many_arguments)]
-fn render_clue(
-    selected_q: &Option<QuestionWithAnswerMap>,
-    slots: &[ActionSlot],
-    focused_index: Option<usize>,
-    mut input_refs: Signal<Vec<Option<Rc<MountedData>>>>,
-    handle_letter_input: impl FnMut(usize, String) + Clone + 'static,
-    handle_key: impl FnMut(usize, Key) + Clone + 'static,
-    mut unselect: impl FnMut(Event<MouseData>) + Clone + 'static,
-    submit_guess: impl FnMut() + Clone + 'static,
-) -> Element {
-    let q = match selected_q {
-        Some(q) => q,
-        None => {
-            return rsx! {
-                div { class: "cw-clue-empty",
-                    div { class: "cw-empty-card",
-                        div { class: "cw-empty-cta", "Ready to solve?" }
-                        p { class: "cw-empty-hint",
-                            "Pick a square on the board or a clue from the list to start typing."
-                        }
-                        div { class: "cw-empty-keys",
-                            span { class: "cw-empty-key", "Click" }
-                            span { class: "cw-empty-key-sep", "or" }
-                            span { class: "cw-empty-key", "Tap a clue" }
-                        }
-                    }
-                }
-            };
-        }
-    };
-    let dir = dir_str(q.question.direction);
-    let len = q.answer_map.len();
-    let mut unselect2 = unselect.clone();
-    let mut submit2 = submit_guess.clone();
-
-    rsx! {
-        div { class: "cw-clue",
-            div { class: "cw-clue-head",
-                span { class: "cw-dir-badge cw-dir-{dir.to_lowercase()}", "{dir}" }
-                span { class: "muted", "CLUE {q.question.number} · {len} LETTERS" }
-                button { class: "cw-link-btn", onclick: move |e| unselect(e), "ESC to clear" }
-            }
-            div { class: "cw-clue-text", "{q.question.question_text}" }
-            div { class: "cw-letters",
-                for (index , slot) in slots.iter().cloned().enumerate() {
-                    {
-                        let focused = focused_index == Some(index);
-                        let mut cls = String::from("cw-letter-input");
-                        if focused {
-                            cls.push_str(" cw-input-focused");
-                        }
-                        let mut hi = handle_letter_input.clone();
-                        let mut hk = handle_key.clone();
-                        rsx! {
-                            input {
-                                key: "{slot.cord_x}-{slot.cord_y}",
-                                class: "{cls}",
-                                r#type: "text",
-                                // No maxlength="1": a full box makes the browser
-                                // swallow the keystroke entirely — no oninput, no
-                                // auto-advance, and a prefilled (resumed) word
-                                // becomes impossible to edit. The handler keeps
-                                // the last char typed, so length stays enforced.
-                                autocomplete: "off",
-                                spellcheck: "false",
-                                value: "{slot.state}",
-                                onmounted: move |e: Event<MountedData>| {
-                                    let mut refs = input_refs.write();
-                                    if index < refs.len() {
-                                        refs[index] = Some(e.data());
-                                    }
-                                },
-                                oninput: move |e| hi(index, e.value()),
-                                onkeydown: move |e| hk(index, e.key()),
-                            }
-                        }
-                    }
-                }
-            }
-            div { class: "cw-clue-actions",
-                button { class: "cw-btn-cancel", onclick: move |e| unselect2(e), "Cancel" }
-                button { class: "cw-btn-guess", onclick: move |_| submit2(), "Guess" }
-            }
-        }
-    }
-}
-
 fn render_clues(
     filtered: &[QuestionWithAnswerMap],
     selected: Option<QKey>,
     selected_direction: Option<Direction>,
     slots: &[ActionSlot],
+    focused_index: Option<usize>,
+    mut input_refs: Signal<Vec<Option<Rc<MountedData>>>>,
     select_question: impl FnMut(QKey) + Clone + 'static,
     mut toggle_dir: impl FnMut(Direction) + Clone + 'static,
+    handle_letter_input: impl FnMut(usize, String) + Clone + 'static,
+    handle_key: impl FnMut(usize, Key) + Clone + 'static,
+    unselect: impl FnMut(Event<MouseData>) + Clone + 'static,
+    submit_guess: impl FnMut() + Clone + 'static,
 ) -> Element {
     let mut toggle_a = toggle_dir.clone();
     let across_active = selected_direction == Some(Direction::Across);
@@ -1178,6 +1118,11 @@ fn render_clues(
                     {
                         let key = qkey(&m.question);
                         let is_sel = selected == Some(key);
+                        // `slots` is the live in-progress word and only ever belongs to
+                        // the selected clue. Empty means the selection has not been
+                        // wired up yet, so fall back to bubbles rather than render an
+                        // editor with no boxes in it.
+                        let editing = is_sel && !slots.is_empty();
                         let mut sq = select_question.clone();
                         let row_cls = if is_sel { "cw-clue-row cw-clue-row-sel" } else { "cw-clue-row" };
                         rsx! {
@@ -1187,22 +1132,93 @@ fn render_clues(
                                 div { class: "cw-clue-badge", "{m.question.number}" }
                                 div { class: "cw-clue-body",
                                     div { class: "cw-clue-row-text", "{m.question.question_text}" }
-                                    div { class: "cw-bubbles",
-                                        for cell in m.answer_map.iter() {
-                                            {
-                                                let (letter, at) = bubble_state(key, cell);
-                                                let mut bcls = String::from("cw-bubble");
-                                                if letter.is_empty() {
-                                                    bcls.push_str(" cw-bubble-empty");
-                                                } else {
-                                                    match at {
-                                                        "incorrectGuess" => bcls.push_str(" cw-incorrect"),
-                                                        "correctGuess" => bcls.push_str(" cw-correct"),
-                                                        _ => bcls.push_str(" cw-placeholder"),
+                                    if editing {
+                                        {
+                                            let unselect_a = unselect.clone();
+                                            let unselect_b = unselect.clone();
+                                            let mut submit = submit_guess.clone();
+                                            rsx! {
+                                                // Clicks inside the editor must not reach the row's
+                                                // own onclick — Cancel would otherwise re-select the
+                                                // clue it just cleared, and every click on an input
+                                                // would re-run select_question and reset focus.
+                                                div {
+                                                    class: "cw-clue-editor",
+                                                    onclick: move |e: Event<MouseData>| e.stop_propagation(),
+                                                    div { class: "cw-letters",
+                                                        for (index , slot) in slots.iter().cloned().enumerate() {
+                                                            {
+                                                                let focused = focused_index == Some(index);
+                                                                let mut cls = String::from("cw-letter-input");
+                                                                if focused {
+                                                                    cls.push_str(" cw-input-focused");
+                                                                }
+                                                                let mut hi = handle_letter_input.clone();
+                                                                let mut hk = handle_key.clone();
+                                                                rsx! {
+                                                                    input {
+                                                                        key: "{slot.cord_x}-{slot.cord_y}",
+                                                                        class: "{cls}",
+                                                                        r#type: "text",
+                                                                        // No maxlength="1": a full box makes the browser
+                                                                        // swallow the keystroke entirely — no oninput, no
+                                                                        // auto-advance, and a prefilled (resumed) word
+                                                                        // becomes impossible to edit. The handler keeps
+                                                                        // the last char typed, so length stays enforced.
+                                                                        autocomplete: "off",
+                                                                        spellcheck: "false",
+                                                                        value: "{slot.state}",
+                                                                        onmounted: move |e: Event<MountedData>| {
+                                                                            let mut refs = input_refs.write();
+                                                                            if index < refs.len() {
+                                                                                refs[index] = Some(e.data());
+                                                                            }
+                                                                        },
+                                                                        oninput: move |e| hi(index, e.value()),
+                                                                        onkeydown: move |e| hk(index, e.key()),
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    div { class: "cw-clue-actions",
+                                                        button {
+                                                            class: "cw-link-btn",
+                                                            onclick: unselect_a,
+                                                            "ESC to clear"
+                                                        }
+                                                        button {
+                                                            class: "cw-btn-cancel",
+                                                            onclick: unselect_b,
+                                                            "Cancel"
+                                                        }
+                                                        button {
+                                                            class: "cw-btn-guess",
+                                                            onclick: move |_| submit(),
+                                                            "Guess"
+                                                        }
                                                     }
                                                 }
-                                                rsx! {
-                                                    div { class: "{bcls}", "{letter}" }
+                                            }
+                                        }
+                                    } else {
+                                        div { class: "cw-bubbles",
+                                            for cell in m.answer_map.iter() {
+                                                {
+                                                    let (letter, at) = bubble_state(key, cell);
+                                                    let mut bcls = String::from("cw-bubble");
+                                                    if letter.is_empty() {
+                                                        bcls.push_str(" cw-bubble-empty");
+                                                    } else {
+                                                        match at {
+                                                            "incorrectGuess" => bcls.push_str(" cw-incorrect"),
+                                                            "correctGuess" => bcls.push_str(" cw-correct"),
+                                                            _ => bcls.push_str(" cw-placeholder"),
+                                                        }
+                                                    }
+                                                    rsx! {
+                                                        div { class: "{bcls}", "{letter}" }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1348,12 +1364,19 @@ const GAME_CSS: &str = r#"
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
 .cw-join-card p { margin: 0; font-size: 12px; }
 .cw-join-card .error { font-size: 11px; font-family: var(--mono); }
-.cw-board { display: grid; gap: 3px; max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; }
+.cw-board { display: grid; gap: var(--cw-gap, 3px); max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; }
 /* min-width/min-height:0 is load-bearing: grid items default to `auto`, whose
    automatic minimum size floors each 1fr track at the cell's content size. The
    tracks then blow past the board's own width and `.cw-board-area`'s
    `overflow:hidden` clips the last columns/rows off. */
-.cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: clamp(10px, 4.5cqw, 26px); min-width: 0; min-height: 0; }
+/* Type is a fraction of --cw-cell (the exact cell edge, published by
+   render_board) — never of the container, and never clamped. An uppercase
+   glyph's cap height is ~0.7em, so 0.58 leaves ~20% of the cell as breathing
+   room at EVERY size, and there is no bound for the glyph to outgrow when the
+   cell shrinks. `line-height: 1` is the other half of the fix: the font's
+   default leading made the line box taller than the cell independently of
+   font-size, which is what pushed glyphs past the cell edge. */
+.cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: calc(var(--cw-cell) * 0.58); line-height: 1; min-width: 0; min-height: 0; }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid color-mix(in srgb, var(--border-app) 25%, transparent); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
 .cw-letter:hover { border-color: var(--border-hover); }
@@ -1370,24 +1393,17 @@ const GAME_CSS: &str = r#"
 .cw-placeholder { border: 2px solid var(--pastel-yellow); }
 .cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 15%, transparent); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
 .cw-correct { background: color-mix(in srgb, var(--pastel-green) 15%, transparent); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
-.cw-num { position: absolute; top: 2px; left: 3px; font-size: clamp(6px, 2cqw, 10px); line-height: 1; color: var(--text-secondary); opacity: 0.85; font-weight: 700; pointer-events: none; }
-.cw-char { pointer-events: none; }
+/* Proportional inset too: a fixed 2px/3px offset shoved the number off a small
+   cell while the number itself was clamped large. */
+.cw-num { position: absolute; top: calc(var(--cw-cell) * 0.06); left: calc(var(--cw-cell) * 0.09); font-size: calc(var(--cw-cell) * 0.26); line-height: 1; color: var(--text-secondary); opacity: 0.85; font-weight: 700; pointer-events: none; }
+.cw-char { pointer-events: none; line-height: 1; }
 
-.cw-clue { display: flex; flex-direction: column; gap: 12px; height: 100%; }
-.cw-clue-empty { display: flex; align-items: center; justify-content: center; height: 100%; padding: 12px; box-sizing: border-box; }
-.cw-empty-card { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 28rem; padding: 18px 22px; text-align: center; background: var(--bg-card); border: 1px dashed var(--border-app); }
-.cw-empty-cta { font-size: var(--fs-md); font-weight: 700; letter-spacing: .02em; color: var(--text-primary); }
-.cw-empty-hint { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); max-width: 32ch; line-height: 1.55; }
-.cw-empty-keys { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-.cw-empty-key { font-family: var(--mono); font-size: var(--fs-2xs); padding: 2px 8px; border: 1px solid var(--border-app); color: var(--text-secondary); }
-.cw-empty-key-sep { font-size: var(--fs-2xs); color: var(--text-secondary); opacity: 0.7; }
-.cw-clue-head { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-app); padding-bottom: 8px; flex-wrap: wrap; }
-.cw-dir-badge { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em; padding: 2px 6px; border-radius: 0; border: 1px solid; }
-.cw-dir-across { background: color-mix(in srgb, var(--pastel-yellow) 10%, transparent); color: var(--pastel-yellow); border-color: color-mix(in srgb, var(--pastel-yellow) 20%, transparent); }
-.cw-dir-down { background: color-mix(in srgb, var(--pastel-green) 10%, transparent); color: var(--pastel-green); border-color: color-mix(in srgb, var(--pastel-green) 20%, transparent); }
 .cw-link-btn { margin-left: auto; background: none; border: none; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
 .cw-link-btn:hover { color: var(--text-primary); }
-.cw-clue-text { font-size: 15px; font-weight: 500; line-height: 1.5; color: var(--text-primary); }
+/* The inline editor, inside the selected clue row. `.cw-clue-actions` used to
+   sit at `margin-top: auto` in a full-height panel; in a content-sized row that
+   auto margin collapses, so spacing is explicit here. */
+.cw-clue-editor { display: flex; flex-direction: column; gap: 10px; }
 .cw-letters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 4px 0; }
 .cw-letter-input { width: 40px; height: 40px; text-align: center; font-size: 18px; font-weight: 700; text-transform: uppercase; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-primary); }
 .cw-letter-input:hover { border-color: var(--border-hover); }
@@ -1396,7 +1412,7 @@ const GAME_CSS: &str = r#"
    A hard 2px ring at higher alpha is crisper and carries the same signal in
    both themes, and squares off with the input instead of feathering. */
 .cw-input-focused { border-color: var(--pastel-yellow); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pastel-yellow) 35%, transparent); }
-.cw-clue-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: auto; }
+.cw-clue-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .cw-btn-cancel { font-family: var(--font-sans); padding: 8px 16px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; }
 .cw-btn-cancel:hover { color: var(--text-primary); border-color: var(--border-hover); }
 .cw-btn-guess { font-family: var(--font-sans); padding: 8px 20px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--pastel-yellow); background: var(--pastel-yellow); color: var(--contrast-ink); cursor: pointer; }

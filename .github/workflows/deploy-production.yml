@@ -10,7 +10,7 @@ name: deploy-production
 
 on:
   push:
-    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -26,8 +26,7 @@ jobs:
     name: Bump production tag + regenerate manifests
     runs-on: ubuntu-latest
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     steps:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main

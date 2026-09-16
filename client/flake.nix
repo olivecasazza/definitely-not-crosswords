@@ -36,7 +36,7 @@
     # it) and rewrite both path deps at build time (see `src` below). Local macOS
     # verification uses the synced fork without changing this committed pin:
     #   --override-input panel-kit path:/Users/casazza/Repositories/olivecasazza/panel-kit
-    panel-kit.url = "github:olivecasazza/panel-kit/dac9f0061b73fa8fdb554a9575985a413facaebb";
+    panel-kit.url = "github:olivecasazza/panel-kit/e216fa6ddbf2f4783af1fbcb76c61d5cb9b3d23b";
     panel-kit.flake = false;
   };
 

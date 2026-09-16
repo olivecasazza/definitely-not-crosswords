@@ -55,7 +55,7 @@ jobs:
           sudo mkdir -p /home/olive/Repositories
           sudo chown -R "$(id -un)" /home/olive
           git clone https://github.com/olivecasazza/panel-kit /home/olive/Repositories/panel-kit
-          git -C /home/olive/Repositories/panel-kit checkout dac9f0061b73fa8fdb554a9575985a413facaebb
+          git -C /home/olive/Repositories/panel-kit checkout e216fa6ddbf2f4783af1fbcb76c61d5cb9b3d23b
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

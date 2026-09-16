@@ -1,10 +1,10 @@
 //! Shared admin building blocks (GH-61): KPI tiles, status/metadata chips
-//! rendered through panel-kit's `Badge`, table scaffolding, and the mobile
-//! read-only banner. Extracted from the four former admin pages so the
+//! rendered from panel-kit's shared `BadgeSpec`, table scaffolding, and the
+//! mobile read-only banner. Extracted from the four former admin pages so the
 //! merged `/admin` view stays DRY.
 
 use dioxus::prelude::*;
-use panel_kit::badge::{Badge, BadgeKind};
+use panel_kit::badge::{Badge, BadgeKind, BadgeSpec};
 
 /// Per-source KPI tile state: `None` = loading, `Err` = fetch/parse failure.
 /// `Ok` carries (value, optional sub-line).
@@ -48,30 +48,32 @@ pub fn job_status_accent(status: &str) -> &'static str {
 }
 
 /// Status chip (job status, discount active/inactive, verified/pending)
-/// rendered through panel-kit's `Badge`.
+/// rendered through panel-kit's shared badge model and web painter.
 pub fn status_badge(value: String, accent: &'static str) -> Element {
+    let mut spec = BadgeSpec::new("status", value, BadgeKind::Status);
+    spec.small = true;
     rsx! {
+        // CSS variables are intentionally the web painter's documented
+        // `accent_color` escape hatch; BadgeSpec's portable accent is RGB.
         Badge {
-            field: "status".to_string(),
-            value,
-            kind: BadgeKind::Status,
-            small: true,
-            accent_color: Some(accent.to_string()),
+            spec,
+            accent_color: accent.to_string(),
             on_action: move |_| {},
         }
     }
 }
 
 /// Small tag chip (role, test-mode, new-user, env) rendered through
-/// panel-kit's `Badge`.
+/// panel-kit's shared badge model. `BadgeKind::Tag` retains the stable
+/// `tag_hue` utility for callers that need a generated categorical accent;
+/// these app chips deliberately use the existing explicit theme accents.
 pub fn tag_badge(field: &'static str, value: String, accent: Option<&'static str>) -> Element {
+    let mut spec = BadgeSpec::new(field, value, BadgeKind::Tag);
+    spec.small = true;
     rsx! {
         Badge {
-            field: field.to_string(),
-            value,
-            kind: BadgeKind::Tag,
-            small: true,
-            accent_color: accent.map(|a| a.to_string()),
+            spec,
+            accent_color: accent.map(str::to_string),
             on_action: move |_| {},
         }
     }

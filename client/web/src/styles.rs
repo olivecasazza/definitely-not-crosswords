@@ -179,28 +179,23 @@ pub const DESIGN: &str = r#"
   --badge-c: var(--text-secondary);
   --badge-info: var(--color-primary);
   --mono: 'Inconsolata', ui-monospace, monospace;
-  /* Min panel size so tiling never squeezes a panel small enough to clip its
-     content (panel-kit reads these for both floating and tiling). */
+  /* These remain app design tokens for content sizing. Panel geometry is
+     projected by the v1 core's Clamp; CSS no longer drives reducer minima. */
   --panel-min-w: 340px;
   --panel-min-h: 240px;
 }
 
 /* In tiling mode, cap panel height to the workspace so long content (e.g. the
    leaderboard) scrolls inside the panel body instead of growing the panel and
-   pushing the page. (Mobile keeps its stacked, page-scrolling behavior.) */
-.ws-root:not(.mobile) .ws.tiling .panel { max-height: 100%; }
+   pushing the page. Compact keeps its stacked, page-scrolling behavior. */
+.ws-root:not(.compact) .ws.tiling .panel { max-height: 100%; }
 
-/* panel-kit hardcodes its drop shadows in literal black, which no theme
-   variable reaches, so the panel chrome kept a shadow tuned for a near-black
-   workspace even in light mode. main.rs injects DESIGN *after* panel_kit::CSS,
-   so these equal-specificity re-declarations win the cascade — cheaper and
-   safer than forking a crate with other consumers. Only the shadow (and the
-   tooltip's surface) is restated; all geometry stays panel-kit's. */
+/* The app deliberately layers its surface shadows after panel-kit. v1 owns
+   panel geometry, traffic-light chrome, and panel-body padding; these rules
+   only apply app theme shadows. The tooltip already uses `var(--panel)` in v1,
+   and this later rule replaces only its literal black shadow. */
 .panel { box-shadow: var(--shadow-panel); }
-/* .tip-overlay also hardcodes `background:#0d0d0d` while inheriting `color`
-   from --fg. In light mode that is near-black text on a near-black card, i.e.
-   an unreadable tooltip; pin it to the themed surface instead. */
-.tip-overlay { background: var(--panel); color: var(--fg); box-shadow: var(--shadow-pop); }
+.tip-overlay { color: var(--fg); box-shadow: var(--shadow-pop); }
 
 * { box-sizing: border-box; }
 body {
@@ -235,9 +230,9 @@ a { color: inherit; text-decoration: none; }
 /* ── App shell: header + per-view panel-kit workspace + footer ──────────────
    Every view is a panel-kit workspace. On DESKTOP the workspace fills the area
    between the (sticky) header and footer — panels are clamped to vw × the
-   available vh, and the page itself never scrolls. On MOBILE (<760px, where
-   panel-kit force-stacks panels) we clamp width to vw but let height scroll,
-   so stacked panels flow down the page. */
+   available vh, and the page itself never scrolls. On COMPACT surfaces
+   (<760px) v1 projects a one-column stack in Snapshot Vec order; we clamp
+   width to vw but let height scroll so stacked panels flow down the page. */
 .app-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 /* Column so a page that renders chrome (e.g. AdminNav) above its workspace
    stacks vertically, with the workspace taking the remaining height. */
@@ -250,10 +245,10 @@ a { color: inherit; text-decoration: none; }
   body { overflow-y: auto; overflow-x: hidden; height: auto; }
   .app-shell { height: auto; min-height: 100vh; overflow: visible; }
   .app-main { display: block; }
-  .ws-root.mobile { height: auto; }
+  .ws-root.compact { height: auto; }
   /* let stacked panels expand and the page scroll, instead of an inner scroll */
-  .ws-root.mobile .ws,
-  .ws-root.mobile .ws.tiling { overflow: visible; height: auto; }
+  .ws-root.compact .ws,
+  .ws-root.compact .ws.tiling { overflow: visible; height: auto; }
 }
 
 /* ── Shared UI atoms (components/ui.rs) ─────────────────────────────────── */

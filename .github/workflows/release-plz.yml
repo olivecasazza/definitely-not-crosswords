@@ -45,16 +45,17 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
-      # web/Cargo.toml pins panel-kit by absolute host path (the flake rewrites it
-      # at build time; release-plz runs plain `cargo metadata`, which needs the
-      # path to exist). Clone it there — outside the repo tree, so release-plz's
-      # clean-tree check is unaffected.
+      # web/Cargo.toml pins panel-kit and panel-kit-core under one absolute host
+      # checkout (the flake rewrites both at build time; release-plz runs plain
+      # `cargo metadata`, which needs the paths to exist). Clone the repository
+      # there — outside the repo tree, so release-plz's clean-tree check is
+      # unaffected.
       - name: Vendor panel-kit at its pinned path
         run: |
           sudo mkdir -p /home/olive/Repositories
           sudo chown -R "$(id -un)" /home/olive
           git clone https://github.com/olivecasazza/panel-kit /home/olive/Repositories/panel-kit
-          git -C /home/olive/Repositories/panel-kit checkout dac9f0061b73fa8fdb554a9575985a413facaebb
+          git -C /home/olive/Repositories/panel-kit checkout e216fa6ddbf2f4783af1fbcb76c61d5cb9b3d23b
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

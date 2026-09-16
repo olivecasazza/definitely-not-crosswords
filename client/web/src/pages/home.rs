@@ -4,7 +4,7 @@
 
 use crossword_core::fmt::{plural, rel_time};
 use dioxus::prelude::*;
-use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use panel_kit::{LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -87,8 +87,8 @@ fn guest_layout() -> Vec<PanelWin<GuestPanel>> {
 fn GuestHome() -> Element {
     // "_v2": panel heights went content-sized — a persisted layout would keep
     // the old viewport-fraction geometry forever.
-    let ws = use_workspace("home_layout_guest_v2", guest_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    let ws = crate::workspace::use_panel_workspace("home_layout_guest_v2", guest_layout);
+    crate::store::sync_panel_mode(ws.snapshot);
 
     let body = move |kind: GuestPanel, _max: bool| -> Element {
         match kind {
@@ -146,14 +146,7 @@ fn GuestHome() -> Element {
 
     rsx! {
         style { {HOME_CSS} }
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
-        }
+        {crate::workspace::render_workspace(&ws, body, &[])}
     }
 }
 
@@ -301,8 +294,8 @@ fn viewport() -> (f64, f64) {
         .unwrap_or((1440.0, 900.0))
 }
 
-/// First-mount geometry (a saved layout always wins). Vec order is also the
-/// mobile stacking order: Play Now → Pulse → How to Play.
+/// First-mount geometry (a saved layout always wins). The v1 compact projector
+/// preserves this Vec order: Play Now → Pulse → How to Play.
 ///
 /// Heights are content-sized rather than a viewport fraction. Pulse is a 2×2
 /// tile grid and How to Play is four fixed steps — sizing them off `vh` gave
@@ -407,8 +400,8 @@ fn Dashboard() -> Element {
     // "_v3": the panel set changed shape again (Brand → Learn) and every
     // height went content-sized — a persisted layout would keep the old
     // viewport-fraction geometry forever.
-    let ws = use_workspace("home_layout_v3", dash_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    let ws = crate::workspace::use_panel_workspace("home_layout_v3", dash_layout);
+    crate::store::sync_panel_mode(ws.snapshot);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
@@ -628,14 +621,7 @@ fn Dashboard() -> Element {
     rsx! {
         style { {GAME_LIST_CSS} }
         style { {HOME_DASH_CSS} }
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
-        }
+        {crate::workspace::render_workspace(&ws, body, &[])}
     }
 }
 

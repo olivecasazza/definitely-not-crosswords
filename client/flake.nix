@@ -30,12 +30,13 @@
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     omnix.url = "github:juspay/omnix";
 
-    # The web crate depends on panel-kit by absolute host path, which isn't
-    # reachable in the Nix sandbox. Pull it in as an input (pinned to the pushed
-    # rev so Hydra/buildbot can fetch it too) and rewrite the path at build time
-    # (see `src` below). For local panel-kit iteration, override:
-    #   --override-input panel-kit path:/home/olive/Repositories/panel-kit
-    panel-kit.url = "github:olivecasazza/panel-kit/dac9f0061b73fa8fdb554a9575985a413facaebb";
+    # The web crate depends on panel-kit and panel-kit-core by the absolute
+    # release-plz host path, which isn't reachable in the Nix sandbox. Pull the
+    # repository in as one input (pinned only to a pushed rev so Hydra can fetch
+    # it) and rewrite both path deps at build time (see `src` below). Local macOS
+    # verification uses the synced fork without changing this committed pin:
+    #   --override-input panel-kit path:/Users/casazza/Repositories/olivecasazza/panel-kit
+    panel-kit.url = "github:olivecasazza/panel-kit/e216fa6ddbf2f4783af1fbcb76c61d5cb9b3d23b";
     panel-kit.flake = false;
   };
 
@@ -63,13 +64,14 @@
           };
           craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-          # Workspace source. `web/Cargo.toml` pins panel-kit by absolute host
-          # path, unreachable in the sandbox. Vendor the `panel-kit` input INTO
-          # the source at a relative path and exclude it from this workspace
-          # (it's its own workspace — excluding avoids a nested-workspace clash),
-          # then rewrite the dep to point there. A relative path keeps the
-          # Cargo.toml free of store-path string references (which crane rejects).
-          # No working-tree edit — the committed Cargo.toml keeps the absolute path.
+          # Workspace source. `web/Cargo.toml` pins panel-kit and its core crate
+          # by the absolute release-plz host path, unreachable in the sandbox.
+          # Vendor the one `panel-kit` input INTO the source at a relative path
+          # and exclude it from this workspace (it's its own workspace —
+          # excluding avoids a nested-workspace clash), then rewrite both deps
+          # to point there. A relative path keeps Cargo.toml free of store-path
+          # string references (which crane rejects). No working-tree edit — the
+          # committed Cargo.toml keeps the release-plz-compatible absolute path.
           # Ship every workspace member so cargo can resolve the workspace; each
           # nix build below compiles just one crate (-p ...). All of web, desktop,
           # server, and tools are built as packages; backend/desktop must be
@@ -95,8 +97,8 @@
             chmod -R +w $out/vendor-panel-kit
             # exclude the vendored copy from this workspace
             sed -i -E 's#(members = \[.*\])#\1\nexclude = ["vendor-panel-kit"]#' $out/Cargo.toml
-            # repoint the dep at the vendored copy (relative path)
-            sed -i -E 's#path = "/home/olive/Repositories/panel-kit"#path = "../vendor-panel-kit"#' \
+            # repoint both panel-kit path deps at the vendored copy
+            sed -i -E 's#/home/olive/Repositories/panel-kit#../vendor-panel-kit#g' \
               $out/web/Cargo.toml
           '';
 

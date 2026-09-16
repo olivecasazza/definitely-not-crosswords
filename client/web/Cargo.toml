@@ -10,6 +10,7 @@ dioxus = { version = "0.6", features = ["web", "router"] }
 serde.workspace = true
 serde_json.workspace = true
 panel-kit = { path = "/home/olive/Repositories/panel-kit" }
+panel-kit-core = { path = "/home/olive/Repositories/panel-kit/crates/panel-kit-core" }
 gloo-storage = "0.3"
 gloo-net = { version = "0.6", features = ["http", "websocket", "json"] }
 gloo-timers = { version = "0.3", features = ["futures"] }

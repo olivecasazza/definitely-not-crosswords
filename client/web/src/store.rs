@@ -8,30 +8,30 @@ use crossword_core::auth::Role;
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, SessionStorage, Storage};
 use panel_kit::Mode;
+use panel_kit_core::{reducer::Snapshot, PanelKey};
 use serde::Deserialize;
 use wasm_bindgen_futures::spawn_local;
 
-/// Share the floating⇄tiling mode across every view. Each route is its own
-/// panel-kit workspace (independent mode), so without this, navigating between
-/// views would flip the layout mode back to whatever that view last persisted.
-/// Call once per page, right after `use_workspace`, passing `ws.mode`.
-pub fn sync_panel_mode(mut mode: Signal<Mode>) {
-    // On mount, adopt the shared mode (overriding this workspace's own).
-    // Default is Tiling; only an explicit prior "floating" choice opts out.
+/// Share the floating⇄tiling mode across every host-owned route workspace.
+///
+/// The route's `Snapshot` is the source of truth. On mount it adopts the
+/// app-wide `panel_mode` choice; reducer mode changes are then mirrored back to
+/// that same key so the next route starts consistently.
+pub fn sync_panel_mode<K: PanelKey>(mut snapshot: Signal<Snapshot<K>>) {
     use_hook(move || {
-        let m = match LocalStorage::get::<String>("panel_mode").as_deref() {
+        let mode = match LocalStorage::get::<String>("panel_mode").as_deref() {
             Ok("floating") => Mode::Floating,
             _ => Mode::Tiling,
         };
-        mode.set(m);
+        snapshot.write().preferred_mode = mode;
     });
-    // Persist any change to the shared key so other views pick it up.
+
     use_effect(move || {
-        let s = match *mode.read() {
+        let value = match snapshot.read().preferred_mode {
             Mode::Tiling => "tiling",
             Mode::Floating => "floating",
         };
-        let _ = LocalStorage::set("panel_mode", s);
+        let _ = LocalStorage::set("panel_mode", value);
     });
 }
 

@@ -5,7 +5,7 @@
 
 use crossword_core::fmt::{plural, rel_time};
 use dioxus::prelude::*;
-use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use panel_kit::{LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen::JsCast;
@@ -155,8 +155,8 @@ impl PanelKind for Panel {
 
 /// First-mount geometry, computed as viewport proportions like `home.rs` (a
 /// saved layout always wins; panel-kit re-scales floating panels on resize).
-/// Vec order is also the mobile stacking order:
-/// Continue → Featured → Library → Progress.
+/// The v1 compact projector forces one tiling column and preserves this Vec
+/// order: Continue → Featured → Library → Progress.
 fn default_layout() -> Vec<PanelWin<Panel>> {
     let (vw, vh) = web_sys::window()
         .and_then(|w| {
@@ -577,8 +577,8 @@ pub fn Games() -> Element {
 
     // "_v2": the panel set changed shape — don't let a persisted 3-panel
     // layout fight the new defaults.
-    let ws = use_workspace("games_layout_v2", default_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    let ws = crate::workspace::use_panel_workspace("games_layout_v2", default_layout);
+    crate::store::sync_panel_mode(ws.snapshot);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         // Distinguish session-loading from signed-out: while `session` is None the
@@ -913,14 +913,7 @@ pub fn Games() -> Element {
     rsx! {
         style { {GAME_LIST_CSS} }
         style { {GAMES_CSS} }
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
-        }
+        {crate::workspace::render_workspace(&ws, body, &[])}
     }
 }
 

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use dioxus::prelude::*;
-use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use panel_kit::{LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -370,8 +370,8 @@ pub fn GameNew(id: String) -> Element {
         last_recipe: use_signal(|| None),
     };
 
-    let ws = use_workspace("game_new_layout", default_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    let ws = crate::workspace::use_panel_workspace("game_new_layout", default_layout);
+    crate::store::sync_panel_mode(ws.snapshot);
 
     let mut details_res = details_res;
     let body = move |kind: Panel, _max: bool| -> Element {
@@ -861,14 +861,7 @@ pub fn GameNew(id: String) -> Element {
 
     rsx! {
         style { {NEW_CSS} }
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
-        }
+        {crate::workspace::render_workspace(&ws, body, &[])}
     }
 }
 

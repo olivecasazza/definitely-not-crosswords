@@ -793,7 +793,7 @@ pub fn GamePlay(id: String) -> Element {
     }
 
     let ws = use_workspace_local();
-    crate::store::sync_panel_mode(ws.mode);
+    crate::store::sync_panel_mode(ws.snapshot);
 
     // selected question, looked up fresh for the clue panel render
     let selected_q: Option<QuestionWithAnswerMap> = selected.read().and_then(|k| {
@@ -884,24 +884,17 @@ pub fn GamePlay(id: String) -> Element {
 
     rsx! {
         style { {GAME_CSS} }
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
-        }
+        {crate::workspace::render_workspace(&ws, body, &[])}
     }
 }
 
-/// `use_workspace` with a stable storage key for this screen.
-fn use_workspace_local() -> panel_kit::Workspace<PanelId> {
+/// Host-owned workspace with a stable storage key for this screen.
+fn use_workspace_local() -> crate::workspace::PanelWorkspace<PanelId> {
     // "_v3": the Active Clue panel was merged into Clues. A persisted `_v2`
     // layout carries geometry for a panel that no longer exists — and now that
-    // the `Clue` variant is gone its `SavedLayout` won't deserialize at all, so
+    // the `Clue` variant is gone its saved layout won't deserialize at all, so
     // the old key would silently fall back to defaults on every load anyway.
-    panel_kit::use_workspace("crossword_game_play_v3", default_layout)
+    crate::workspace::use_panel_workspace("crossword_game_play_v3", default_layout)
 }
 
 // ---------------------------------------------------------------------------
@@ -1450,7 +1443,7 @@ const GAME_CSS: &str = r#"
   .ws.tiling .panel-active-clue { align-self: flex-start; height: auto; }
 }
 
-/* Mobile (<760px) stacks panels and lets the page scroll, so panel-kit sizes
+/* The compact tier (<760px) stacks panels and lets the page scroll, so panel-kit sizes
    the Board panel `height:auto` — and `container-type: size` tells it the board
    contributes no height, collapsing the panel to its 180px floor. Drop the
    height chain here so the board is sized by WIDTH alone and the panel grows to

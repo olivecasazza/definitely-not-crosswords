@@ -11,7 +11,7 @@ use crossword_core::auth::Role;
 use crossword_core::fmt::format_date;
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, Storage};
-use panel_kit::{use_workspace, LayoutBuilder, Mode, PanelKind, PanelWin};
+use panel_kit::{LayoutBuilder, Mode, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
@@ -162,8 +162,8 @@ pub fn Profile() -> Element {
         });
     });
 
-    let ws = use_workspace("profile_layout_v2", default_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    let ws = crate::workspace::use_panel_workspace("profile_layout_v2", default_layout);
+    crate::store::sync_panel_mode(ws.snapshot);
     // After all hooks so the hook order is stable across guard states.
     if let Some(gate) = crate::store::use_auth_guard(Role::User) {
         return gate;
@@ -181,7 +181,8 @@ pub fn Profile() -> Element {
         _ => "Player",
     };
 
-    let mut ws_mode = ws.mode;
+    let ws_mode = ws.snapshot;
+    let mode_workspace = ws.clone();
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
@@ -647,8 +648,9 @@ pub fn Profile() -> Element {
 
             // ── Preferences (client-only) ─────────────────────────────────────
             Panel::Preferences => {
+                let mode_workspace = mode_workspace.clone();
                 let theme_active = if light() { 1 } else { 0 };
-                let mode_active = match *ws_mode.read() {
+                let mode_active = match ws_mode.read().preferred_mode {
                     Mode::Tiling => 0,
                     Mode::Floating => 1,
                 };
@@ -673,12 +675,8 @@ pub fn Profile() -> Element {
                                 tabs: vec!["Tiling".to_string(), "Floating".to_string()],
                                 active: mode_active,
                                 on_select: move |i: usize| {
-                                    let m = if i == 0 { Mode::Tiling } else { Mode::Floating };
-                                    ws_mode.set(m);
-                                    let _ = LocalStorage::set(
-                                        "panel_mode",
-                                        if i == 0 { "tiling" } else { "floating" },
-                                    );
+                                    let mode = if i == 0 { Mode::Tiling } else { Mode::Floating };
+                                    crate::workspace::set_mode(&mode_workspace, mode);
                                 },
                             }
                             p { class: "muted pf-subheading", "How workspace panels arrange, here and on every other view." }
@@ -789,14 +787,7 @@ pub fn Profile() -> Element {
 
     rsx! {
         style { {PROFILE_CSS} }
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
-        }
+        {crate::workspace::render_workspace(&ws, body, &[])}
     }
 }
 

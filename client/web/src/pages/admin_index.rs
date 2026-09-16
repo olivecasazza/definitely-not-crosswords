@@ -16,7 +16,7 @@ use crate::store::{use_app_state, Severity};
 use crate::Route;
 use crossword_core::fmt::{format_date, format_datetime, rel_time};
 use dioxus::prelude::*;
-use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin, WinState};
+use panel_kit::{LayoutBuilder, PanelKind, PanelWin, SurfaceClass, WinState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use wasm_bindgen_futures::spawn_local;
@@ -224,33 +224,42 @@ impl PanelKind for AdminPanel {
     }
 }
 
+const ADMIN_RESTORE_SHORTCUTS: &[(&str, AdminPanel)] = &[
+    ("1", AdminPanel::Overview),
+    ("2", AdminPanel::Parameters),
+    ("3", AdminPanel::Users),
+    ("4", AdminPanel::Discounts),
+];
+
 fn default_layout() -> Vec<PanelWin<AdminPanel>> {
     let mut b = LayoutBuilder::new();
 
+    // v1's grid uses quarter-row spans rather than the removed flex-basis
+    // fields: 4 preserves full width, while 1/3 preserves the prior 34/66 split.
     let overview = b
         .at(AdminPanel::Overview, 16.0, 16.0, 1888.0, 880.0)
-        .with_tile_flex(100.0, 1.0);
+        .with_tile(4, 1);
     let mut params = b
         .at(AdminPanel::Parameters, 16.0, 16.0, 640.0, 880.0)
-        .with_tile_flex(34.0, 1.0);
+        .with_tile(1, 1);
     let run = b
         .at(AdminPanel::Run, 672.0, 16.0, 1232.0, 432.0)
-        .with_tile_flex(66.0, 1.0);
+        .with_tile(3, 1);
     let jobs = b
         .at(AdminPanel::Jobs, 672.0, 464.0, 1232.0, 432.0)
-        .with_tile_flex(66.0, 1.0);
+        .with_tile(3, 1);
     let users = b
         .at(AdminPanel::Users, 592.0, 16.0, 1312.0, 880.0)
-        .with_tile_flex(66.0, 1.0);
+        .with_tile(3, 1);
     let mut add_user = b
         .at(AdminPanel::AddUser, 16.0, 16.0, 560.0, 880.0)
-        .with_tile_flex(34.0, 1.0);
+        .with_tile(1, 1);
     let discounts = b
         .at(AdminPanel::Discounts, 592.0, 16.0, 1312.0, 880.0)
-        .with_tile_flex(66.0, 1.0);
+        .with_tile(3, 1);
     let mut create = b
         .at(AdminPanel::Create, 16.0, 16.0, 560.0, 880.0)
-        .with_tile_flex(34.0, 1.0);
+        .with_tile(1, 1);
 
     // Open on first load: the read/monitor surfaces.
     // Minimized → dock chips: the write surfaces.
@@ -373,8 +382,9 @@ pub fn AdminIndex() -> Element {
 
     // ── workspace ─────────────────────────────────────────────────────────
 
-    let ws = use_workspace("admin_layout", default_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    let ws = crate::workspace::use_panel_workspace("admin_layout", default_layout);
+    crate::store::sync_panel_mode(ws.snapshot);
+    let ws_snapshot = ws.snapshot;
 
     // Per-source fetches fire only while a panel that needs the source is
     // open (not minimized to the dock), and refetch on restore.
@@ -382,7 +392,7 @@ pub fn AdminIndex() -> Element {
     // users + roles: Overview KPIs/feed, Users table, AddUser role select
     let mut users_seen_open = use_signal(|| false);
     use_effect(move || {
-        let open = ws.panels.read().iter().any(|p| {
+        let open = ws_snapshot.read().panels.iter().any(|p| {
             matches!(
                 p.kind,
                 AdminPanel::Overview | AdminPanel::Users | AdminPanel::AddUser
@@ -414,7 +424,7 @@ pub fn AdminIndex() -> Element {
     let mut jobs_last_take = use_signal(|| 0i64);
     use_effect(move || {
         let take = *jobs_take.read();
-        let open = ws.panels.read().iter().any(|p| {
+        let open = ws_snapshot.read().panels.iter().any(|p| {
             matches!(
                 p.kind,
                 AdminPanel::Overview | AdminPanel::Run | AdminPanel::Jobs
@@ -432,7 +442,7 @@ pub fn AdminIndex() -> Element {
     // discounts: Overview KPI, Discounts table
     let mut discounts_seen_open = use_signal(|| false);
     use_effect(move || {
-        let open = ws.panels.read().iter().any(|p| {
+        let open = ws_snapshot.read().panels.iter().any(|p| {
             matches!(p.kind, AdminPanel::Overview | AdminPanel::Discounts)
                 && p.state != WinState::Minimized
         });
@@ -457,9 +467,9 @@ pub fn AdminIndex() -> Element {
     // games-played KPI: Overview only
     let mut games_seen_open = use_signal(|| false);
     use_effect(move || {
-        let open = ws
-            .panels
+        let open = ws_snapshot
             .read()
+            .panels
             .iter()
             .any(|p| p.kind == AdminPanel::Overview && p.state != WinState::Minimized);
         if open && !*games_seen_open.peek() {
@@ -487,7 +497,7 @@ pub fn AdminIndex() -> Element {
 
     // Mobile (< 760px, panel-kit's own threshold) is read-only: write
     // controls are not mounted at all.
-    let mobile_ro = *ws.is_mobile.read();
+    let mobile_ro = crate::workspace::surface_class(&ws) == SurfaceClass::Compact;
 
     // ── shared user mutations (table + drawer) ────────────────────────────
     let mut set_role = move |uid: String, role: String| {
@@ -696,6 +706,7 @@ pub fn AdminIndex() -> Element {
 
     // ── panel bodies ──────────────────────────────────────────────────────
 
+    let jobs_workspace = ws.clone();
     let body = move |kind: AdminPanel, _max: bool| -> Element {
         match kind {
             AdminPanel::Overview => {
@@ -873,13 +884,14 @@ pub fn AdminIndex() -> Element {
                                         FeedKind::Job { status, topic } => {
                                             let status = status.clone();
                                             let topic = topic.clone();
+                                            let jobs_workspace = jobs_workspace.clone();
                                             rsx! {
                                                 button {
                                                     key: "{i}",
                                                     class: "row",
                                                     style: "width:100%;gap:0.75rem;align-items:center;padding:0.625rem 1rem;border:none;border-bottom:1px solid var(--border-app);background:transparent;color:inherit;text-align:left;cursor:pointer;font-size:0.875rem",
                                                     aria_label: "Open jobs: {topic}",
-                                                    onclick: move |_| ws.restore(AdminPanel::Jobs),
+                                                    onclick: move |_| crate::workspace::restore_panel(&jobs_workspace, AdminPanel::Jobs),
                                                     {status_badge(status.clone(), job_status_accent(&status))}
                                                     span { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
                                                         {topic.clone()}
@@ -1966,29 +1978,11 @@ pub fn AdminIndex() -> Element {
             if mobile_ro {
                 {mobile_banner()}
             }
-            div {
-                class: ws.root_class(),
-                tabindex: "0",
-                onmousemove: move |e| ws.handle_mouse_move(&e),
-                onmouseup: move |_| ws.handle_mouse_up(),
-                onkeydown: move |e| {
-                    // Keyboard restore shortcuts — inert while typing in a field.
-                    if panel_kit::is_editing() {
-                        return;
-                    }
-                    if let Key::Character(c) = e.key() {
-                        match c.as_str() {
-                            "1" => ws.restore(AdminPanel::Overview),
-                            "2" => ws.restore(AdminPanel::Parameters),
-                            "3" => ws.restore(AdminPanel::Users),
-                            "4" => ws.restore(AdminPanel::Discounts),
-                            _ => {}
-                        }
-                    }
-                },
-                {ws.render(body)}
-                {ws.dock()}
-            }
+            {crate::workspace::render_workspace(
+                &ws,
+                body,
+                ADMIN_RESTORE_SHORTCUTS,
+            )}
         }
         if let Some(u) = drawer_user {
             {

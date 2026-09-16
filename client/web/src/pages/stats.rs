@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use panel_kit::{LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -533,8 +533,8 @@ pub fn Stats() -> Element {
         Some(net::query_as::<Vec<MyInvite>>("team.myInvites", None).await)
     });
 
-    let ws = use_workspace("stats_layout", default_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    let ws = crate::workspace::use_panel_workspace("stats_layout", default_layout);
+    crate::store::sync_panel_mode(ws.snapshot);
 
     let body = move |kind: Panel, _max: bool| -> Element {
         match kind {
@@ -1182,14 +1182,7 @@ pub fn Stats() -> Element {
 
     rsx! {
         style { {STATS_CSS} }
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
-        }
+        {crate::workspace::render_workspace(&ws, body, &[])}
     }
 }
 

@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use panel_kit::{use_workspace, LayoutBuilder, PanelKind, PanelWin};
+use panel_kit::{LayoutBuilder, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::rc::Rc;
@@ -114,7 +114,7 @@ fn rank_name(index: usize) -> &'static str {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum Panel {
     Rankings,
-    // Alias keeps layouts persisted under the old "Summary" name deserializing.
+    // Retained for typed serde callers; v1 persistence resolves catalog IDs.
     #[serde(alias = "Summary")]
     NextUp,
 }
@@ -171,8 +171,12 @@ pub fn GameCompleted(id: String) -> Element {
     let start_error = use_signal(String::new);
     let nav = use_navigator();
 
-    let ws = use_workspace("game_completed_layout", default_layout);
-    crate::store::sync_panel_mode(ws.mode);
+    // "_v2": v1 resolves persisted panel IDs through the catalog rather than
+    // enum serde aliases, so the former `Summary` → `NextUp` alias cannot
+    // preserve that panel's old geometry. Start one clean v1 layout while
+    // leaving the legacy `game_completed_layout` record untouched.
+    let ws = crate::workspace::use_panel_workspace("game_completed_layout_v2", default_layout);
+    crate::store::sync_panel_mode(ws.snapshot);
 
     // Snapshot resource state via Rc so both panel arms of the body closure share it.
     // read_unchecked (not peek) keeps the component subscribed to the resource signal.
@@ -532,14 +536,7 @@ pub fn GameCompleted(id: String) -> Element {
 
     rsx! {
         style { {COMPLETED_CSS} }
-        div {
-            class: ws.root_class(),
-            tabindex: "0",
-            onmousemove: move |e| ws.handle_mouse_move(&e),
-            onmouseup: move |_| ws.handle_mouse_up(),
-            {ws.render(body)}
-            {ws.dock()}
-        }
+        {crate::workspace::render_workspace(&ws, body, &[])}
     }
 }
 

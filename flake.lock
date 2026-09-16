@@ -344,17 +344,17 @@
     "panel-kit": {
       "flake": false,
       "locked": {
-        "lastModified": 1781980457,
-        "narHash": "sha256-uYghtFhiqpR1ste3HyLSkIGa0r26YzvuBOIuNsV4b1Q=",
+        "lastModified": 1789584562,
+        "narHash": "sha256-vY8asmgrK9dvrtMRg/J2qmbgZpDKkKljMe9TnW5fnmQ=",
         "owner": "olivecasazza",
         "repo": "panel-kit",
-        "rev": "dac9f0061b73fa8fdb554a9575985a413facaebb",
+        "rev": "e216fa6ddbf2f4783af1fbcb76c61d5cb9b3d23b",
         "type": "github"
       },
       "original": {
         "owner": "olivecasazza",
         "repo": "panel-kit",
-        "rev": "dac9f0061b73fa8fdb554a9575985a413facaebb",
+        "rev": "e216fa6ddbf2f4783af1fbcb76c61d5cb9b3d23b",
         "type": "github"
       }
     },

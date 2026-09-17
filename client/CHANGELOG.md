@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.47](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.46...v0.1.47) - 2026-09-17
+
+### Added
+
+- *(chart)* platform health, resource efficiency and delivery dashboards (#98)
+- *(game)* merge the Active Clue panel into the clue list (#99)
+- migrate web workspaces to panel-kit v1
+
+### Fixed
+
+- *(ci)* trigger deploy-production on tag push, not main push [DEF-69] (#100)
+- panel-kit 1.1.1 — restore auto-fit tiling and click-to-raise
+
+### Other
+
+- changelog for v0.1.46 [skip ci]
+- advance panel-kit pins to e216fa6 (lock refresh after fork push)
+- refresh panel-kit lock to e216fa6
+- refresh root lock client/panel-kit to e216fa6
+
+
 ## [0.1.46](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.45...v0.1.46) - 2026-08-24
 
 ### Added

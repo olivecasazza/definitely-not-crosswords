@@ -210,7 +210,7 @@ fn render_projected_panel<K: PanelKind>(
     let body = panel::panel_body(body);
     let resize = panel::resize_grip(projected, emit);
 
-    panel::panel_shell(projected, Some(&class), rsx! { {chrome} {body} {resize} })
+    panel::panel_shell_with_events(projected, Some(&class), rsx! { {chrome} {body} {resize} }, emit)
 }
 
 fn mount_viewport_observer<K: PanelKind>(workspace: &PanelWorkspace<K>) {

@@ -105,7 +105,12 @@
         # commit status for each — this is what replaces the GHA "Nix Build &
         # Checks" job. Mirrors the four deliverables that job built, plus the
         # deployable image so PRs catch image-build breakage before a v* tag.
-        checks = {
+        #
+        # x86_64-linux only: the buildbot workers are all x86_64-linux, and the
+        # other systems' checks fail at eval time (crossword-client-src is built
+        # during evaluation and no darwin/aarch64 builder exists), so they only
+        # produced red statuses. Packages for other systems are unaffected.
+        checks = nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           inherit
             crossword-server
             crossword-web

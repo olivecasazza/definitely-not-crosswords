@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.48](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.47...v0.1.48) - 2026-09-24
+
+### Fixed
+
+- *(ci)* anchor nixlab tag rewrites on imagepolicy markers (#102)
+
+### Other
+
+- changelog for v0.1.47 [skip ci]
+- evaluate checks on x86_64-linux only (#104)
+
+
 ## [0.1.47](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.46...v0.1.47) - 2026-09-17
 
 ### Added

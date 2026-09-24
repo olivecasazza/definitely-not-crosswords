@@ -93,7 +93,7 @@ jobs:
             # Rewrite only the line carrying the crosswords-staging $imagepolicy marker,
             # so the pinned prod tag (no marker) is never touched. The current value
             # may be a v-tag or a main-build sha — match anything quoted.
-            sed -i -E 's|tag = "[^"]+"; # \{"\$imagepolicy": "apps:crosswords-staging"\}|tag = "'"$TAG"'"; # {"$imagepolicy": "apps:crosswords-staging"}|' "$file"
+            sed -i -E 's|tag = "[^"]+"; *# \{"\$imagepolicy": "apps:crosswords-staging"\}|tag = "'"$TAG"'"; # {"$imagepolicy": "apps:crosswords-staging"}|' "$file"
             if git diff --quiet -- "$file"; then
               echo "Staging already at $TAG — nothing to do."
               exit 0

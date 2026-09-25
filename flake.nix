@@ -102,9 +102,8 @@
         };
 
         # buildbot-nix evaluates `.#checks.<system>` per PR and reports a GitHub
-        # commit status for each — this is what replaces the GHA "Nix Build &
-        # Checks" job. Mirrors the four deliverables that job built, plus the
-        # deployable image so PRs catch image-build breakage before a v* tag.
+        # commit status for each; GitHub Actions runs no Nix. The four
+        # deliverables, the deployable image, and the migration gate.
         #
         # x86_64-linux only: the buildbot workers are all x86_64-linux, and the
         # other systems' checks fail at eval time (crossword-client-src is built
@@ -118,6 +117,57 @@
             crossword-desktop
             dockerImage
             ;
+
+          # Migrations are applied by the `migrate-db` init container at pod
+          # start, so before this gate the FIRST place any migration ever ran
+          # was a real database. That is how prod silently lost
+          # `User."vipPass"` and the whole `Discount` table for six weeks (see
+          # migrations/20260812000000_repair_adopted_schema_drift). Runs against
+          # a throwaway Postgres inside the build sandbox.
+          migrations =
+            pkgs.runCommand "migrations-apply-cleanly"
+              {
+                nativeBuildInputs = [ pkgs.postgresql ];
+                migrationsDir = ./client/backend/tools/migrations;
+              }
+              ''
+                set -euo pipefail
+                # sqlx rejects socket-dir URLs ("empty host"), so loopback TCP.
+                export PGDATA=$TMPDIR/pg PGHOST=127.0.0.1 PGPORT=54329
+                initdb -U ci --auth=trust >/dev/null
+                pg_ctl -o "-k $TMPDIR -c listen_addresses=127.0.0.1 -p $PGPORT" -w start >/dev/null
+                createdb -U ci ci
+                export DATABASE_URL="postgresql://ci@127.0.0.1:$PGPORT/ci"
+                q() { psql "$DATABASE_URL" -At -c "$1"; }
+
+                # 1. Fresh database: every migration must apply from scratch.
+                ${crossword-tools}/bin/migrate
+                files=$(ls $migrationsDir/*.sql | wc -l)
+                applied=$(q 'select count(*) from _sqlx_migrations')
+                echo "migration files: $files / applied: $applied"
+                [ "$files" -eq "$applied" ] || { echo "$files migration files but $applied applied rows"; exit 1; }
+                # The 2026-06-30 corruption signature: a row inserted by a
+                # baseline rather than an actual run.
+                [ "$(q 'select count(*) from _sqlx_migrations where execution_time = 0')" -eq 0 ] \
+                  || { echo "migration(s) recorded applied without running"; exit 1; }
+                [ "$(q 'select count(*) from _sqlx_migrations where success is not true')" -eq 0 ] \
+                  || { echo "migration(s) recorded as failed"; exit 1; }
+
+                # 2. Re-running is a no-op: the init container runs on every pod start.
+                ${crossword-tools}/bin/migrate
+                [ "$(q 'select count(*) from _sqlx_migrations')" = "$applied" ] \
+                  || { echo "rerun changed the applied count"; exit 1; }
+
+                # 3. The objects prod actually lost.
+                check() { [ "$(q "$2")" = t ] || { echo "missing $1"; exit 1; }; echo "ok  $1"; }
+                check 'User."vipPass"' "select exists(select 1 from information_schema.columns where table_name='User' and column_name='vipPass')"
+                check 'Discount table' "select exists(select 1 from information_schema.tables where table_name='Discount')"
+                check 'Team table' "select exists(select 1 from information_schema.tables where table_name='Team')"
+                check 'DailyPick table' "select exists(select 1 from information_schema.tables where table_name='DailyPick')"
+
+                pg_ctl -w stop >/dev/null
+                touch $out
+              '';
         };
 
         # App development happens in the Rust workspace: `nix develop ./client`.

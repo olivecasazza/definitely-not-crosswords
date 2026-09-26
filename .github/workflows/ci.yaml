@@ -9,6 +9,11 @@ on:
     branches: [ main ]
   pull_request_review:
     types: [ submitted ]
+  # Manual build of a ref, and the escape hatch the auto-merge job needs: a
+  # GITHUB_TOKEN merge emits no `push` event, so that job dispatches this
+  # instead. workflow_dispatch is GitHub's documented exception to the
+  # "token-triggered events create no run" rule.
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -34,7 +39,10 @@ jobs:
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    # push: every main/tag push. workflow_dispatch: the build the auto-merge
+    # job dispatches, because a GITHUB_TOKEN squash-merge to main produces no
+    # push event and would otherwise never be built (see that job).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -72,7 +80,7 @@ jobs:
           docker load < "$IMAGE_TAR"
 
       - name: Tag and push
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: |
           BASE="${GAR_REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE}"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
@@ -154,6 +162,13 @@ jobs:
   auto-merge:
     name: Auto-Merge Minor/Patch PR
     runs-on: ubuntu-latest
+    # A job-level block REPLACES the workflow-level one, and an omitted scope
+    # is `none` — so this job must re-list what the merge uses and add
+    # `actions: write` for the `gh workflow run` below.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
     needs: [ conventional-commits-check, approval-check ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
@@ -174,3 +189,38 @@ jobs:
             echo "::warning::Could not enable auto-merge for PR #$PR_NUMBER — check that"
             echo "::warning::Settings → General → 'Allow auto-merge' is enabled. Merge manually."
           fi
+
+      # The merge above authenticates as GITHUB_TOKEN, and GitHub creates no
+      # workflow run for events triggered by the repository token — so the
+      # squash landing on main emits no `push` event, `build-and-push` (which
+      # only ran on push) never fires, and `deploy-staging` — keyed off a
+      # main-branch push run — skips as well. Net effect: an auto-merged PR is
+      # merged and never built, so staging silently serves stale code.
+      # workflow_dispatch is the documented exception, so dispatch the main
+      # build ourselves. Poll is bounded and exits early the moment the squash
+      # lands; a hand-merged PR (PAT) still arrives here as a normal push.
+      - name: Build main once the auto-merge lands
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
+          fi
+
+          STATE=UNKNOWN
+          for _ in $(seq 1 30); do
+            STATE=$(gh pr view "$PR_NUMBER" -R ${{ github.repository }} --json state --jq .state)
+            if [ "$STATE" = "MERGED" ] || [ "$STATE" = "CLOSED" ]; then
+              break
+            fi
+            sleep 20
+          done
+
+          if [ "$STATE" != "MERGED" ]; then
+            echo "::notice::PR #$PR_NUMBER is $STATE, not merged — nothing to build."
+            exit 0
+          fi
+
+          gh workflow run ci.yaml -R ${{ github.repository }} --ref main
+          echo "Dispatched a main build of $(gh api repos/${{ github.repository }}/commits/main --jq .sha)."

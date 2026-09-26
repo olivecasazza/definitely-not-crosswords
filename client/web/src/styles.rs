@@ -240,6 +240,24 @@ a { color: inherit; text-decoration: none; }
 /* Override panel-kit's default `.ws-root { height: 100vh }` so the workspace
    fills the remaining space in `.app-main` instead of overflowing it. */
 .app-main .ws-root { flex: 1 1 auto; min-height: 0; height: auto; min-width: 0; }
+/* ...and the same fix for the tile tracks inside it. panel-kit projects the
+   grid from the WINDOW viewport (its band is `100vh - 30`, the dock it
+   reserves) and writes `grid-template-rows: repeat(n, <px>)` inline, but the
+   workspace renders in `.app-main` — below the header and, on staging, the
+   beta banner — which is exactly that much shorter. So the tracks were
+   header-height taller than the screen: the signed-out Welcome panel measured
+   478x1048 at y=41 (bottom 1089) on the canary's 1920x1080 viewport and
+   overflowed it. Dropping the explicit row template lets each panel's own
+   `grid-row` placement create implicit tracks that share the band actually on
+   screen, and `minmax(0, …)` keeps a long panel from growing the row back —
+   `.panel-body` scrolls instead (panel-kit.css). Columns stay inline:
+   `.app-main` is exactly the window wide, so those tracks are already right.
+   Left off `.compact`, where `.app-main` is `display: block` and the page —
+   not the grid — is meant to scroll. */
+.app-main .ws-root:not(.compact) .ws.tiling {
+  grid-template-rows: none !important;
+  grid-auto-rows: minmax(0, 1fr);
+}
 
 @media (max-width: 760px) {
   body { overflow-y: auto; overflow-x: hidden; height: auto; }

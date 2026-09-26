@@ -65,9 +65,13 @@ jobs:
           TAG: ${{ github.event.inputs.tag || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha) || github.event.workflow_run.head_branch }}
           NIXLAB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
+          # A deploy that never ran must NOT report as a successful deploy.
+          # This branch used to `exit 0`, which is how a deploy could be green
+          # while the endpoint served 502 — nothing downstream could tell the
+          # difference between "deployed" and "did nothing" (DEF-110).
           if [ -z "${NIXLAB_TOKEN:-}" ]; then
-            echo "RELEASE_PLZ_TOKEN not set — skipping staging deploy."
-            exit 0
+            echo "::error::RELEASE_PLZ_TOKEN not set — cannot deploy staging. Failing loudly instead of reporting a deploy that never happened."
+            exit 1
           fi
           set -euo pipefail
           git clone "https://x-access-token:${NIXLAB_TOKEN}@github.com/casazza-info/nixlab.git" nixlab
@@ -118,3 +122,54 @@ jobs:
             echo "nixlab main moved under us; retrying from the new head ($attempt/3)"
           done
           echo "Could not land the staging bump after 3 attempts."; exit 1
+
+      # Post-deploy readiness probe. The bump step above only proves the image tag
+      # landed in nixlab's crosswords.nix. Flux applies it asynchronously, and a bad
+      # image — or a cluster-level fault like the CNPG/Longhorn outage — serves 502
+      # while this run is still green. A green `deploy-staging` was therefore not a
+      # health signal, and short-circuiting an incident verification to "the run went
+      # green" validated a dead service (DEF-110).
+      #
+      # This step runs on every success path, including the benign
+      # "already at $TAG - nothing to do" no-op (that `exit 0` ends the *step*, not
+      # the job), so a green run always means "and it is actually answering".
+      #
+      # No `set -e` here on purpose: curl failing is the retry condition, not a
+      # reason to abandon the poll. Failure is reported explicitly at the bottom.
+      - name: Verify staging is actually serving
+        env:
+          BASE_URL: https://crosswords-staging.casazza.io
+          TAG: ${{ github.event.inputs.tag || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha) || github.event.workflow_run.head_branch }}
+        run: |
+          set -uo pipefail
+          # 30 polls x 20s of waiting, up to ~18m with slow TLS handshakes. Flux's ImagePolicy scan interval is minutes, not seconds.
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BASE_URL/api/healthz" 2>/dev/null) || code=000
+            if [ "$code" = "200" ]; then
+              cfg=$(curl -s --max-time 15 "$BASE_URL/api/config" 2>/dev/null) || cfg=""
+              echo "healthz=200 from $BASE_URL; /api/config -> ${cfg:-<empty>}"
+              # A release/tag deploy must be serving exactly that version. Continuous
+              # staging deploys a :<sha> image while /api/config reports the crate
+              # version, so only assert the version when the tag is a version tag.
+              case "$TAG" in
+                *v[0-9]*)
+                  got=$(printf '%s' "$cfg" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+                  want="${TAG##*v}"
+                  if [ "$got" != "$want" ]; then
+                    echo "::error::$BASE_URL answers but serves version ${got:-unknown}, want $want — the tag bump landed but the wrong build is live."
+                    exit 1
+                  fi
+                  echo "serving expected version $got"
+                  ;;
+                *)
+                  echo "tag $TAG is not a version tag; skipping the version assertion"
+                  ;;
+              esac
+              echo "::notice::Post-deploy readiness OK: $BASE_URL is serving."
+              exit 0
+            fi
+            echo "healthz=$code from $BASE_URL — retry $i/30"
+            sleep 20
+          done
+          echo "::error::$BASE_URL never returned 200 from /api/healthz (tag $TAG). The tag bump to nixlab succeeded but the service is not serving. Do NOT treat this run as a healthy deploy — triage the cluster/app before closing the incident."
+          exit 1

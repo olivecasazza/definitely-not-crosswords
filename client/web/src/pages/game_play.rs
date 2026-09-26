@@ -1138,6 +1138,20 @@ fn render_clues(
                                                 div {
                                                     class: "cw-clue-editor",
                                                     onclick: move |e: Event<MouseData>| e.stop_propagation(),
+                                                    // Direction badge + length. This editor replaced the
+                                                    // standalone Active Clue panel, which is the only place
+                                                    // the direction was ever shown: the clue list groups by
+                                                    // the Across/Down tab, but a board cell click can select
+                                                    // the OTHER direction, and without this the player cannot
+                                                    // tell which word they are typing.
+                                                    div { class: "cw-clue-meta",
+                                                        span { class: "cw-dir-badge cw-dir-{dir_str(m.question.direction).to_lowercase()}",
+                                                            "{dir_str(m.question.direction)}"
+                                                        }
+                                                        span { class: "muted",
+                                                            "CLUE {m.question.number} · {m.answer_map.len()} LETTERS"
+                                                        }
+                                                    }
                                                     div { class: "cw-letters",
                                                         for (index , slot) in slots.iter().cloned().enumerate() {
                                                             {
@@ -1396,6 +1410,14 @@ const GAME_CSS: &str = r#"
 /* The inline editor, inside the selected clue row. `.cw-clue-actions` used to
    sit at `margin-top: auto` in a full-height panel; in a content-sized row that
    auto margin collapses, so spacing is explicit here. */
+/* Editor meta row: direction badge + "CLUE n · m LETTERS". Direction is
+   load-bearing now that the editor lives inside the list — the Across/Down tab
+   shows the list's filter, not the selected word's direction, and a board cell
+   click can select the other one. */
+.cw-clue-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cw-dir-badge { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.1em; padding: 2px 6px; border-radius: 0; border: 1px solid; }
+.cw-dir-across { background: color-mix(in srgb, var(--pastel-yellow) 10%, transparent); color: var(--pastel-yellow); border-color: color-mix(in srgb, var(--pastel-yellow) 20%, transparent); }
+.cw-dir-down { background: color-mix(in srgb, var(--pastel-green) 10%, transparent); color: var(--pastel-green); border-color: color-mix(in srgb, var(--pastel-green) 20%, transparent); }
 .cw-clue-editor { display: flex; flex-direction: column; gap: 10px; }
 .cw-letters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 4px 0; }
 .cw-letter-input { width: 40px; height: 40px; text-align: center; font-size: 18px; font-weight: 700; text-transform: uppercase; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-primary); }

@@ -2,8 +2,8 @@ import { test, expect, devices, type Page } from "@playwright/test";
 
 // Geometry verification for the UX surface — objective bounding-box assertions
 // instead of eyeballing recordings. Covers the regressions that kept slipping
-// through screenshot review: board grid clipping its panel, the "Ready to
-// solve?" empty state ballooning, home panels overflowing the viewport, and
+// through screenshot review: board grid clipping its panel, the inline clue
+// editor overflowing its clue row, home panels overflowing the viewport, and
 // remote guesses landing all-at-once instead of staggered.
 //
 // The home tests are unauthenticated (public pages). The board tests need the
@@ -203,16 +203,25 @@ test.describe("game board (needs e2e account)", () => {
     );
     expect(zoom, ".cw-board must fit naturally, no JS zoom").toBe("");
 
-    // Empty state: the "Ready to solve?" card is bounded inside its panel.
-    const emptyWrap = await bbox(page, ".cw-clue-empty");
-    const card2 = await bbox(page, ".cw-empty-card");
-    expect(emptyWrap, "clue empty state rendered").not.toBeNull();
-    expect(card2, "empty-state card rendered").not.toBeNull();
-    expectInside(card2!, emptyWrap!, 2, "empty-state card");
-    expect(
-      card2!.width <= emptyWrap!.width * 0.95,
-      `empty-state card eats its panel: ${JSON.stringify(card2)} in ${JSON.stringify(emptyWrap)}`,
-    ).toBe(true);
+    // Nothing is selected on a freshly opened board, so no editor is rendered.
+    await expect(page.locator(".cw-clue-editor")).toHaveCount(0);
+
+    // The merged Active Clue editor expands INSIDE the selected clue row, so
+    // the regression to guard is the editor — or its row — overflowing the
+    // clue list, not an empty-state card ballooning in its own panel.
+    await page.locator(".cw-clue-row").first().click();
+    await expect(page.locator(".cw-clue-editor")).toBeVisible();
+
+    const editor = await bbox(page, ".cw-clue-editor");
+    const selRow = await bbox(page, ".cw-clue-row.cw-clue-row-sel");
+    const list = await bbox(page, ".cw-clue-list");
+    const letters = await bbox(page, ".cw-clue-editor .cw-letters");
+    expect(editor, "inline clue editor rendered").not.toBeNull();
+    expect(selRow, "selected clue row rendered").not.toBeNull();
+    expectInside(editor!, selRow!, 2, "inline editor inside its clue row");
+    expectInside(selRow!, list!, 2, "selected clue row inside the clue list");
+    expectInside(letters!, editor!, 2, "letter boxes inside the editor");
+    await expect(page.locator(".cw-letter-input").first()).toBeVisible();
   });
 
   test("phone board fits too", async ({ browser }) => {

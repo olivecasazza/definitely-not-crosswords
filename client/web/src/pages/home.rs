@@ -626,7 +626,7 @@ fn Dashboard() -> Element {
 }
 
 /// The How to Play steps. Kept in sync by hand with `pages/game_play.rs` —
-/// the Clues/Active Clue panels and `render_clue`'s Guess + "ESC to clear".
+/// the Clues panel and the inline editor's Guess + "ESC to clear".
 const STEPS: [(u8, &str, &str); 4] = [
     (
         1,
@@ -636,7 +636,7 @@ const STEPS: [(u8, &str, &str); 4] = [
     (
         2,
         "Type the answer",
-        "Letters go into the boxes in the Active Clue panel. Typing advances automatically; Esc clears the selection.",
+        "The clue you pick opens up in the Clues list with a box per letter. Typing advances automatically; Esc clears the selection.",
     ),
     (
         3,

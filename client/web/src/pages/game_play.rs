@@ -42,6 +42,14 @@ fn qkey(q: &Question) -> QKey {
     (q.number, q.direction)
 }
 
+/// Does this word run through `(x, y)`? The single covering test the keyboard
+/// layer uses to pick which word a coordinate belongs to — it must match
+/// `select_coordinates`' own notion of "covers", or a keyboard move and a
+/// click on the same cell would resolve to different clues.
+fn covers_cell(m: &QuestionWithAnswerMap, x: i32, y: i32) -> bool {
+    m.answer_map.iter().any(|c| c.cord_x == x && c.cord_y == y)
+}
+
 fn dir_str(d: Direction) -> &'static str {
     match d {
         Direction::Across => "ACROSS",
@@ -656,19 +664,45 @@ pub fn GamePlay(id: String) -> Element {
         }
     };
 
+    // --- draft letter write, shared by the inline editor and the board --------
+    // The single place a letter enters the local draft. Both the editor's
+    // `onchange` and a board keystroke go through it, so "type a letter" means
+    // the same thing (same casing, same advance) on either surface. Still a
+    // local draft: Guess is the only thing that commits.
+    let write_letter_for_editor = move |index: usize, raw: String| {
+        let val = raw
+            .chars()
+            .last()
+            .map(|c| c.to_ascii_uppercase().to_string())
+            .unwrap_or_default();
+        {
+            let mut g = game_action_data.write();
+            if let Some(slot) = g.get_mut(index) {
+                slot.state = val.clone();
+            }
+        }
+        let len = game_action_data.peek().len();
+        if !val.is_empty() && index + 1 < len {
+            focused_index.set(Some(index + 1));
+        }
+    };
+    let handle_letter_input = write_letter_for_editor.clone();
+    let mut write_letter = write_letter_for_editor;
+
     // --- board keyboard layer ------------------------------------------------
-    // A thin input surface over the selection model that already exists: every
-    // key resolves to a target cell and then runs the SAME `select_coordinates`
-    // a click runs, so there is still exactly one cursor (the `focused_coord`
-    // `render_board` derives) and no parallel state store to drift from it.
+    // A thin input surface over the selection model that already exists, so
+    // there is still exactly one cursor (the `focused_coord` `render_board`
+    // derives) and no parallel state store to drift from it.
     //
-    // Two things this has to get right that a click does not:
+    // Three things this has to get right that a click does not:
     //
-    //  1. `select_question` always starts a word at index 0, so after moving
-    //     into a cell we re-point `focused_index` at the cell actually moved
-    //     to — otherwise every arrow press would snap to the word's first
-    //     letter.
-    //  2. panel-kit's workspace handler owns bare arrows (pan the window) and
+    //  1. The keyboard resolves a target cell to a `(clue, index)` pair with
+    //     `select_at`, NOT with `select_coordinates` — see there. A click is
+    //     allowed to land on the word start; an arrow press is not.
+    //  2. `select_question` always starts a word at index 0, so every path
+    //     that crosses into another word re-points `focused_index` at the cell
+    //     actually moved to.
+    //  3. panel-kit's workspace handler owns bare arrows (pan the window) and
     //     Tab (move panel focus), and the grid sits INSIDE that workspace. So
     //     every branch below stops propagation; without it, each cursor move
     //     would also pan the workspace.
@@ -686,49 +720,70 @@ pub fn GamePlay(id: String) -> Element {
         }
     };
 
-    // `select_coordinates` is a closure over another closure, so it is `Clone`
-    // but not `Copy`. Hand every consumer below its own copy, otherwise a
-    // `move` capture gives it to exactly one of them and the rest fail to
-    // compile.
-    let mut sc_focus = select_coordinates.clone();
-    let mut sc_seed = select_coordinates.clone();
-    let mut sc_switch = select_coordinates.clone();
-
-    // Point the cursor at a cell. Inside the current word this just moves along
-    // it (keeping the in-progress word); outside it, take the covering clue the
-    // way a click does.
-    let mut focus_coord = move |x: i32, y: i32| {
-        let index_in = |m: &QuestionWithAnswerMap| {
-            m.answer_map
-                .iter()
-                .position(|c| c.cord_x == x && c.cord_y == y)
-        };
+    // Coordinate -> (clue, index) resolver, used ONLY by the keyboard layer.
+    //
+    // It cannot go through `select_coordinates`: that calls `select_question`,
+    // which unconditionally sets `focused_index = Some(0)`, so every cursor
+    // move would land on the FIRST letter of whatever word covers the target
+    // and arrows would be unusable. (The click path has the same quirk — a
+    // click lands on the word start, not the clicked cell — but that is
+    // pre-existing and `select_question`/`select_coordinates` are left
+    // byte-identical here, per spec.)
+    //
+    // Covering-clue preference is deliberately the same order
+    // `select_coordinates` uses — the working direction first, then any
+    // direction — so a keyboard move into a crossing cell picks the same clue a
+    // click on that cell would.
+    let mut select_question_for_at = select_question.clone();
+    let select_at = move |x: i32, y: i32| {
         let maps = answer_maps.peek();
-        if let Some(k) = *selected.peek() {
-            if let Some(m) = maps.iter().find(|m| qkey(&m.question) == k) {
-                if let Some(idx) = index_in(m) {
-                    focused_index.set(Some(idx));
-                    return;
-                }
-            }
+        let dir = *selected_direction.peek();
+        let covers =
+            |m: &QuestionWithAnswerMap| m.answer_map.iter().any(|c| c.cord_x == x && c.cord_y == y);
+        let found = maps
+            .iter()
+            .find(|m| dir.map(|d| m.question.direction == d).unwrap_or(false) && covers(m))
+            .or_else(|| maps.iter().find(|m| covers(m)));
+        let Some(m) = found else { return };
+        let key = qkey(&m.question);
+        let Some(idx) = m
+            .answer_map
+            .iter()
+            .position(|c| c.cord_x == x && c.cord_y == y)
+        else {
+            return;
+        };
+        if *selected.peek() == Some(key) {
+            // Already on this word: just slide the cursor. Going through
+            // `select_question` again would throw the in-progress draft away
+            // for nothing.
+            focused_index.set(Some(idx));
+            return;
         }
         drop(maps);
-        sc_focus(x, y);
-        let maps = answer_maps.peek();
-        if let Some(k) = *selected.peek() {
-            if let Some(m) = maps.iter().find(|m| qkey(&m.question) == k) {
-                if let Some(idx) = index_in(m) {
-                    focused_index.set(Some(idx));
-                }
-            }
-        }
+        select_question_for_at(key);
+        // `select_question` parks the cursor at index 0; the arrow is asking
+        // for THIS cell, so override it.
+        focused_index.set(Some(idx));
     };
+
+    // `select_at` is a closure over another closure, so it is `Clone` but not
+    // `Copy`. Hand every consumer below its own copy, otherwise a `move`
+    // capture gives it to exactly one of them and the rest fail to compile.
+    let mut sa_focus = select_at.clone();
+    let mut sa_seed = select_at.clone();
+    let mut sa_switch = select_at.clone();
+
+    // Point the cursor at a cell, the way an arrow press means it: land on the
+    // cell itself, crossing into the covering word when the target is outside
+    // the one being typed.
+    let mut focus_coord = move |x: i32, y: i32| sa_focus(x, y);
 
     // First non-block cell in row-major order, selected as a clue. This is the
     // "no clue picked yet" entry point for Tab and for the first keystroke.
     let seed_cursor = move || {
         if let Some((x, y)) = first_playable(&board.peek().1) {
-            sc_seed(x, y);
+            sa_seed(x, y);
         }
     };
 
@@ -741,33 +796,35 @@ pub fn GamePlay(id: String) -> Element {
     // Arrows step along the ray until they land on a playable cell, so a block
     // is skipped rather than swallowed. A blocked first step means the cursor
     // is at the edge in that direction: no-op.
+    //
+    // With no cursor yet there is nothing to step FROM, so seed on the first
+    // playable cell and then apply the key to it — an arrow on an unseeded
+    // board should still end up on a cell, not swallow the press. Seeding
+    // always lands on `focused_coord` afterwards, so this only ever happens
+    // once per puzzle.
     let mut move_cursor = move |dx: i32, dy: i32| {
-        let Some(from) = cursor_coord() else {
-            seed_for_arrows();
-            return;
+        let from = match cursor_coord() {
+            Some(f) => f,
+            None => {
+                seed_for_arrows();
+                // Seeding can still be a no-op on an empty/all-block board.
+                let Some(f) = cursor_coord() else { return };
+                f
+            }
         };
         if let Some(target) = step_to_playable(&board.peek().1, from, dx, dy) {
             focus_coord(target.0, target.1);
         }
     };
 
-    // Land on the first unfilled slot of `key`'s word, else its first letter.
-    let mut focus_first_empty = move |key: QKey| {
-        let maps = answer_maps.peek();
-        if let Some(m) = maps.iter().find(|m| qkey(&m.question) == key) {
-            let first_empty = m.answer_map.iter().position(|c| {
-                c.modifications
-                    .first()
-                    .map(|md| md.state.is_empty())
-                    .unwrap_or(true)
-            });
-            focused_index.set(Some(first_empty.unwrap_or(0)));
-        }
-    };
-
     // Next/previous clue in the working direction, wrapping. Tab is trapped in
     // the grid on purpose (see the Escape branch), so this is the only way to
     // walk the puzzle from the keyboard.
+    //
+    // `select_question` already leaves `focused_index` at 0, which is exactly
+    // where a click on that clue row puts it. There is deliberately no
+    // "first empty slot" seek and no draft save: the spec asks for parity with
+    // the mouse path, and the mouse path does neither.
     let mut select_for_step = select_question.clone();
     let mut step_clue = move |forward: bool| {
         let dir = selected_direction.peek().unwrap_or(Direction::Across);
@@ -789,26 +846,50 @@ pub fn GamePlay(id: String) -> Element {
             None if forward => 0,
             None => keys.len() - 1,
         };
-        let key = keys[next];
-        select_for_step(key);
-        focus_first_empty(key);
+        select_for_step(keys[next]);
     };
 
-    // Space flips the working direction, staying on the same cell. Persisting
-    // the in-progress word first mirrors the direction tab (`toggle_dir`), so
-    // flipping direction mid-word never silently drops what was typed.
-    let mut clear_for_switch = clear_selection.clone();
+    // Space switches to the word running the OTHER way through the cell under
+    // the cursor, and leaves the cursor on that same cell (its index in the new
+    // word) — the behaviour a click on that clue row produces, including the
+    // consequence that the outgoing word's unsaved draft is dropped.
+    //
+    // Deliberately NO save here. `clear_selection(true)` would persist the
+    // typed letters as a placeholder, which is what the mouse's direction TAB
+    // does; but the mouse's own cross-word click does not save, and the spec
+    // asks for parity with that path. Saving here would make Space the one
+    // keyboard action that quietly writes to the server.
     let mut switch_direction = move |new_dir: Direction| {
         let Some((x, y)) = cursor_coord() else {
+            // No cursor to switch around: flip the clue-list filter, which is
+            // all the signal means on its own.
             selected_direction.set(Some(new_dir));
             return;
         };
-        clear_for_switch(true);
-        selected_direction.set(Some(new_dir));
-        sc_switch(x, y);
-        if let Some(k) = *selected.peek() {
-            focus_first_empty(k);
+        let maps = answer_maps.peek();
+        let covering = maps
+            .iter()
+            .find(|m| m.question.direction == new_dir && covers_cell(m, x, y));
+        let Some(m) = covering else {
+            // No word crosses this cell in the other direction — no-op, and the
+            // cursor stays put.
+            return;
+        };
+        let key = qkey(&m.question);
+        let Some(idx) = m
+            .answer_map
+            .iter()
+            .position(|c| c.cord_x == x && c.cord_y == y)
+        else {
+            return;
+        };
+        drop(maps);
+        if *selected.peek() == Some(key) {
+            focused_index.set(Some(idx));
+            return;
         }
+        sa_switch(x, y);
+        focused_index.set(Some(idx));
     };
 
     // Consume a key the grid has handled. `prevent_default` stops the browser's
@@ -883,29 +964,13 @@ pub fn GamePlay(id: String) -> Element {
                     .find(|ch| ch.is_ascii_alphabetic())
                     .unwrap_or(' ')
                     .to_ascii_uppercase();
-                let cursor_at = *focused_index.peek();
-                if let Some(i) = cursor_at {
-                    let mut g = game_action_data.write();
-                    if let Some(s) = g.get_mut(i) {
-                        s.state = ch.to_string();
-                    }
-                    // The write guard has to be released before the read below.
-                    drop(g);
-                    // Same write the editor's onchange does, then advance: to
-                    // the next empty slot if the word has one, else the next
-                    // slot. Still a local draft — Guess remains the only thing
-                    // that commits.
-                    let slots = game_action_data.peek().clone();
-                    let next = slots
-                        .iter()
-                        .enumerate()
-                        .skip(i + 1)
-                        .find(|(_, s)| s.state.trim().is_empty())
-                        .map(|(k, _)| k)
-                        .or_else(|| (i + 1 < slots.len()).then_some(i + 1));
-                    if let Some(n) = next {
-                        focused_index.set(Some(n));
-                    }
+                // The SAME local-draft write the editor's onchange makes, so
+                // the grid and the inline editor cannot drift in what a
+                // keystroke means. It also does the advance (next index in
+                // range), which is what a player expects from a crossword
+                // rather than a "seek the next empty slot" jump.
+                if let Some(i) = *focused_index.peek() {
+                    write_letter(i, ch.to_string());
                 }
                 absorb(&e);
             }
@@ -1022,24 +1087,6 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     // --- keyboard handling for the active clue (input auto-advance, etc.) -----
-    let handle_letter_input = move |index: usize, raw: String| {
-        let val = raw
-            .chars()
-            .last()
-            .map(|c| c.to_ascii_uppercase().to_string())
-            .unwrap_or_default();
-        {
-            let mut g = game_action_data.write();
-            if let Some(slot) = g.get_mut(index) {
-                slot.state = val.clone();
-            }
-        }
-        let len = game_action_data.peek().len();
-        if !val.is_empty() && index + 1 < len {
-            focused_index.set(Some(index + 1));
-        }
-    };
-
     let handle_key = move |index: usize, key: Key| match key {
         Key::Backspace => {
             let cur_empty = game_action_data
@@ -2040,5 +2087,71 @@ mod tests {
         // A letter in the local draft but not yet committed is still drawn, so
         // it is announced rather than read as empty.
         assert_eq!(cell_aria_label(Some(3), "A", None), "3, A, in progress");
+    }
+
+    /// A word running across row 1 from (0,1) for 3 cells, and one running down
+    /// column 2 from (2,0) for 3 cells. They cross at (2,1), which is the
+    /// coordinate the keyboard resolver has to attribute to one or the other.
+    fn crossing_maps() -> Vec<QuestionWithAnswerMap> {
+        let across = Question {
+            number: 1,
+            answer: "CAT".to_string(),
+            question_text: "A pet".to_string(),
+            root_x: 0,
+            root_y: 1,
+            direction: Direction::Across,
+        };
+        let down = Question {
+            number: 2,
+            answer: "TEN".to_string(),
+            question_text: "Nickel tally".to_string(),
+            root_x: 2,
+            root_y: 0,
+            direction: Direction::Down,
+        };
+        vec![
+            compute_answer_map(&across, &[]),
+            compute_answer_map(&down, &[]),
+        ]
+    }
+
+    #[test]
+    fn covers_cell_matches_only_the_cells_of_that_word() {
+        let maps = crossing_maps();
+        // (0,1) and (1,1) belong to the across word only; (2,1) to both.
+        assert!(covers_cell(&maps[0], 0, 1));
+        assert!(covers_cell(&maps[0], 2, 1));
+        assert!(!covers_cell(&maps[0], 3, 1));
+        assert!(covers_cell(&maps[1], 2, 1));
+        assert!(!covers_cell(&maps[1], 2, 3));
+        // The crossing cell is genuinely in both, which is what makes the
+        // direction-first ordering in the resolver load-bearing.
+        assert!(covers_cell(&maps[0], 2, 1) && covers_cell(&maps[1], 2, 1));
+    }
+
+    #[test]
+    fn answer_map_index_round_trips_to_the_cell_it_owns() {
+        // The resolver pairs a covering word with `position(..)`, and the
+        // cursor is then derived from that index. If the two ever disagreed
+        // the cursor would render on a different cell than the one resolved,
+        // so pin the round trip on the crossing word.
+        let maps = crossing_maps();
+        for (i, c) in maps[1].answer_map.iter().enumerate() {
+            let found = maps[1]
+                .answer_map
+                .iter()
+                .position(|k| k.cord_x == c.cord_x && k.cord_y == c.cord_y);
+            assert_eq!(found, Some(i));
+        }
+        // Index 1 of the down word is the crossing cell (2,1).
+        let crossing = &maps[1].answer_map[1];
+        assert_eq!((crossing.cord_x, crossing.cord_y), (2, 1));
+        assert_eq!(
+            maps[1]
+                .answer_map
+                .iter()
+                .position(|c| c.cord_x == 2 && c.cord_y == 1),
+            Some(1)
+        );
     }
 }

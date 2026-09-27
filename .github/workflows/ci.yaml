@@ -39,6 +39,14 @@ jobs:
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
+    # A job-level block REPLACES the workflow-level one, so this job re-lists
+    # what its steps actually use and adds `actions: write` for the deploy
+    # dispatch below. Narrower than the workflow default (no `pull-requests`,
+    # no `contents: write`) — this job only needs to read the tree.
+    permissions:
+      contents: read   # actions/checkout
+      id-token: write  # Google OIDC Workload Identity Federation
+      actions: write   # gh workflow run deploy-staging.yml (see below)
     # push: every main/tag push. workflow_dispatch: the build the auto-merge
     # job dispatches, because a GITHUB_TOKEN squash-merge to main produces no
     # push event and would otherwise never be built (see that job).
@@ -98,6 +106,32 @@ jobs:
             docker push "${BASE}:latest"
             echo "pushed ${BASE}:latest + :${GITHUB_SHA}"
           fi
+
+      # For a normal main/tag push, deploy-staging is triggered by its
+      # `workflow_run` on this workflow's successful completion. It does NOT
+      # follow a `workflow_dispatch` run of ci.yaml: #109's auto-merge dispatch
+      # (run 36281055501, main, success at 2026-09-27T00:06:55Z) created no
+      # deploy-staging run at all, while the PR-branch run that completed two
+      # seconds earlier (36281036930) did. So the dispatched build — the only
+      # kind an auto-merged PR ever produces — was built and never deployed.
+      #
+      # Dispatch it here, after `docker push` returns, which is the only point
+      # where the :<sha> image is guaranteed to be in the registry. Firing it
+      # any earlier would point staging at a tag that doesn't exist yet and take
+      # the cluster to 502.
+      #
+      # Idempotent and safe to overlap with a `workflow_run`-triggered deploy:
+      # deploy-staging serialises on its concurrency group and a repeat of the
+      # same tag exits early on "Staging already at $TAG".
+      - name: Deploy staging to the image just pushed
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run deploy-staging.yml \
+            -R "${{ github.repository }}" --ref main \
+            -f tag="${GITHUB_SHA}"
+          echo "Dispatched a staging deploy of ${GITHUB_SHA}."
 
   conventional-commits-check:
     name: Conventional Commits Check
@@ -199,6 +233,11 @@ jobs:
       # workflow_dispatch is the documented exception, so dispatch the main
       # build ourselves. Poll is bounded and exits early the moment the squash
       # lands; a hand-merged PR (PAT) still arrives here as a normal push.
+      #
+      # Dispatching the build is only half the chain. deploy-staging's
+      # `workflow_run` trigger does not follow a dispatched ci.yaml run, so
+      # `build-and-push` hands off to deploy-staging itself once the image is
+      # pushed — see its "Deploy staging to the image just pushed" step.
       - name: Build main once the auto-merge lands
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

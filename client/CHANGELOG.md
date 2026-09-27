@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.49](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.48...v0.1.49) - 2026-09-27
+
+### Added
+
+- *(chart)* support topology spread and a PodDisruptionBudget
+
+### Fixed
+
+- *(game,test,docs)* direction badge on the inline editor, stale specs and copy
+- *(ci)* fail deploy runs when the endpoint is not serving 200 (#107)
+- *(web)* bound the tiled workspace to the band under the header (#108)
+- *(ci)* build main after a GITHUB_TOKEN auto-merge (#109)
+- *(ci)* deploy staging from the dispatched build, not only from pushes (#110)
+- *(server)* scope stats.getUserStats to the session, gate stats.getCompletedGame (#111)
+- *(web)* cooperative-led home copy, priced Pro CTA, drop the LAUNCH50 field (#112)
+- *(server)* keep staging unindexed with robots.txt + X-Robots-Tag (#113)
+
+### Other
+
+- changelog for v0.1.48 [skip ci]
+- move the build and migration gates to buildbot checks (#105)
+
+
 ## [0.1.48](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.47...v0.1.48) - 2026-09-24
 
 ### Fixed

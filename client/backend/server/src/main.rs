@@ -27,6 +27,7 @@ use crossword_server::{
     ctx::Ctx,
     mailer::Mailer,
     routers::{self},
+    seo,
     state::{req_auth, AppState},
     webhook,
     wire::envelope,
@@ -135,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
         auth,
         events,
         mailer: Mailer::from_env(&env),
-        env,
+        env: env.clone(),
     });
 
     // Optionally serve the built wasm frontend on the same origin, so the
@@ -179,6 +180,14 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => app,
     };
+
+    // LAST, so the header also lands on the SPA fallback: /robots.txt becomes a
+    // real robots file, and every non-production response carries
+    // `X-Robots-Tag: noindex, nofollow`. Production gets neither. See
+    // `seo::protect_index` for why this is per-environment and why it is not
+    // access control (staging must stay reachable for testers and the e2e
+    // canary).
+    let app = seo::protect_index(app, &env);
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
     let addr = format!("0.0.0.0:{port}");

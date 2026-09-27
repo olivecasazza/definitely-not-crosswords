@@ -112,6 +112,35 @@ printf '%s' "$lb" | jq -r "$JQ_PAD"'
     + ((.accuracy // 0) | tostring | pad(7)) + " %"
 '
 
+# ── What tier 1 can and cannot answer ────────────────────────────────────────
+# Tier 1 is anonymous, so it answers "did anybody solve" exactly, and "which
+# tester solved" not at all. visible_email() masks every address for an
+# unauthenticated caller, and display names are user-chosen and NOT unique —
+# measured against both live hosts 2026-09-27: production 5 rows / 4 distinct
+# names ("Olive Casazza" x2), staging 23 rows / 21 ("Community Probe" x2,
+# "Olive Casazza" x2). So a per-tester claim read off the table above is a
+# guess, and on Oct 15 that guess would be quoted as a datapoint. Say so here,
+# where the reader is, rather than let them infer attribution that isn't there.
+echo
+echo "-- attribution"
+rule 44
+printf '%s' "$lb" | jq -r '
+  ([ .[] | (.name // "Anonymous Player") ] | unique) as $names
+  | ([ .[] | (.name // "Anonymous Player") ] | group_by(.) | map(select(length > 1) | {n: .[0], c: length})) as $dupes
+  | "  accounts:               \(length)",
+    "  distinct display names: \($names | length)",
+    "  email visible on a row: \([ .[] | select(.email != null) ] | length)",
+    "",
+    "  Tier 1 is anonymous: it gives AGGREGATES exactly, and never WHO.",
+    (if ($dupes | length) == 0
+     then "  No colliding display names right now, but they are user-chosen and need not stay unique."
+     else "  COLLIDING display names right now: "
+          + ($dupes | map("\(.n) x\(.c)") | join(", "))
+          + "\n  Two accounts share one name, so which-tester-solved is not answerable from this tier."
+     end),
+    "  Per-tester attribution needs tier 2 below, which is admin-gated."
+'
+
 # ── Tier 2: admin session, opt-in ───────────────────────────────────────────
 echo
 echo "-- signups + mail health (needs an admin session)"

@@ -1,0 +1,28 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# Keeps a voluntary disruption (node drain, cluster upgrade, autoscaler scale-in)
+# from taking the last replica of a running app offline.
+#
+# Why this exists: on 2026-09-27 hp02 went NodeStatusUnknown and both
+# environments went 502 together. Nothing in the cluster had a PDB, so a drain
+# would have done the same thing deliberately. `minAvailable: 1` means a drain
+# blocks until the replacement pod is Ready rather than dropping traffic.
+#
+# NOTE this is only honoured for VOLUNTARY disruptions. It cannot protect
+# against a node disappearing — that is what replicaCount + anti-affinity +
+# topologySpreadConstraints are for.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "definitely-not-crosswords.fullname" . }}
+  labels:
+    {{- include "definitely-not-crosswords.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "definitely-not-crosswords.selectorLabels" . | nindent 6 }}
+{{- end }}

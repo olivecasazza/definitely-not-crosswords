@@ -2,7 +2,24 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-replicaCount: 1
+# Two replicas so a single node loss does not take the app offline. On
+# 2026-09-27 hp02 went NodeStatusUnknown and both environments 502'd together;
+# with replicas=1 and no anti-affinity there was nothing left serving. Pair this
+# with `affinity` (required podAntiAffinity), `topologySpreadConstraints`, and
+# `podDisruptionBudget` — replica count alone still lets the scheduler co-locate
+# both replicas on one node.
+replicaCount: 2
+
+# Blocks a voluntary disruption (node drain, cluster upgrade) from removing the
+# last replica. Cannot help when a node simply disappears.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# maxSkew=1 over hostname with DoNotSchedule is what makes "one replica per
+# node" a hard rule. `preferred` would silently re-co-locate them when
+# capacity is tight, which is exactly when you least want it.
+topologySpreadConstraints: []
 
 # Deploy environment: "local" | "staging" | "production". Injected as APP_ENV,
 # which the server exposes at /api/config so the shared wasm bundle can feature-gate

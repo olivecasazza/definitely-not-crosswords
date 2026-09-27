@@ -57,6 +57,17 @@ async fn main() -> anyhow::Result<()> {
     let is_local = env == "local";
     tracing::info!("APP_ENV={env} (dev admin bypass: {is_local})");
 
+    // Whether this deploy may be crawled at all. Off unless PRO_PRICE_ANNOUNCED
+    // says the Pro price is public, so production stays unindexable while the
+    // price is still unannounced. Logged next to APP_ENV because "is this
+    // deploy indexable" is otherwise only visible in the served headers.
+    let price_announced = seo::price_announced_from_env();
+    tracing::info!(
+        "{}={price_announced} (indexable: {})",
+        seo::PRO_PRICE_ANNOUNCED,
+        seo::is_indexed(&env, price_announced)
+    );
+
     // Batch-seed mode: when SEED_GAMES_COUNT is set (>0), the binary generates
     // that many published platform games under the Platform system user, then
     // exits instead of serving HTTP. Used by the weekly seeding CronJob.
@@ -182,12 +193,13 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // LAST, so the header also lands on the SPA fallback: /robots.txt becomes a
-    // real robots file, and every non-production response carries
-    // `X-Robots-Tag: noindex, nofollow`. Production gets neither. See
-    // `seo::protect_index` for why this is per-environment and why it is not
-    // access control (staging must stay reachable for testers and the e2e
-    // canary).
-    let app = seo::protect_index(app, &env);
+    // real robots file, and every response from an unindexable deploy carries
+    // `X-Robots-Tag: noindex, nofollow`. An indexable one gets neither. See
+    // `seo::protect_index` for why the guard is keyed on the Pro price being
+    // announced rather than on the environment name, and why it is not access
+    // control (staging and production must stay reachable for testers and the
+    // e2e canary).
+    let app = seo::protect_index(app, &env, price_announced);
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
     let addr = format!("0.0.0.0:{port}");

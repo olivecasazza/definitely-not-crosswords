@@ -20,6 +20,29 @@ fn visible_email(row_email: Option<String>, ctx: &Ctx) -> Option<String> {
     }
 }
 
+/// The email whose stats the caller is allowed to read: their own, always.
+///
+/// DEF-123: `getUserStats` used to key off `input["email"]` with no auth gate at
+/// all, so an anonymous caller could pull any player's career totals, per-game
+/// history and global rank just by guessing an address — a per-player stats
+/// oracle. `visible_email` hid the address *in* the response, but the request
+/// key was still open, which is the same hole wearing a hat.
+///
+/// The subject is now the session, exactly like `user_history`. A supplied
+/// `email` is still tolerated (the web client sends the caller's own address in
+/// `client/web/src/pages/{home,stats}.rs`) but only when it *is* the caller's.
+/// A mismatch is FORBIDDEN rather than "User not found" so the reply never
+/// confirms whether the other account exists.
+fn caller_own_email(input: &Value, ctx: &Ctx) -> Result<String, String> {
+    let user = ctx.require_user()?;
+    if let Some(requested) = input.get("email").and_then(Value::as_str) {
+        if !requested.eq_ignore_ascii_case(&user.email) {
+            return Err("FORBIDDEN".to_string());
+        }
+    }
+    Ok(user.email.clone())
+}
+
 pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<Value, String>> {
     match proc {
         "stats.getGlobalLeaderboard" => Some(global_leaderboard(ctx).await),
@@ -33,6 +56,14 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
 }
 
 /// Aggregate each user's completed-game scores. (TS did nested JS loops.)
+///
+/// **Intentionally public** (DEF-123): a leaderboard is meant to be readable by
+/// anyone — that is the whole product loop, and the /stats page renders it
+/// without waiting on a session. It is an aggregate only: no per-game detail, no
+/// join timestamps, and emails go through `visible_email` so an anonymous
+/// visitor still gets names and scores but not the address roster. Keep it
+/// public; if you add a column here, run it through `visible_email` if it can
+/// identify a person.
 async fn global_leaderboard(ctx: &Ctx) -> Result<Value, String> {
     let rows = sqlx::query(
         r#"
@@ -82,9 +113,17 @@ async fn global_leaderboard(ctx: &Ctx) -> Result<Value, String> {
     Ok(json!(entries))
 }
 
-/// Deep stats for a single user by email. Ports `getUserStats`.
+/// Deep career stats for the **caller's own** account. Ports `getUserStats`.
+///
+/// **No longer public** (DEF-123). It used to take an arbitrary `email` with no
+/// session and hand back that player's aggregates, per-game log and global rank;
+/// see `caller_own_email` for the oracle that was. It is now gated like
+/// `user_history` — the subject is the session, so an anonymous caller gets
+/// UNAUTHORIZED and a signed-in caller asking about somebody else gets FORBIDDEN.
+/// Both web callers already pass the signed-in user's own address, so this is
+/// transparent to the Pulse tiles and the Career panel.
 async fn user_stats(input: &Value, ctx: &Ctx) -> Result<Value, String> {
-    let email = input["email"].as_str().ok_or("missing email")?;
+    let email = caller_own_email(input, ctx)?;
 
     // Career aggregates — also validates that the user exists.
     // Career sums go through memberId (gm.memberScore[]), not gameStatsId.
@@ -657,8 +696,21 @@ async fn head_to_head(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 }
 
 /// Full completed-game detail with ranked member scores.
-/// Ports `getCompletedGame` (public). Returns JSON null if not found.
+/// Ports `getCompletedGame`. Returns JSON null if not found.
+///
+/// **Gated as of DEF-123** — deliberately, unlike `global_leaderboard` above.
+/// One game's standings is finer-grained than the leaderboard's career rollup:
+/// it names every player who sat at that board and their score in that round,
+/// and `CompletedGame` rows exist for unpublished games too, so a public
+/// read here is a per-game roster + scoreboard for games that were never
+/// published. The caller is always signed in anyway — the results page is only
+/// reached from a finished puzzle, and its other query (`gameList.get`) has
+/// always been a protected procedure. If product ever wants a shareable
+/// "look at this result" link, gate on the Game being published rather than
+/// dropping this check back to public.
 async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    ctx.require_user()?;
+
     let id = input["id"].as_str().ok_or("missing id")?;
 
     // Check existence + grab game metadata first.
@@ -750,4 +802,99 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             "memberScores": member_scores,
         },
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    //! `caller_own_email` — the DEF-123 gate — in isolation.
+    //!
+    //! Pure, so it needs no Postgres: the pool below is never dialled, because
+    //! the helper is the first thing `user_stats` does. `tests/stats_auth.rs`
+    //! then re-checks the same two rejections through the real router dispatch.
+
+    use super::*;
+    use crate::mailer::Mailer;
+    use crossword_auth::AuthContext;
+    use crossword_db::AuthUser;
+    use crossword_events::EventBus;
+    use sqlx::postgres::PgPoolOptions;
+
+    fn ctx_for(user: Option<AuthUser>) -> Ctx {
+        Ctx {
+            pool: PgPoolOptions::new()
+                .connect_lazy("postgres://localhost:1/never-dialled")
+                .expect("lazy pool"),
+            auth: AuthContext {
+                user,
+                ..Default::default()
+            },
+            events: EventBus::default(),
+            mailer: Mailer::from_env("test"),
+        }
+    }
+
+    fn player() -> AuthUser {
+        AuthUser {
+            id: "user-a".to_string(),
+            email: "a@example.com".to_string(),
+            role: Role::User,
+        }
+    }
+
+    #[tokio::test]
+    async fn own_email_is_accepted_so_existing_callers_keep_working() {
+        let ctx = ctx_for(Some(player()));
+        let got = caller_own_email(&json!({ "email": "a@example.com" }), &ctx)
+            .expect("a caller reading their own stats is allowed");
+        assert_eq!(got, "a@example.com");
+    }
+
+    #[tokio::test]
+    async fn own_email_match_is_case_insensitive() {
+        // Session email casing and address casing can differ; the client sends
+        // back whatever the session handed it.
+        let ctx = ctx_for(Some(player()));
+        let got = caller_own_email(&json!({ "email": "A@Example.com" }), &ctx)
+            .expect("casing must not lock the owner out of their own stats");
+        assert_eq!(got, "a@example.com");
+    }
+
+    #[tokio::test]
+    async fn absent_email_defaults_to_the_caller() {
+        let ctx = ctx_for(Some(player()));
+        let got = caller_own_email(&Value::Null, &ctx).expect("email is optional now");
+        assert_eq!(got, "a@example.com");
+    }
+
+    #[tokio::test]
+    async fn another_players_email_is_forbidden() {
+        // The DEF-123 regression: this used to fall through to the query and
+        // return user B's career stats, history and global rank to user A.
+        let ctx = ctx_for(Some(player()));
+        let err = caller_own_email(&json!({ "email": "victim@example.com" }), &ctx)
+            .expect_err("cross-user lookup must be refused");
+        assert_eq!(err, "FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn anonymous_caller_is_unauthorized() {
+        let ctx = ctx_for(None);
+        let err = caller_own_email(&json!({ "email": "a@example.com" }), &ctx)
+            .expect_err("no session, no stats");
+        assert_eq!(err, "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn admins_do_not_bypass_the_self_scope() {
+        // `getAllPlayers` lets an admin see the roster, but reading one
+        // player's full career stats stays the player's own call to make.
+        let mut admin = player();
+        admin.id = "admin".to_string();
+        admin.email = "admin@example.com".to_string();
+        admin.role = Role::Admin;
+        let ctx = ctx_for(Some(admin));
+        let err = caller_own_email(&json!({ "email": "a@example.com" }), &ctx)
+            .expect_err("admin is not exempt from the self scope");
+        assert_eq!(err, "FORBIDDEN");
+    }
 }

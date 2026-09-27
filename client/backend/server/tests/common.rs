@@ -27,8 +27,14 @@ pub fn admin_user() -> AuthUser {
 
 /// Build a `Ctx` for a given pool + user.
 pub fn ctx(pool: &sqlx::PgPool, user: &AuthUser) -> Ctx {
+    ctx_as(pool, Some(user))
+}
+
+/// Build a `Ctx` for a given pool + optional user. `None` is an anonymous
+/// caller — the state `authenticate` produces when there is no session cookie.
+pub fn ctx_as(pool: &sqlx::PgPool, user: Option<&AuthUser>) -> Ctx {
     let auth = AuthContext {
-        user: Some(user.clone()),
+        user: user.cloned(),
         ..Default::default()
     };
     Ctx {
@@ -37,4 +43,15 @@ pub fn ctx(pool: &sqlx::PgPool, user: &AuthUser) -> Ctx {
         events: crossword_events::EventBus::default(),
         mailer: Mailer::from_env("test"),
     }
+}
+
+/// A pool that is never dialled, for auth-gate tests that must be refused
+/// before any query runs. Port 1 is reserved and nothing listens on it, so a
+/// handler that *does* reach the database fails immediately rather than waiting
+/// out the default 30 s acquire timeout.
+pub fn undialled_pool() -> sqlx::PgPool {
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(250))
+        .connect_lazy("postgres://localhost:1/never-dialled")
+        .expect("lazy pool builds without a server")
 }

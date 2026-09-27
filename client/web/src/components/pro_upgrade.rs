@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
 
-use crate::{net, store::use_app_state};
+use crate::store::use_app_state;
 
 // ── component-scoped CSS ──────────────────────────────────────────────────────
 
@@ -45,32 +45,6 @@ const CSS: &str = r#"
   background: var(--color-success);
   color: var(--contrast-ink);
 }
-.pro-upgrade .code-section {
-  display: flex;
-  flex-direction: column;
-  gap: .375rem;
-}
-.pro-upgrade .code-label {
-  font-size: .75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--text-secondary);
-  font-family: var(--mono);
-}
-.pro-upgrade .code-label span {
-  text-transform: none;
-  opacity: .6;
-  font-weight: 400;
-}
-.pro-upgrade .code-row {
-  display: flex;
-  gap: .5rem;
-}
-.pro-upgrade .code-input {
-  flex: 1;
-  text-transform: uppercase;
-}
 .pro-upgrade .upgrade-btn {
   width: 100%;
   padding: .75rem 1rem;
@@ -102,25 +76,6 @@ const CSS: &str = r#"
 }
 "#;
 
-// ── discount validate response ────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DiscountInfo {
-    code: String,
-    name: String,
-    amount_type: String, // "PERCENT" | "FIXED"
-    amount: i64,
-    duration: String, // "ONCE" | "FOREVER" | "REPEATING"
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ValidateResponse {
-    valid: bool,
-    reason: Option<String>,
-    discount: Option<DiscountInfo>,
-}
-
 // ── checkout response ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -129,80 +84,22 @@ struct CheckoutResponse {
     checkout_url: String,
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-fn discount_label(d: &DiscountInfo) -> String {
-    if d.amount_type == "PERCENT" {
-        format!("{}% off", d.amount)
-    } else {
-        format!("${:.2} off", d.amount as f64 / 100.0)
-    }
-}
-
 // ── component ─────────────────────────────────────────────────────────────────
 
 #[component]
 pub fn ProUpgrade() -> Element {
     let state = use_app_state();
 
-    // Discount-code form
-    let mut code = use_signal(String::new);
-    let mut validating = use_signal(|| false);
-    let mut code_error = use_signal(String::new);
-    let mut applied_discount: Signal<Option<DiscountInfo>> = use_signal(|| None);
-
     // Checkout state
     let mut upgrading = use_signal(|| false);
     let mut checkout_error = use_signal(String::new);
-
-    // ── apply-code handler ────────────────────────────────────────────────────
-    let mut apply_code = move |_: ()| {
-        let value = code.read().trim().to_uppercase();
-        code_error.set(String::new());
-        applied_discount.set(None);
-        if value.is_empty() {
-            return;
-        }
-        validating.set(true);
-        spawn_local(async move {
-            match net::query_as::<ValidateResponse>(
-                "discount.validate",
-                Some(json!({ "code": value })),
-            )
-            .await
-            {
-                Ok(res) => {
-                    if res.valid {
-                        if let Some(d) = res.discount {
-                            code.set(d.code.clone());
-                            applied_discount.set(Some(d));
-                        }
-                    } else {
-                        code_error.set(
-                            res.reason
-                                .unwrap_or_else(|| "This code is not valid.".to_string()),
-                        );
-                    }
-                }
-                Err(e) => {
-                    code_error.set(format!("Could not validate code: {e}"));
-                }
-            }
-            validating.set(false);
-        });
-    };
 
     // ── upgrade handler ───────────────────────────────────────────────────────
     let upgrade = move |_| {
         checkout_error.set(String::new());
         upgrading.set(true);
-        // Only send the validated discount code, not the raw typed value.
-        let discount_code = applied_discount.read().as_ref().map(|d| d.code.clone());
         spawn_local(async move {
-            let body = match discount_code {
-                Some(ref c) => json!({ "discountCode": c }),
-                None => json!({}),
-            };
+            let body = json!({});
 
             let req = match gloo_net::http::Request::post("/api/checkout")
                 .header("content-type", "application/json")
@@ -263,16 +160,6 @@ pub fn ProUpgrade() -> Element {
         format!("{quota_used} / {limit}")
     };
 
-    let discount_msg = applied_discount.read().as_ref().map(|d| {
-        let label = discount_label(d);
-        let once_note = if d.duration == "ONCE" {
-            " on your first payment"
-        } else {
-            ""
-        };
-        format!("{} applied — {}{once_note}.", d.name, label)
-    });
-
     rsx! {
         style { {CSS} }
 
@@ -309,50 +196,6 @@ pub fn ProUpgrade() -> Element {
 
             // Upsell section — only when not Pro
             if !is_pro {
-                // Discount code
-                div { class: "code-section",
-                    label { class: "code-label",
-                        "Discount code "
-                        span { "(optional)" }
-                    }
-                    div { class: "code-row",
-                        input {
-                            r#type: "text",
-                            class: "app-input code-input",
-                            placeholder: "LAUNCH50",
-                            value: "{code}",
-                            oninput: move |e| {
-                                code.set(e.value());
-                                code_error.set(String::new());
-                                applied_discount.set(None);
-                            },
-                            onkeydown: move |e: KeyboardEvent| {
-                                if e.key() == Key::Enter {
-                                    apply_code(());
-                                }
-                            },
-                        }
-                        button {
-                            r#type: "button",
-                            class: "app-btn",
-                            disabled: code.read().trim().is_empty() || *validating.read(),
-                            onclick: move |_| apply_code(()),
-                            if *validating.read() { "\u{2026}" } else { "Apply" }
-                        }
-                    }
-                    if !code_error.read().is_empty() {
-                        p { class: "error",
-                            style: "margin: 0; font-size: .6875rem; font-family: var(--mono); padding-left: .25rem;",
-                            "{code_error}"
-                        }
-                    } else if let Some(msg) = &discount_msg {
-                        p { class: "success",
-                            style: "margin: 0; font-size: .6875rem; font-family: var(--mono); padding-left: .25rem;",
-                            "{msg}"
-                        }
-                    }
-                }
-
                 // Upgrade button
                 button {
                     r#type: "button",
@@ -363,7 +206,7 @@ pub fn ProUpgrade() -> Element {
                         span { class: "spin-ring" }
                         "Opening checkout\u{2026}"
                     } else {
-                        "Upgrade to Pro"
+                        "Upgrade to Pro — $10/year"
                     }
                 }
                 if !checkout_error.read().is_empty() {

@@ -97,7 +97,7 @@ fn GuestHome() -> Element {
                     BrandLogo { size: 64 }
                     h1 { class: "home-title", "definitely-not-crosswords" }
                     p { class: "home-tagline",
-                        "Cooperative, real-time crosswords. Race the grid, fill the clues, and climb the leaderboard with friends."
+                        "Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team."
                     }
                     div { class: "home-features",
                         div { class: "home-feature",
@@ -117,8 +117,8 @@ fn GuestHome() -> Element {
                         div { class: "home-feature",
                             span { class: "home-feature-icon", "▲" }
                             div { class: "home-feature-body",
-                                p { class: "home-feature-title", "Stats & rankings" }
-                                p { class: "home-feature-desc", "Track solve times. Compare head-to-head. Climb." }
+                                p { class: "home-feature-title", "Team solve stats" }
+                                p { class: "home-feature-desc", "See how fast your crew finishes, together." }
                             }
                         }
                         // Pricing on the front door, visible without signing in.

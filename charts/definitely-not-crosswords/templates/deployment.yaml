@@ -162,6 +162,11 @@ spec:
             # with /api) are baked into the image; only secrets are injected here.
             - name: APP_ENV
               value: {{ .Values.environment | quote }}
+            # Indexing policy key: the server serves robots.txt `Disallow: /` and
+            # `X-Robots-Tag: noindex, nofollow` on every response while this is
+            # false. Only "true"/"1" opens indexing (DEF-144 / DEF-149).
+            - name: PRO_PRICE_ANNOUNCED
+              value: {{ .Values.proPriceAnnounced | quote }}
             - name: NEXTAUTH_SECRET
               valueFrom:
                 secretKeyRef:

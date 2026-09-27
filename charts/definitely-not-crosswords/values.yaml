@@ -26,6 +26,15 @@ topologySpreadConstraints: []
 # (staging banner, dev-login bypass) at runtime. Default production = most locked down.
 environment: "production"
 
+# Whether the $10/yr Pro price has been publicly announced.
+# Injected as PRO_PRICE_ANNOUNCED, which the server keys its indexing policy on
+# (client/backend/server/src/seo.rs): production stays closed — `robots.txt`
+# `Disallow: /` and `X-Robots-Tag: noindex, nofollow` on every response — until
+# this is true. Only an explicit affirmative opens indexing, so a typo here
+# keeps the deploy protected. Default false = closed until the CEO names the
+# announcement date; flip it only in that deploy (DEF-144 / DEF-149).
+proPriceAnnounced: false
+
 image:
   # The nix-built Rust server image (pushed by CI to GAR as :latest and :<sha>).
   repository: us-central1-docker.pkg.dev/casazza-identity/nixlab/definitely-not-crosswords

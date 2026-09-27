@@ -1442,7 +1442,7 @@ fn render_board(
                 // only to give the grid a `row` structure for assistive tech —
                 // they add no box and leave the cell placement untouched.
                 for row in grid.iter() {
-                    div { class: "cw-row",
+                    div { class: "cw-row", role: "row",
                         for cell in row.iter() {
                             {
                                 let is_letter = !cell.is_block();

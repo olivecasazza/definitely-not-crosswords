@@ -20,6 +20,7 @@ use dioxus::prelude::*;
 use futures::StreamExt;
 use gloo_timers::future::{IntervalStream, TimeoutFuture};
 use serde_json::{json, Value};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen_futures::spawn_local;
@@ -32,6 +33,10 @@ use crate::Route;
 /// Identity key for a question (number + direction; numbers are reused across
 /// across/down so direction is part of the key).
 type QKey = (i32, Direction);
+
+/// Mounted handles for the grid's letter cells, keyed by coordinate, so the
+/// roving cell can take DOM focus when the cursor moves.
+type CellNodes = Rc<RefCell<HashMap<(i32, i32), Rc<MountedData>>>>;
 
 fn qkey(q: &Question) -> QKey {
     (q.number, q.direction)
@@ -248,6 +253,19 @@ pub fn GamePlay(id: String) -> Element {
     let mut selected_direction = use_signal(|| Option::<Direction>::Some(Direction::Across));
     let mut game_action_data = use_signal(Vec::<ActionSlot>::new);
     let mut focused_index = use_signal(|| Option::<usize>::None);
+    // Which surface owns DOM focus: the grid or the inline clue editor. Both
+    // focus drivers key off `focused_index`, and both move that cursor, so
+    // without this split an arrow press on the grid would yank focus into the
+    // Clues panel (the board lives inside the workspace, so the editor is a
+    // sibling surface, not an ancestor).
+    let mut board_active = use_signal(|| false);
+    // Mounted handles for the grid cells, so the roving cell can take DOM
+    // focus when the cursor moves. Deliberately NOT a signal: one cell mounts
+    // per grid square, and writing 225 of them reactively on every render is
+    // pure churn. Nothing renders from this map; it is only read by the focus
+    // effect below.
+    let cell_nodes =
+        use_hook(|| Rc::new(RefCell::new(HashMap::<(i32, i32), Rc<MountedData>>::new())));
 
     // co-op state: roster, live remote selections, join/invite UI
     let state = use_app_state();
@@ -451,6 +469,24 @@ pub fn GamePlay(id: String) -> Element {
         Rc::new((size, grid))
     });
 
+    // The single cell that carries `tabindex="0"`. Normally that is the
+    // derived cursor (`focused_coord`); before a clue has been picked there is
+    // no cursor, so the roving tabindex parks on the first non-block cell in
+    // row-major order — which gives Tab exactly one stop to land on, and gives
+    // the first keypress somewhere to seed from.
+    let roving_coord = move || -> Option<(i32, i32)> {
+        let maps = answer_maps.read();
+        if let (Some(k), Some(i)) = (*selected.peek(), *focused_index.peek()) {
+            return maps
+                .iter()
+                .find(|m| qkey(&m.question) == k)
+                .and_then(|m| m.answer_map.get(i))
+                .map(|c| (c.cord_x, c.cord_y));
+        }
+        drop(maps);
+        first_playable(&board.read().1)
+    };
+
     // filtered (across/down/all) clue list, by the toggle
     let filtered: Vec<QuestionWithAnswerMap> = {
         let maps = answer_maps.read();
@@ -464,6 +500,11 @@ pub fn GamePlay(id: String) -> Element {
     // --- focus driver: focus the input matching focused_index ---
     //     (keeping the board on screen while typing is CSS — see the
     //     scroll-margin-top rule in GAME_CSS.)
+    //
+    //     `board_active` is read with `peek`, never `read`: this effect must
+    //     depend on the cursor alone. Subscribing to the focus surface would
+    //     re-run it on every grid/editor handoff and hand focus to the editor
+    //     precisely when the player is on the grid.
     use_effect(move || {
         let idx = *focused_index.read();
         let refs = input_refs.read();
@@ -471,9 +512,29 @@ pub fn GamePlay(id: String) -> Element {
             if let Some(Some(node)) = refs.get(i) {
                 let node = node.clone();
                 spawn_local(async move {
-                    let _ = node.set_focus(true).await;
+                    if !*board_active.peek() {
+                        let _ = node.set_focus(true).await;
+                    }
                 });
             }
+        }
+    });
+
+    // --- focus driver: keep DOM focus on the roving grid cell ---
+    //     `roving_coord` is the same cell that gets `.cw-focused`, so the
+    //     yellow cursor and the focus ring can never disagree. Read with
+    //     `peek` for the same reason as above.
+    let cell_nodes_focus = cell_nodes.clone();
+    use_effect(move || {
+        if !*board_active.peek() {
+            return;
+        }
+        let Some((x, y)) = roving_coord() else { return };
+        let node = cell_nodes_focus.borrow().get(&(x, y)).cloned();
+        if let Some(node) = node {
+            spawn_local(async move {
+                let _ = node.set_focus(true).await;
+            });
         }
     });
 
@@ -592,6 +653,286 @@ pub fn GamePlay(id: String) -> Element {
         if let Some(m) = found {
             let key = qkey(&m.question);
             select_question_for_coords(key);
+        }
+    };
+
+    // --- board keyboard layer ------------------------------------------------
+    // A thin input surface over the selection model that already exists: every
+    // key resolves to a target cell and then runs the SAME `select_coordinates`
+    // a click runs, so there is still exactly one cursor (the `focused_coord`
+    // `render_board` derives) and no parallel state store to drift from it.
+    //
+    // Two things this has to get right that a click does not:
+    //
+    //  1. `select_question` always starts a word at index 0, so after moving
+    //     into a cell we re-point `focused_index` at the cell actually moved
+    //     to — otherwise every arrow press would snap to the word's first
+    //     letter.
+    //  2. panel-kit's workspace handler owns bare arrows (pan the window) and
+    //     Tab (move panel focus), and the grid sits INSIDE that workspace. So
+    //     every branch below stops propagation; without it, each cursor move
+    //     would also pan the workspace.
+
+    // The cell the cursor is on, or None before a clue is picked.
+    let cursor_coord = move || -> Option<(i32, i32)> {
+        let maps = answer_maps.peek();
+        match (*selected.peek(), *focused_index.peek()) {
+            (Some(k), Some(i)) => maps
+                .iter()
+                .find(|m| qkey(&m.question) == k)
+                .and_then(|m| m.answer_map.get(i))
+                .map(|c| (c.cord_x, c.cord_y)),
+            _ => None,
+        }
+    };
+
+    // `select_coordinates` is a closure over another closure, so it is `Clone`
+    // but not `Copy`. Hand every consumer below its own copy, otherwise a
+    // `move` capture gives it to exactly one of them and the rest fail to
+    // compile.
+    let mut sc_focus = select_coordinates.clone();
+    let mut sc_seed = select_coordinates.clone();
+    let mut sc_switch = select_coordinates.clone();
+
+    // Point the cursor at a cell. Inside the current word this just moves along
+    // it (keeping the in-progress word); outside it, take the covering clue the
+    // way a click does.
+    let mut focus_coord = move |x: i32, y: i32| {
+        let index_in = |m: &QuestionWithAnswerMap| {
+            m.answer_map
+                .iter()
+                .position(|c| c.cord_x == x && c.cord_y == y)
+        };
+        let maps = answer_maps.peek();
+        if let Some(k) = *selected.peek() {
+            if let Some(m) = maps.iter().find(|m| qkey(&m.question) == k) {
+                if let Some(idx) = index_in(m) {
+                    focused_index.set(Some(idx));
+                    return;
+                }
+            }
+        }
+        drop(maps);
+        sc_focus(x, y);
+        let maps = answer_maps.peek();
+        if let Some(k) = *selected.peek() {
+            if let Some(m) = maps.iter().find(|m| qkey(&m.question) == k) {
+                if let Some(idx) = index_in(m) {
+                    focused_index.set(Some(idx));
+                }
+            }
+        }
+    };
+
+    // First non-block cell in row-major order, selected as a clue. This is the
+    // "no clue picked yet" entry point for Tab and for the first keystroke.
+    let seed_cursor = move || {
+        if let Some((x, y)) = first_playable(&board.peek().1) {
+            sc_seed(x, y);
+        }
+    };
+
+    // Arrow/letter/space all need to seed; each gets its own copy for the
+    // same reason as above.
+    let mut seed_for_arrows = seed_cursor.clone();
+    let mut seed_for_keys = seed_cursor.clone();
+    let mut seed_for_focus = seed_cursor.clone();
+
+    // Arrows step along the ray until they land on a playable cell, so a block
+    // is skipped rather than swallowed. A blocked first step means the cursor
+    // is at the edge in that direction: no-op.
+    let mut move_cursor = move |dx: i32, dy: i32| {
+        let Some(from) = cursor_coord() else {
+            seed_for_arrows();
+            return;
+        };
+        if let Some(target) = step_to_playable(&board.peek().1, from, dx, dy) {
+            focus_coord(target.0, target.1);
+        }
+    };
+
+    // Land on the first unfilled slot of `key`'s word, else its first letter.
+    let mut focus_first_empty = move |key: QKey| {
+        let maps = answer_maps.peek();
+        if let Some(m) = maps.iter().find(|m| qkey(&m.question) == key) {
+            let first_empty = m.answer_map.iter().position(|c| {
+                c.modifications
+                    .first()
+                    .map(|md| md.state.is_empty())
+                    .unwrap_or(true)
+            });
+            focused_index.set(Some(first_empty.unwrap_or(0)));
+        }
+    };
+
+    // Next/previous clue in the working direction, wrapping. Tab is trapped in
+    // the grid on purpose (see the Escape branch), so this is the only way to
+    // walk the puzzle from the keyboard.
+    let mut select_for_step = select_question.clone();
+    let mut step_clue = move |forward: bool| {
+        let dir = selected_direction.peek().unwrap_or(Direction::Across);
+        let keys: Vec<QKey> = answer_maps
+            .peek()
+            .iter()
+            .filter(|m| m.question.direction == dir)
+            .map(|m| qkey(&m.question))
+            .collect();
+        if keys.is_empty() {
+            return;
+        }
+        let pos = selected
+            .peek()
+            .and_then(|k| keys.iter().position(|c| *c == k));
+        let next = match pos {
+            Some(p) if forward => (p + 1) % keys.len(),
+            Some(p) => (p + keys.len() - 1) % keys.len(),
+            None if forward => 0,
+            None => keys.len() - 1,
+        };
+        let key = keys[next];
+        select_for_step(key);
+        focus_first_empty(key);
+    };
+
+    // Space flips the working direction, staying on the same cell. Persisting
+    // the in-progress word first mirrors the direction tab (`toggle_dir`), so
+    // flipping direction mid-word never silently drops what was typed.
+    let mut clear_for_switch = clear_selection.clone();
+    let mut switch_direction = move |new_dir: Direction| {
+        let Some((x, y)) = cursor_coord() else {
+            selected_direction.set(Some(new_dir));
+            return;
+        };
+        clear_for_switch(true);
+        selected_direction.set(Some(new_dir));
+        sc_switch(x, y);
+        if let Some(k) = *selected.peek() {
+            focus_first_empty(k);
+        }
+    };
+
+    // Consume a key the grid has handled. `prevent_default` stops the browser's
+    // own behaviour (Tab focus movement, Space scrolling the page) and
+    // `stop_propagation` stops panel-kit's workspace handler from also panning
+    // or moving panel focus.
+    let absorb = |e: &KeyboardEvent| {
+        e.prevent_default();
+        e.stop_propagation();
+    };
+
+    let mut clear_for_escape = clear_selection.clone();
+    let handle_board_key = move |e: KeyboardEvent| {
+        // The clue editor owns Backspace and the arrows while it has focus, and
+        // a letter typed into a letter box must not also move the grid cursor.
+        // Same guard workspace.rs:140 uses.
+        if panel_kit::input::is_editing() {
+            return;
+        }
+        let key = e.key();
+        match key {
+            Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown => {
+                let (dx, dy) = match key {
+                    Key::ArrowLeft => (-1, 0),
+                    Key::ArrowRight => (1, 0),
+                    Key::ArrowUp => (0, -1),
+                    _ => (0, 1),
+                };
+                move_cursor(dx, dy);
+                absorb(&e);
+            }
+            Key::Backspace => {
+                // Same two-step as the editor's own Backspace: clear the cell
+                // under the cursor, and if it was already empty step back and
+                // clear that. An answer map is a run of non-block cells, so
+                // index-1 IS the previous cell along the direction.
+                let cursor_at = *focused_index.peek();
+                if let Some(i) = cursor_at {
+                    let cur_empty = game_action_data
+                        .peek()
+                        .get(i)
+                        .map(|s| s.state.trim().is_empty())
+                        .unwrap_or(true);
+                    let target = if cur_empty && i > 0 { i - 1 } else { i };
+                    let mut g = game_action_data.write();
+                    if let Some(s) = g.get_mut(target) {
+                        s.state = String::new();
+                    }
+                    drop(g);
+                    if target != i {
+                        focused_index.set(Some(target));
+                    }
+                }
+                absorb(&e);
+            }
+            Key::Character(c) if c == " " => {
+                let next = match *selected_direction.peek() {
+                    Some(Direction::Across) => Direction::Down,
+                    _ => Direction::Across,
+                };
+                switch_direction(next);
+                absorb(&e);
+            }
+            Key::Character(c) if c.chars().any(|ch| ch.is_ascii_alphabetic()) => {
+                // Seed before applying, so a letter typed before any click
+                // still lands somewhere instead of vanishing.
+                if cursor_coord().is_none() {
+                    seed_for_keys();
+                }
+                let ch = c
+                    .chars()
+                    .find(|ch| ch.is_ascii_alphabetic())
+                    .unwrap_or(' ')
+                    .to_ascii_uppercase();
+                let cursor_at = *focused_index.peek();
+                if let Some(i) = cursor_at {
+                    let mut g = game_action_data.write();
+                    if let Some(s) = g.get_mut(i) {
+                        s.state = ch.to_string();
+                    }
+                    // The write guard has to be released before the read below.
+                    drop(g);
+                    // Same write the editor's onchange does, then advance: to
+                    // the next empty slot if the word has one, else the next
+                    // slot. Still a local draft — Guess remains the only thing
+                    // that commits.
+                    let slots = game_action_data.peek().clone();
+                    let next = slots
+                        .iter()
+                        .enumerate()
+                        .skip(i + 1)
+                        .find(|(_, s)| s.state.trim().is_empty())
+                        .map(|(k, _)| k)
+                        .or_else(|| (i + 1 < slots.len()).then_some(i + 1));
+                    if let Some(n) = next {
+                        focused_index.set(Some(n));
+                    }
+                }
+                absorb(&e);
+            }
+            Key::Tab => {
+                step_clue(!e.modifiers().shift());
+                absorb(&e);
+            }
+            // Escape is the way out of the grid. Tab and Shift+Tab both stay
+            // inside it (a crossword has no natural "next stop"), so without
+            // this the grid would be a keyboard trap — and the clue editor has
+            // been advertising "ESC to clear" on its Cancel button all along.
+            Key::Escape => {
+                clear_for_escape(true);
+                board_active.set(false);
+                absorb(&e);
+            }
+            // Reserved: Enter is not bound in this increment.
+            _ => {}
+        }
+    };
+
+    // A cell taking focus is what marks the grid as the active surface, and is
+    // also the moment to seed a cursor that does not exist yet.
+    let on_cell_focus = move || {
+        board_active.set(true);
+        if cursor_coord().is_none() {
+            seed_for_focus();
         }
     };
 
@@ -731,6 +1072,12 @@ pub fn GamePlay(id: String) -> Element {
         _ => {}
     };
 
+    // A letter box taking focus hands the surface back to the editor, so the
+    // grid's focus driver stops pulling focus out from under the caret.
+    let editor_focus = move || {
+        board_active.set(false);
+    };
+
     // --- join / invite -------------------------------------------------------
 
     // Join the roster, refresh it, then announce ourselves with an (empty)
@@ -852,6 +1199,10 @@ pub fn GamePlay(id: String) -> Element {
                                 *focused_index.read(),
                                 &remote,
                                 select_coordinates.clone(),
+                                roving_coord(),
+                                handle_board_key.clone(),
+                                on_cell_focus.clone(),
+                                cell_nodes.clone(),
                             )}
                             if !is_member && !state.is_loading() {
                                 {render_join_overlay(
@@ -876,6 +1227,7 @@ pub fn GamePlay(id: String) -> Element {
                 toggle_dir.clone(),
                 handle_letter_input,
                 handle_key,
+                editor_focus,
                 unselect.clone(),
                 submit_guess.clone(),
             ),
@@ -907,6 +1259,65 @@ fn cell_number(maps: &[QuestionWithAnswerMap], cell: &Cell) -> Option<i32> {
         .map(|m| m.question.number)
 }
 
+/// First playable cell in row-major order. This is where the roving tabindex
+/// rests before a clue has been picked, and where Tab/arrow seeding starts.
+fn first_playable(grid: &[Vec<Cell>]) -> Option<(i32, i32)> {
+    grid.iter()
+        .flatten()
+        .find(|c| !c.is_block())
+        .map(|c| (c.cord_x, c.cord_y))
+}
+
+/// Step along `(dx, dy)` from `from` and return the first playable cell landed
+/// on. Blocks are skipped rather than swallowed, so the cursor crosses a run of
+/// them in one press instead of stopping on the first.
+///
+/// `None` means the ray left the grid without reaching a playable cell —
+/// including the first step being off-grid, which is the edge case where the
+/// cursor must not move at all.
+fn step_to_playable(grid: &[Vec<Cell>], from: (i32, i32), dx: i32, dy: i32) -> Option<(i32, i32)> {
+    let (mut x, mut y) = from;
+    loop {
+        let (nx, ny) = (x + dx, y + dy);
+        let cell = grid
+            .iter()
+            .flatten()
+            .find(|c| c.cord_x == nx && c.cord_y == ny)?;
+        if !cell.is_block() {
+            return Some((nx, ny));
+        }
+        x = nx;
+        y = ny;
+    }
+}
+
+/// Accessible name for a letter cell, in the order a player reads the square:
+/// clue number, then the letter (or "empty"), then its state — "14, R, correct"
+/// / "7, empty".
+///
+/// Built from what is actually DRAWN (`display`), so a letter sitting in the
+/// local draft but not yet committed is announced instead of reading as empty.
+fn cell_aria_label(num: Option<i32>, display: &str, action_type: Option<ActionType>) -> String {
+    let mut label = String::new();
+    if let Some(n) = num {
+        label.push_str(&format!("{n}, "));
+    }
+    if display.trim().is_empty() {
+        label.push_str("empty");
+        return label;
+    }
+    label.push_str(display.trim());
+    label.push_str(", ");
+    label.push_str(match action_type {
+        Some(ActionType::CorrectGuess) => "correct",
+        Some(ActionType::IncorrectGuess) => "incorrect",
+        // A typed-but-uncommitted letter and a saved placeholder are both
+        // "in progress" as far as the board is concerned.
+        _ => "in progress",
+    });
+    label
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_board(
     grid: &[Vec<Cell>],
@@ -917,6 +1328,10 @@ fn render_board(
     focused_index: Option<usize>,
     remote: &[RemoteSelection],
     select_coordinates: impl FnMut(i32, i32) + Clone + 'static,
+    roving_coord: Option<(i32, i32)>,
+    handle_board_key: impl FnMut(KeyboardEvent) + Clone + 'static,
+    on_cell_focus: impl FnMut() + Clone + 'static,
+    cell_nodes: CellNodes,
 ) -> Element {
     let cols = size.x.max(1);
     let rows = size.y.max(1);
@@ -968,71 +1383,100 @@ fn render_board(
             .unwrap_or_default()
     };
 
-    let flat: Vec<Cell> = grid.iter().flatten().cloned().collect();
-
     rsx! {
         div { class: "cw-board-wrap",
             div { class: "cw-board", style: "{style}",
-                for cell in flat {
-                    {
-                        let is_letter = !cell.is_block();
-                        let x = cell.cord_x;
-                        let y = cell.cord_y;
-                        if !is_letter {
-                            rsx! { div { class: "cw-cell cw-block" } }
-                        } else {
-                            let selected = is_in_selected(x, y);
-                            let focused = focused_coord == Some((x, y));
-                            let num = cell_number(maps, &cell);
-                            let action_type = cell.modifications.first().map(|m| m.action_type);
-                            let mut classes = String::from("cw-cell cw-letter");
-                            if focused {
-                                classes.push_str(" cw-focused");
-                            } else if selected {
-                                classes.push_str(" cw-selected");
-                            } else {
-                                match action_type {
-                                    Some(ActionType::Placeholder) => classes.push_str(" cw-placeholder"),
-                                    Some(ActionType::IncorrectGuess) => classes.push_str(" cw-incorrect"),
-                                    Some(ActionType::CorrectGuess) => classes.push_str(" cw-correct"),
-                                    None => {}
-                                }
-                            }
-                            // A remote player's focused word gets a colored ring
-                            // (inset shadow — no layout shift) + a hover tooltip.
-                            let remote_hit = remote.iter().find(|r| {
-                                maps.iter().any(|m| {
-                                    qkey(&m.question) == r.key
-                                        && m.answer_map
-                                            .iter()
-                                            .any(|c| c.cord_x == x && c.cord_y == y)
-                                })
-                            });
-                            let (ring, ring_title) = match remote_hit {
-                                Some(r) => (
-                                    format!("box-shadow: inset 0 0 0 2px {};", r.color),
-                                    format!("{} is working here", r.name),
-                                ),
-                                None => (String::new(), String::new()),
-                            };
-                            let display = if selected {
-                                typed_at(x, y)
-                            } else {
-                                cell.modifications.first().map(|m| m.state.clone()).unwrap_or_default()
-                            };
-                            let mut sc = select_coordinates.clone();
-                            rsx! {
-                                div {
-                                    class: "{classes}",
-                                    "data-x": "{x}",
-                                    "data-y": "{y}",
-                                    style: "{ring}",
-                                    title: "{ring_title}",
-                                    onclick: move |_| sc(x, y),
-                                    if let Some(n) = num {
-                                        span { class: "cw-num", "{n}" }
+                role: "grid",
+                "aria-label": "Crossword grid",
+                "aria-rowcount": "{rows}",
+                "aria-colcount": "{cols}",
+                onkeydown: handle_board_key,
+                // The row wrappers below are `display: contents`, so they exist
+                // only to give the grid a `row` structure for assistive tech —
+                // they add no box and leave the cell placement untouched.
+                for row in grid.iter() {
+                    div { class: "cw-row",
+                        for cell in row.iter() {
+                            {
+                                let is_letter = !cell.is_block();
+                                let x = cell.cord_x;
+                                let y = cell.cord_y;
+                                if !is_letter {
+                                    // A block is not a cell: no role, no
+                                    // tabindex, so it is neither announced nor
+                                    // reachable, and it can never swallow the
+                                    // cursor.
+                                    rsx! { div { class: "cw-cell cw-block" } }
+                                } else {
+                                    let selected = is_in_selected(x, y);
+                                    let focused = focused_coord == Some((x, y));
+                                    let num = cell_number(maps, cell);
+                                    let action_type = cell.modifications.first().map(|m| m.action_type);
+                                    let mut classes = String::from("cw-cell cw-letter");
+                                    if focused {
+                                        classes.push_str(" cw-focused");
+                                    } else if selected {
+                                        classes.push_str(" cw-selected");
+                                    } else {
+                                        match action_type {
+                                            Some(ActionType::Placeholder) => classes.push_str(" cw-placeholder"),
+                                            Some(ActionType::IncorrectGuess) => classes.push_str(" cw-incorrect"),
+                                            Some(ActionType::CorrectGuess) => classes.push_str(" cw-correct"),
+                                            None => {}
+                                        }
                                     }
-                                    span { class: "cw-char", "{display}" }
+                                    // A remote player's focused word gets a colored ring
+                                    // (inset shadow — no layout shift) + a hover tooltip.
+                                    let remote_hit = remote.iter().find(|r| {
+                                        maps.iter().any(|m| {
+                                            qkey(&m.question) == r.key
+                                                && m.answer_map
+                                                    .iter()
+                                                    .any(|c| c.cord_x == x && c.cord_y == y)
+                                        })
+                                    });
+                                    let (ring, ring_title) = match remote_hit {
+                                        Some(r) => (
+                                            format!("box-shadow: inset 0 0 0 2px {};", r.color),
+                                            format!("{} is working here", r.name),
+                                        ),
+                                        None => (String::new(), String::new()),
+                                    };
+                                    let display = if selected {
+                                        typed_at(x, y)
+                                    } else {
+                                        cell.modifications.first().map(|m| m.state.clone()).unwrap_or_default()
+                                    };
+                                    let aria_label = cell_aria_label(num, &display, action_type);
+                                    // Roving tabindex: exactly one cell in the
+                                    // grid is a Tab stop, so Tab enters the
+                                    // board once instead of 225 times.
+                                    let tabindex = if roving_coord == Some((x, y)) { "0" } else { "-1" };
+                                    let mut sc = select_coordinates.clone();
+                                    let mut of = on_cell_focus.clone();
+                                    let nodes = cell_nodes.clone();
+                                    rsx! {
+                                        div {
+                                            key: "{x}-{y}",
+                                            class: "{classes}",
+                                            "data-x": "{x}",
+                                            "data-y": "{y}",
+                                            style: "{ring}",
+                                            title: "{ring_title}",
+                                            role: "gridcell",
+                                            tabindex: "{tabindex}",
+                                            "aria-label": "{aria_label}",
+                                            onclick: move |_| sc(x, y),
+                                            onfocus: move |_| of(),
+                                            onmounted: move |e: Event<MountedData>| {
+                                                nodes.borrow_mut().insert((x, y), e.data());
+                                            },
+                                            if let Some(n) = num {
+                                                span { class: "cw-num", "{n}" }
+                                            }
+                                            span { class: "cw-char", "{display}" }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1061,6 +1505,7 @@ fn render_clues(
     mut toggle_dir: impl FnMut(Direction) + Clone + 'static,
     handle_letter_input: impl FnMut(usize, String) + Clone + 'static,
     handle_key: impl FnMut(usize, Key) + Clone + 'static,
+    editor_focus: impl FnMut() + Clone + 'static,
     unselect: impl FnMut(Event<MouseData>) + Clone + 'static,
     submit_guess: impl FnMut() + Clone + 'static,
 ) -> Element {
@@ -1162,6 +1607,7 @@ fn render_clues(
                                                                 }
                                                                 let mut hi = handle_letter_input.clone();
                                                                 let mut hk = handle_key.clone();
+                                                                let mut ef = editor_focus.clone();
                                                                 rsx! {
                                                                     input {
                                                                         key: "{slot.cord_x}-{slot.cord_y}",
@@ -1183,6 +1629,7 @@ fn render_clues(
                                                                         },
                                                                         oninput: move |e| hi(index, e.value()),
                                                                         onkeydown: move |e| hk(index, e.key()),
+                                                                        onfocus: move |_| ef(),
                                                                     }
                                                                 }
                                                             }
@@ -1383,7 +1830,21 @@ const GAME_CSS: &str = r#"
    cell shrinks. `line-height: 1` is the other half of the fix: the font's
    default leading made the line box taller than the cell independently of
    font-size, which is what pushed glyphs past the cell edge. */
+/* Row wrappers exist only so the grid exposes a `row` structure to assistive
+   tech. `display: contents` means the wrapper generates no box at all, so the
+   cells are still placed by `.cw-board`'s own grid and the 2-D layout is
+   unchanged. A visible row box here would re-introduce the exact reflow this
+   container-query sizing exists to prevent. */
+.cw-row { display: contents; }
 .cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: calc(var(--cw-cell) * 0.58); line-height: 1; min-width: 0; min-height: 0; }
+/* Keyboard focus ring. `.cw-focused` is the GAME cursor (a fill), which is not
+   a focus indicator — a player who arrow-keys across a solved word sees the
+   fill move without any indication of where the caret is. The ring is inset
+   (`outline-offset: -2px`) so it adds no layout and cannot change cell size, and
+   it is drawn in --fill-ink, which stays dark in BOTH themes, so it reads on the
+   yellow cursor fill and on a filled cell in dark and light mode alike. A ring
+   that only worked on dark would repeat the .cw-input-focused bloom below. */
+.cw-cell:focus-visible { outline: 2px solid var(--fill-ink); outline-offset: -2px; }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid color-mix(in srgb, var(--border-app) 25%, transparent); opacity: 0.4; }
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
 .cw-letter:hover { border-color: var(--border-hover); }
@@ -1487,3 +1948,97 @@ const GAME_CSS: &str = r#"
   .cw-letter-input { scroll-margin-top: 62vh; }
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `correct_state` is what makes a cell playable (see `Cell::is_block`),
+    /// so an empty one is a block.
+    fn cell(x: i32, y: i32) -> Cell {
+        Cell {
+            modifications: vec![],
+            correct_state: "A".to_string(),
+            cord_x: x,
+            cord_y: y,
+        }
+    }
+
+    fn block(x: i32, y: i32) -> Cell {
+        Cell {
+            modifications: vec![],
+            correct_state: String::new(),
+            cord_x: x,
+            cord_y: y,
+        }
+    }
+
+    /// 5x5, with a block at (3,1) so the horizontal skip has something to cross
+    /// and a block wall across row 3 so the vertical skip has to cross a run.
+    fn fixture() -> Vec<Vec<Cell>> {
+        vec![
+            vec![cell(0, 0), cell(1, 0), cell(2, 0), cell(3, 0), cell(4, 0)],
+            vec![cell(0, 1), cell(1, 1), cell(2, 1), block(3, 1), cell(4, 1)],
+            vec![cell(0, 2), cell(1, 2), cell(2, 2), cell(3, 2), cell(4, 2)],
+            vec![block(0, 3), block(1, 3), cell(2, 3), cell(3, 3), cell(4, 3)],
+            vec![cell(0, 4), cell(1, 4), cell(2, 4), cell(3, 4), cell(4, 4)],
+        ]
+    }
+
+    #[test]
+    fn first_playable_is_the_first_non_block_in_row_major_order() {
+        assert_eq!(first_playable(&fixture()), Some((0, 0)));
+        let mut g = fixture();
+        g[0][0] = block(0, 0);
+        g[0][1] = block(1, 0);
+        assert_eq!(first_playable(&g), Some((2, 0)));
+        assert_eq!(first_playable(&[vec![block(0, 0), block(1, 0)]]), None);
+    }
+
+    #[test]
+    fn step_to_playable_lands_on_the_neighbour() {
+        let g = fixture();
+        assert_eq!(step_to_playable(&g, (1, 0), 1, 0), Some((2, 0)));
+        assert_eq!(step_to_playable(&g, (2, 0), -1, 0), Some((1, 0)));
+        assert_eq!(step_to_playable(&g, (2, 0), 0, 1), Some((2, 1)));
+    }
+
+    #[test]
+    fn step_to_playable_skips_a_run_of_blocks_in_one_press() {
+        let g = fixture();
+        // (2,1) -> right crosses the block at (3,1) and lands on (4,1).
+        assert_eq!(step_to_playable(&g, (2, 1), 1, 0), Some((4, 1)));
+        // (1,2) -> down crosses the block at (1,3) and lands on (1,4).
+        assert_eq!(step_to_playable(&g, (1, 2), 0, 1), Some((1, 4)));
+    }
+
+    #[test]
+    fn step_to_playable_at_a_wall_or_an_edge_does_not_move() {
+        let g = fixture();
+        // Block immediately west of (0,1): nothing playable left, so the cursor
+        // must stay put rather than wrapping or jumping to the far side.
+        assert_eq!(step_to_playable(&g, (0, 1), -1, 0), None);
+        // Grid edge.
+        assert_eq!(step_to_playable(&g, (0, 0), 0, -1), None);
+        assert_eq!(step_to_playable(&g, (4, 4), 1, 0), None);
+    }
+
+    #[test]
+    fn cell_aria_label_reads_number_letter_then_state() {
+        assert_eq!(
+            cell_aria_label(Some(14), "R", Some(ActionType::CorrectGuess)),
+            "14, R, correct"
+        );
+        assert_eq!(
+            cell_aria_label(Some(7), "", Some(ActionType::CorrectGuess)),
+            "7, empty"
+        );
+        assert_eq!(
+            cell_aria_label(None, "Q", Some(ActionType::IncorrectGuess)),
+            "Q, incorrect"
+        );
+        // A letter in the local draft but not yet committed is still drawn, so
+        // it is announced rather than read as empty.
+        assert_eq!(cell_aria_label(Some(3), "A", None), "3, A, in progress");
+    }
+}

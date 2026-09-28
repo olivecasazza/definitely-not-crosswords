@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.51](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.50...v0.1.51) - 2026-09-28
+
+### Added
+
+- *(web)* connection state for the co-op socket [DEF-175] (#131)
+- *(server)* surface the mail delivery mode on /api/config (DEF-201) (#136)
+- *(web)* ship an og:image and upgrade the card to summary_large_image (DEF-190) (#137)
+- *(tools)* a dry-runnable closed-alpha invite send [DEF-120] (#148)
+
+### Fixed
+
+- *(web)* make a failed bundle load a card, not a blank page [DEF-148] (#130)
+- *(web)* give the served shell crawlable metadata (DEF-164) (#132)
+- *(web)* the DEF-182 review deltas — a11y, CLS, noscript theming [DEF-183] (#133)
+- *(web)* the DEF-181 review deltas — stale chip/ring 3.89:1, focus ring 1.10:1 [DEF-188] (#134)
+- *(web,chart)* name the plan in the indexed description [DEF-202] (#135)
+- *(web)* inherit crossword clue number ink [DEF-207] (#138)
+- *(server)* answer file paths with a real 404, not the SPA shell [DEF-191] (#139)
+- *(web)* the play screen's pre-board states are a card, not a paragraph [DEF-195] (#140)
+- *(web)* a rel=canonical is per-URL, so name the host being served [DEF-196] (#141)
+- *(web)* make stale presence state non-colour [DEF-200] (#143)
+- *(scripts)* let release copy check assert pro checkout flag (#144)
+- *(server)* expose per-deploy build identity [DEF-198] (#145)
+- *(ci)* make the Rust test suite a real gate, not an advisory job [DEF-133] (#146)
+- *(tools)* make the DEF-120 card's own answer executable [DEF-120] (#149)
+- *(ci)* dispatch release-plz after a release PR auto-merge [DEF-131] (#150)
+- *(ci)* dispatch release-plz on every auto-merge, not just release PRs [DEF-131] (#151)
+
+
 ## [0.1.50](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.49...v0.1.50) - 2026-09-28
 
 First release to reach **production** since v0.1.49. Production was 23 commits behind

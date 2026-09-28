@@ -142,13 +142,83 @@ async fn validate_discount_code(pool: &sqlx::PgPool, code: &str) -> Result<(), S
     Ok(())
 }
 
+/// The env vars `POST /api/checkout` needs, in the order `ls_config()` reads them.
+pub const LS_KEYS: [&str; 3] = [
+    "LEMONSQUEEZY_API_KEY",
+    "LEMONSQUEEZY_STORE_ID",
+    "LEMONSQUEEZY_VARIANT_ID",
+];
+
+/// True when every Lemon Squeezy credential is present — the exact condition
+/// the Helm chart gates credential injection on
+/// (`billing.lemonSqueezy.enabled`, `charts/definitely-not-crosswords/templates/
+/// deployment.yaml`). `/api/config`'s `proCheckout` flag is derived from this,
+/// so the frontend's Pro CTA can never disagree with the deploy (DEF-166).
+/// `ls_configured()` reads the process env; `ls_configured_with` takes the
+/// lookup so the derivation is testable without touching it.
+pub fn ls_configured() -> bool {
+    ls_configured_with(|k| std::env::var(k).ok())
+}
+
+pub fn ls_configured_with(get: impl Fn(&str) -> Option<String>) -> bool {
+    LS_KEYS
+        .iter()
+        .all(|k| matches!(get(k), Some(v) if !v.is_empty()))
+}
+
 fn ls_config() -> Result<(String, String, String), String> {
     let get = |k: &str| std::env::var(k).map_err(|_| format!("{k} is not set"));
-    Ok((
-        get("LEMONSQUEEZY_API_KEY")?,
-        get("LEMONSQUEEZY_STORE_ID")?,
-        get("LEMONSQUEEZY_VARIANT_ID")?,
-    ))
+    Ok((get(LS_KEYS[0])?, get(LS_KEYS[1])?, get(LS_KEYS[2])?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lookup<'a>(map: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k| {
+            map.iter()
+                .find(|(key, _)| *key == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn configured_only_when_all_three_credentials_present() {
+        let all = &[
+            ("LEMONSQUEEZY_API_KEY", "key"),
+            ("LEMONSQUEEZY_STORE_ID", "store"),
+            ("LEMONSQUEEZY_VARIANT_ID", "variant"),
+        ];
+        assert!(ls_configured_with(lookup(all)));
+        // Unrelated vars don't matter.
+        assert!(ls_configured_with(lookup(&[
+            ("LEMONSQUEEZY_API_KEY", "key"),
+            ("LEMONSQUEEZY_STORE_ID", "store"),
+            ("LEMONSQUEEZY_VARIANT_ID", "variant"),
+            ("PRO_CHECKOUT_DISCOUNT_CODE", "BETA"),
+        ])));
+        // Each missing credential flips the flag off.
+        assert!(!ls_configured_with(lookup(&[
+            ("LEMONSQUEEZY_STORE_ID", "store"),
+            ("LEMONSQUEEZY_VARIANT_ID", "variant"),
+        ])));
+        assert!(!ls_configured_with(lookup(&[
+            ("LEMONSQUEEZY_API_KEY", "key"),
+            ("LEMONSQUEEZY_VARIANT_ID", "variant"),
+        ])));
+        assert!(!ls_configured_with(lookup(&[
+            ("LEMONSQUEEZY_API_KEY", "key"),
+            ("LEMONSQUEEZY_STORE_ID", "store"),
+        ])));
+        // An empty value is a missing credential — the chart injects real ones.
+        assert!(!ls_configured_with(lookup(&[
+            ("LEMONSQUEEZY_API_KEY", ""),
+            ("LEMONSQUEEZY_STORE_ID", "store"),
+            ("LEMONSQUEEZY_VARIANT_ID", "variant"),
+        ])));
+        assert!(!ls_configured_with(lookup(&[])));
+    }
 }
 
 fn err(code: u16, msg: &str) -> Response {

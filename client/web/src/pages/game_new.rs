@@ -285,6 +285,10 @@ fn publish_and_play(game_id: String, mut gs: GenSignals, nav: Navigator) {
 
 /// Inline (never modal) upgrade pitch shown when the monthly quota is spent.
 fn upgrade_card() -> Element {
+    // A user who is out of generations is the highest-intent buyer in the app,
+    // so this must not be a dead end: the link is dropped where Pro cannot
+    // actually be purchased (DEF-166).
+    let pro_checkout = use_app_state().feature(|f| f.pro_checkout);
     rsx! {
         div { class: "app-card", style: "padding: 1rem; display: flex; flex-direction: column; gap: .625rem; align-items: flex-start; flex-shrink: 0;",
             p { style: "font-size: .875rem; font-weight: 600; margin: 0; color: var(--text-primary);",
@@ -293,7 +297,11 @@ fn upgrade_card() -> Element {
             p { class: "muted", style: "font-size: .75rem; margin: 0;",
                 "Pro members generate unlimited puzzles."
             }
-            Link { to: Route::Profile {}, class: "app-btn app-btn-active", "Upgrade to Pro" }
+            if pro_checkout {
+                Link { to: Route::Profile {}, class: "app-btn app-btn-active", "Upgrade to Pro" }
+            } else {
+                span { class: "muted", "Pro opens soon." }
+            }
         }
     }
 }

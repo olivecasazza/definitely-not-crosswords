@@ -381,6 +381,13 @@ async fn config(State(st): State<AppState>) -> Json<Value> {
             "devLoginBypass": env == "local",
             // Beta banner (+ $1 Pro messaging) on staging only.
             "stagingBanner": env == "staging",
+            // Whether the Pro purchase button may render at all. Derived from
+            // the same condition the chart gates the LEMONSQUEEZY_* injection
+            // on (`billing.lemonSqueezy.enabled`) — NOT from `env` — so the
+            // frontend's CTA can never disagree with the deployment it is
+            // served from. When false, `POST /api/checkout` would 500, so the
+            // bundle shows an honest non-purchasable state instead (DEF-166).
+            "proCheckout": checkout::ls_configured(),
         }
     }))
 }

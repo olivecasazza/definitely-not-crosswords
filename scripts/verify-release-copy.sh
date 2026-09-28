@@ -57,6 +57,18 @@ else
   fail "/api/config reports version '${served:-<none>}', want '$EXPECTED_VERSION'"
 fi
 
+# The Pro CTA gate (DEF-166). The bundle hides the purchase button on
+# `features.proCheckout === false`, which the server derives from the same
+# `billing.lemonSqueezy.enabled` flag that gates credential injection. A
+# release whose /api/config lost the flag ships a bundle that can no longer
+# describe whether buying Pro is possible, so assert the deployed answer
+# rather than trusting the diff.
+if printf '%s' "$config" | grep -qE '"proCheckout":(true|false)'; then
+  pass "/api/config exposes boolean proCheckout ($(printf '%s' "$config" | grep -oE '"proCheckout":(true|false)'))"
+else
+  fail "/api/config has no boolean proCheckout feature flag — the Pro CTA cannot be gated"
+fi
+
 # --- locate the served wasm ------------------------------------------------
 index="$(curl -fsS --max-time 30 "$BASE_URL/")" || {
   echo "::error::GET $BASE_URL/ failed" >&2
@@ -91,6 +103,16 @@ Team solve stats
 See how fast your crew finishes, together.
 Upgrade to Pro — $10/year
 STRINGS
+
+# The priced CTA and the not-yet-purchasable state must BOTH ship (DEF-166).
+# `features.proCheckout === false` removes the purchase control, so the copy
+# that explains why the price is announced but not buyable has to be in the
+# bundle too — otherwise the gate trades a dead button for a silent gap.
+if grep -qaF -- "teams of 10. Opening soon." "$tmp/app.wasm"; then
+  pass "Pro is described as opening soon where checkout is unavailable"
+else
+  fail "missing: the Pro \"Opening soon\" fallback copy"
+fi
 
 # Superseded copy must be gone. LAUNCH50 is exempt: the admin discount field
 # placeholder is still customer-reachable for staff, and the second occurrence

@@ -69,6 +69,13 @@ configured here** — Lemon Squeezy is the source of truth (store `390247`, vari
 so change the LS variant and all three.
 Staging runs the same variant with a 90%-off beta code, hence its `$1` banner.
 
+The Pro **purchase** control is a separate thing from the price, and it is gated at
+runtime: `GET /api/config` returns `features.proCheckout`, derived from the same
+`billing.lemonSqueezy.enabled` chart flag that gates the `LEMONSQUEEZY_*` injection.
+When it is `false` no surface renders a purchase control (`components/brand.rs`,
+`pages/home.rs`, `pages/game_new.rs`, `components/pro_upgrade.rs`) and the copy says
+Pro is opening soon — do not hardcode the price copy as if it were always buyable.
+
 ## Build & deploy
 
 Everything builds with Nix:

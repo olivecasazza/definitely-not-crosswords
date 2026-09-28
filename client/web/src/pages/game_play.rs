@@ -2254,7 +2254,9 @@ const GAME_CSS: &str = r#"
 .cw-correct { background: color-mix(in srgb, var(--pastel-green) 15%, transparent); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
 /* Proportional inset too: a fixed 2px/3px offset shoved the number off a small
    cell while the number itself was clamped large. */
-.cw-num { position: absolute; top: calc(var(--cw-cell) * 0.06); left: calc(var(--cw-cell) * 0.09); font-size: calc(var(--cw-cell) * 0.26); line-height: 1; color: var(--text-secondary); opacity: 0.85; font-weight: 700; pointer-events: none; }
+.cw-num { position: absolute; top: calc(var(--cw-cell) * 0.06); left: calc(var(--cw-cell) * 0.09); font-size: calc(var(--cw-cell) * 0.26); line-height: 1; font-weight: 700; pointer-events: none; }
+.cw-incorrect .cw-num,
+.cw-correct .cw-num { color: var(--text-primary); }
 .cw-char { pointer-events: none; line-height: 1; }
 
 .cw-link-btn { margin-left: auto; background: none; border: none; color: var(--text-secondary); font-size: 11px; cursor: pointer; }

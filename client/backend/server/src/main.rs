@@ -388,6 +388,18 @@ async fn config(State(st): State<AppState>) -> Json<Value> {
             // served from. When false, `POST /api/checkout` would 500, so the
             // bundle shows an honest non-purchasable state instead (DEF-166).
             "proCheckout": checkout::ls_configured(),
+            // Whether outbound mail actually leaves the process, as opposed to
+            // being logged and dropped. Read off the live transport, which the
+            // chart gates on the same condition that injects SMTP_USER /
+            // SMTP_PASSWORD (`mail.existingSecret`,
+            // charts/definitely-not-crosswords/templates/deployment.yaml) — NOT
+            // from `env` — so "the alpha invites went out" is verifiable from
+            // outside the cluster instead of from a pod log nobody reads.
+            // "log" is the honest value when a credential is missing OR the
+            // relay failed to build; both mean delivery is a no-op that still
+            // returns HTTP 200 to the caller. Mode only: never the host, port,
+            // username, MAIL_FROM, or origin (this route is unauthenticated).
+            "mailDelivery": st.mailer.delivery_mode(),
         }
     }))
 }

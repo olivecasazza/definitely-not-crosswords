@@ -1587,6 +1587,100 @@ fn cell_aria_label(num: Option<i32>, display: &str, action_type: Option<ActionTy
     label
 }
 
+/// The class list for one grid cell.
+///
+/// Focus, selection and the guess outcome are three *independent* facts about a
+/// cell, so all of them are emitted. This used to be an
+/// `if / else if / else` chain, which made the outcome class unreachable in
+/// exactly the state where it matters most: an incorrect guess deliberately
+/// KEEPS the word selected so the player can fix it in place, so every cell of
+/// the just-guessed word took the `cw-selected` branch and the red never
+/// rendered at all. The placeholders and the green had the same hole.
+///
+/// Precedence lives in CSS, in two independently ordered channels — the outcome
+/// owns the wash/ink, selection owns the border, and `.cw-focused`'s cursor
+/// geometry is unconditional. See the GAME_CSS block that consumes these.
+fn cell_classes(focused: bool, selected: bool, action_type: Option<ActionType>) -> String {
+    let mut classes = String::from("cw-cell cw-letter");
+    if focused {
+        classes.push_str(" cw-focused");
+    }
+    if selected {
+        classes.push_str(" cw-selected");
+    }
+    match action_type {
+        Some(ActionType::Placeholder) => classes.push_str(" cw-placeholder"),
+        Some(ActionType::IncorrectGuess) => classes.push_str(" cw-incorrect"),
+        Some(ActionType::CorrectGuess) => classes.push_str(" cw-correct"),
+        None => {}
+    }
+    classes
+}
+
+/// Live letter state for a clue's bubble: prefer in-progress slots when selected.
+fn bubble_state(
+    key: QKey,
+    cell: &Cell,
+    selected: Option<QKey>,
+    slots: &[ActionSlot],
+) -> (String, &'static str) {
+    if selected == Some(key) {
+        if let Some(s) = slots
+            .iter()
+            .find(|s| s.cord_x == cell.cord_x && s.cord_y == cell.cord_y)
+        {
+            let at = cell
+                .modifications
+                .first()
+                .map(|m| action_type_str(m.action_type))
+                .unwrap_or("placeholder");
+            return (s.state.clone(), if s.state.is_empty() { "" } else { at });
+        }
+    }
+    match cell.modifications.first() {
+        Some(m) => (m.state.clone(), action_type_str(m.action_type)),
+        None => (String::new(), ""),
+    }
+}
+
+/// One clue's letter bubbles, coloured by the guess outcome of each letter.
+///
+/// Rendered on EVERY row, including the one being edited. It used to be the
+/// `else` of `if editing`, so the selected row swapped its bubbles for the
+/// editor — and since the editor is exactly the state a wrong guess leaves the
+/// player in, the clue list went silent at the same moment as the grid. The
+/// list and the board must give the same answer to "what did I get wrong".
+fn render_bubbles(
+    m: &QuestionWithAnswerMap,
+    key: QKey,
+    selected: Option<QKey>,
+    slots: &[ActionSlot],
+) -> Element {
+    rsx! {
+        div {
+            class: "cw-bubbles",
+            for cell in m.answer_map.iter() {
+                {
+                    let (letter, at) = bubble_state(key, cell, selected, slots);
+                    let mut bcls = String::from("cw-bubble");
+                    if letter.is_empty() {
+                        bcls.push_str(" cw-bubble-empty");
+                    } else {
+                        match at {
+                            "incorrectGuess" => bcls.push_str(" cw-incorrect"),
+                            "correctGuess" => bcls.push_str(" cw-correct"),
+                            _ => bcls.push_str(" cw-placeholder"),
+                        }
+                    }
+                    rsx! {
+                        div { class: "{bcls}", "{letter}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_board(
     grid: &[Vec<Cell>],
@@ -1681,19 +1775,7 @@ fn render_board(
                                     let focused = focused_coord == Some((x, y));
                                     let num = cell_number(maps, cell);
                                     let action_type = cell.modifications.first().map(|m| m.action_type);
-                                    let mut classes = String::from("cw-cell cw-letter");
-                                    if focused {
-                                        classes.push_str(" cw-focused");
-                                    } else if selected {
-                                        classes.push_str(" cw-selected");
-                                    } else {
-                                        match action_type {
-                                            Some(ActionType::Placeholder) => classes.push_str(" cw-placeholder"),
-                                            Some(ActionType::IncorrectGuess) => classes.push_str(" cw-incorrect"),
-                                            Some(ActionType::CorrectGuess) => classes.push_str(" cw-correct"),
-                                            None => {}
-                                        }
-                                    }
+                                    let mut classes = cell_classes(focused, selected, action_type);
                                     // A remote player's focused word gets a colored ring
                                     // (inset shadow — no layout shift) + a hover tooltip.
                                     let remote_hit = remote.iter().find(|r| {
@@ -1815,27 +1897,6 @@ fn render_clues(
     let across_active = selected_direction == Some(Direction::Across);
     let down_active = selected_direction == Some(Direction::Down);
 
-    // live letter state for a clue's bubble: prefer in-progress slots when selected
-    let bubble_state = |key: QKey, cell: &Cell| -> (String, &'static str) {
-        if selected == Some(key) {
-            if let Some(s) = slots
-                .iter()
-                .find(|s| s.cord_x == cell.cord_x && s.cord_y == cell.cord_y)
-            {
-                let at = cell
-                    .modifications
-                    .first()
-                    .map(|m| action_type_str(m.action_type))
-                    .unwrap_or("placeholder");
-                return (s.state.clone(), if s.state.is_empty() { "" } else { at });
-            }
-        }
-        match cell.modifications.first() {
-            Some(m) => (m.state.clone(), action_type_str(m.action_type)),
-            None => (String::new(), ""),
-        }
-    };
-
     rsx! {
         div { class: "cw-clues",
             div { class: "cw-clues-head",
@@ -1860,8 +1921,9 @@ fn render_clues(
                         let is_sel = selected == Some(key);
                         // `slots` is the live in-progress word and only ever belongs to
                         // the selected clue. Empty means the selection has not been
-                        // wired up yet, so fall back to bubbles rather than render an
-                        // editor with no boxes in it.
+                        // wired up yet, so render the editor's absence — the bubbles
+                        // above it render either way, which is what keeps the clue
+                        // list in agreement with the board after a wrong guess.
                         let editing = is_sel && !slots.is_empty();
                         let mut sq = select_question.clone();
                         let row_cls = if is_sel { "cw-clue-row cw-clue-row-sel" } else { "cw-clue-row" };
@@ -1872,6 +1934,7 @@ fn render_clues(
                                 div { class: "cw-clue-badge", "{m.question.number}" }
                                 div { class: "cw-clue-body",
                                     div { class: "cw-clue-row-text", "{m.question.question_text}" }
+                                    { render_bubbles(&m, key, selected, slots) }
                                     if editing {
                                         {
                                             let unselect_a = unselect.clone();
@@ -1953,27 +2016,6 @@ fn render_clues(
                                                             onclick: move |_| submit(),
                                                             "Guess"
                                                         }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        div { class: "cw-bubbles",
-                                            for cell in m.answer_map.iter() {
-                                                {
-                                                    let (letter, at) = bubble_state(key, cell);
-                                                    let mut bcls = String::from("cw-bubble");
-                                                    if letter.is_empty() {
-                                                        bcls.push_str(" cw-bubble-empty");
-                                                    } else {
-                                                        match at {
-                                                            "incorrectGuess" => bcls.push_str(" cw-incorrect"),
-                                                            "correctGuess" => bcls.push_str(" cw-correct"),
-                                                            _ => bcls.push_str(" cw-placeholder"),
-                                                        }
-                                                    }
-                                                    rsx! {
-                                                        div { class: "{bcls}", "{letter}" }
                                                     }
                                                 }
                                             }
@@ -2309,21 +2351,59 @@ const GAME_CSS: &str = r#"
   outline: 2px solid var(--text-primary);
   outline-offset: 2px;
 }
-.cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
-.cw-letter:hover { border-color: var(--border-hover); }
+/* ---- Cell state compositing -----------------------------------------------
+   Focus, selection and the guess outcome are three INDEPENDENT facts about a
+   cell, so they compose instead of excluding each other. They are published
+   as custom properties and painted once by `.cw-letter` below.
+
+   Two channels, ordered independently, because the two questions they answer
+   have different winners:
+
+     * wash + ink — "what happened to this word". The outcome wins, because
+       "this word is wrong" is the one thing the player must not miss, even
+       while the word stays selected so it can be fixed in place, or while the
+       cursor sits on it. Falls back to the cursor, then the selection, then
+       the default.
+     * border — "which word am I editing". Selection wins, because the yellow
+       outline is the activity signal and the outcome already reads from the
+       wash. A wrong-but-selected cell therefore shows a red wash inside a
+       yellow outline and reads as both at once.
+
+   Geometry is deliberately NOT a channel: `.cw-focused`'s scale/z-index is the
+   cursor and is unconditional, so arrow-keying across a wrong word still shows
+   where the caret is. That is the #117 contract — focus and state must both
+   stay legible — and it is why the red is allowed to win the wash. */
+.cw-letter {
+  background: var(--cw-wash, var(--bg-cell-letter));
+  color: var(--cw-ink, var(--text-primary));
+  border: 1px solid var(--cw-bd, var(--border-app));
+  cursor: pointer;
+  transition: all .12s ease;
+}
+/* `:where()` zeroes the specificity so this stays a (0,1,0) rule and the
+   channel order below decides the border on hover. Without it the hover rule
+   outranks every state class and a hovered selected cell would lose its yellow
+   outline to a plain hover border. */
+.cw-letter:where(:hover) { --cw-bd: var(--border-hover); }
+/* Wash + ink channel, lowest precedence first. */
+.cw-selected { --cw-wash: color-mix(in srgb, var(--pastel-yellow) 18%, transparent); --cw-ink: var(--text-primary); }
 /* The cursor. --fill-yellow/--fill-ink rather than --pastel-yellow/
    --contrast-ink: this cell is the brightest thing in the grid and that IS the
    signal, but light mode darkens the pastels and flips the ink white, which
    would make the one cell the player is looking at a black hole among white
-   ones. The fill tokens stay pale with dark ink in both themes (styles.rs); the
-   border keeps --pastel-yellow, dark in light mode, so the fill is outlined.
-   .cw-selected below is the rest of the word — a 18% tint of the same yellow,
-   so it tracks the theme on its own and needs no fill token. */
-.cw-focused { background: var(--fill-yellow); color: var(--fill-ink); border: 1px solid var(--pastel-yellow); transform: scale(1.05); z-index: 2; }
-.cw-selected { background: color-mix(in srgb, var(--pastel-yellow) 18%, transparent); color: var(--text-primary); border: 1px solid var(--pastel-yellow); }
-.cw-placeholder { border: 2px solid var(--pastel-yellow); }
-.cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 15%, transparent); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
-.cw-correct { background: color-mix(in srgb, var(--pastel-green) 15%, transparent); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
+   ones. The fill tokens stay pale with dark ink in both themes (styles.rs). */
+.cw-focused { --cw-wash: var(--fill-yellow); --cw-ink: var(--fill-ink); transform: scale(1.05); z-index: 2; }
+.cw-incorrect { --cw-wash: color-mix(in srgb, var(--pastel-red) 15%, transparent); --cw-ink: var(--pastel-red); }
+.cw-correct { --cw-wash: color-mix(in srgb, var(--pastel-green) 15%, transparent); --cw-ink: var(--pastel-green); }
+/* Border channel, lowest precedence first. The outcome classes set their own
+   border colour so a wrong cell that is NOT selected still reads as wrong from
+   the outline alone; selection then overrides it, which is what makes a
+   selected wrong cell read as both. */
+.cw-placeholder { --cw-bd: var(--pastel-yellow); border-width: 2px; }
+.cw-incorrect { --cw-bd: var(--pastel-red); }
+.cw-correct { --cw-bd: var(--pastel-green); }
+.cw-selected { --cw-bd: var(--pastel-yellow); }
+.cw-focused { --cw-bd: var(--pastel-yellow); }
 /* Proportional inset too: a fixed 2px/3px offset shoved the number off a small
    cell while the number itself was clamped large. */
 .cw-num { position: absolute; top: calc(var(--cw-cell) * 0.06); left: calc(var(--cw-cell) * 0.09); font-size: calc(var(--cw-cell) * 0.26); line-height: 1; font-weight: 700; pointer-events: none; }
@@ -2571,5 +2651,72 @@ mod tests {
                 .position(|c| c.cord_x == 2 && c.cord_y == 1),
             Some(1)
         );
+    }
+
+    /// DEF-227: the outcome class used to be the `else` of focus/selection, so
+    /// it vanished in exactly the state that needs it — a wrong guess keeps the
+    /// word selected so the player can fix it in place. These pin the composition
+    /// rule directly rather than the old chain order.
+    #[test]
+    fn outcome_class_survives_focus_and_selection() {
+        let wrong = cell_classes(true, true, Some(ActionType::IncorrectGuess));
+        assert!(wrong.contains("cw-incorrect"), "{wrong}");
+        assert!(wrong.contains("cw-focused"), "{wrong}");
+        assert!(wrong.contains("cw-selected"), "{wrong}");
+
+        // The cursor cell of a wrong word is the one most likely to swallow the
+        // red, and it is also the cell the player is looking straight at.
+        let focused_only = cell_classes(true, false, Some(ActionType::IncorrectGuess));
+        assert!(focused_only.contains("cw-incorrect"), "{focused_only}");
+        assert!(focused_only.contains("cw-focused"), "{focused_only}");
+
+        // The green and the placeholder take the same route, so neither is a
+        // special case left behind by the fix.
+        assert!(cell_classes(true, true, Some(ActionType::CorrectGuess)).contains("cw-correct"));
+        assert!(cell_classes(true, true, Some(ActionType::Placeholder)).contains("cw-placeholder"));
+    }
+
+    /// A cell with no action yet still gets exactly one state class, and the
+    /// focus/selection classes are not conditional on there being one.
+    #[test]
+    fn cell_classes_emit_no_outcome_without_an_action() {
+        assert_eq!(cell_classes(false, false, None), "cw-cell cw-letter");
+        assert_eq!(
+            cell_classes(true, false, None),
+            "cw-cell cw-letter cw-focused"
+        );
+        assert_eq!(
+            cell_classes(false, true, None),
+            "cw-cell cw-letter cw-selected"
+        );
+        // A cell can be neither focused nor selected yet still be answered —
+        // that is the case the old `else` handled and the only one that worked.
+        assert_eq!(
+            cell_classes(false, false, Some(ActionType::CorrectGuess)),
+            "cw-cell cw-letter cw-correct"
+        );
+    }
+
+    /// The composed classes must stay distinct so the CSS channels can be
+    /// addressed independently: one class per concern, never a combined selector.
+    #[test]
+    fn cell_classes_never_repeat_a_state_class() {
+        for focused in [false, true] {
+            for selected in [false, true] {
+                for at in [
+                    None,
+                    Some(ActionType::Placeholder),
+                    Some(ActionType::IncorrectGuess),
+                    Some(ActionType::CorrectGuess),
+                ] {
+                    let cls = cell_classes(focused, selected, at);
+                    let mut seen: Vec<&str> = cls.split_whitespace().collect();
+                    let before = seen.len();
+                    seen.sort_unstable();
+                    seen.dedup();
+                    assert_eq!(before, seen.len(), "repeated class in `{cls}`");
+                }
+            }
+        }
     }
 }

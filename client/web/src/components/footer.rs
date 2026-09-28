@@ -9,11 +9,12 @@ use dioxus::prelude::*;
 #[component]
 pub fn AppFooter() -> Element {
     let version = env!("CARGO_PKG_VERSION");
+    let build_sha = option_env!("BUILD_SHA").unwrap_or("unknown");
     rsx! {
         footer { class: "site-footer",
             span { class: "muted",
                 "© definitely-not-crosswords "
-                span { class: "app-version", "v{version}" }
+                span { class: "app-version", "data-build": build_sha, "v{version}" }
             }
             nav { class: "site-footer-nav",
                 a { class: "muted", href: "https://github.com/olivecasazza/definitely-not-crosswords", "GitHub" }

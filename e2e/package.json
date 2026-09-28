@@ -5,6 +5,7 @@
   "scripts": {
     "test": "playwright test",
     "canary": "playwright test smoke.spec.ts",
+    "pro-checkout": "playwright test pro-checkout.spec.ts",
     "demo": "playwright test demo.spec.ts",
     "report": "playwright show-report"
   },

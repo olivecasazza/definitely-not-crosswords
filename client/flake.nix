@@ -53,6 +53,7 @@
             overlays = [ inputs.rust-overlay.overlays.default ];
           };
           inherit (pkgs) lib;
+          buildSha = builtins.substring 0 12 (inputs.self.rev or inputs.self.dirtyRev or "unknown");
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
             extensions = [
@@ -139,6 +140,7 @@
             pname = "crossword-client";
             version = "0.1.0";
             strictDeps = true;
+            BUILD_SHA = buildSha;
             # Pure native crates that build in a bare sandbox (no onnxruntime, no
             # GTK). crossword-web is wasm (separate), crossword-server needs
             # onnxruntime (Phase F), crossword-desktop needs WebKit (its own pkg).
@@ -158,6 +160,7 @@
             pname = "crossword-web";
             version = "0.1.0";
             strictDeps = true;
+            BUILD_SHA = buildSha;
             CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
             doCheck = false; # no test runner on bare wasm32
             cargoExtraArgs = "-p crossword-web";
@@ -418,6 +421,7 @@
                    this row INHERITS the card's 1.6 line-height, so a line here is
                    1.6 x .75rem = 2.4rem, not 1.4 x (that is .boot-err, below). */
                 min-height:2.4rem}
+              .boot-build{margin:0;font:500 .6875rem/1.4 Inconsolata,ui-monospace,monospace;color:var(--b-dim)}
               .boot-err{margin:0;font:700 .75rem/1.4 Inconsolata,ui-monospace,monospace;color:var(--b-err);
                 overflow-wrap:anywhere;min-height:3.15rem}
               .boot-actions{display:flex;gap:.5rem;flex-wrap:wrap}
@@ -458,6 +462,7 @@
                   <p class="boot-mark">definitely-not-crosswords</p>
                   <h1 class="boot-title" id="boot-title" tabindex="-1">Loading</h1>
                   <p class="boot-body" id="boot-body">Fetching the app&#8230;</p>
+                  <p class="boot-build">Build <span data-build="__BUILD_SHA__">__BUILD_SHA__</span></p>
                   <p class="boot-err" id="boot-err" aria-hidden="true"></p>
                   <div class="boot-actions" id="boot-actions" aria-hidden="true">
                     <button class="boot-btn boot-btn-primary" id="boot-retry" type="button">Retry</button>
@@ -571,7 +576,7 @@
               </script>
               </body></html>
               HTML
-              sed -i "s|__BUNDLE_HASH__|$bundleHash|g" $out/index.html
+              sed -i "s|__BUNDLE_HASH__|$bundleHash|g; s|__BUILD_SHA__|$BUILD_SHA|g" $out/index.html
             '';
             dontInstall = true;
           };

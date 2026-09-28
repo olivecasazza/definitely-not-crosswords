@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.54](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.53...v0.1.54) - 2026-09-28
+
+### Fixed
+
+- *(tools)* an empty or truncated roster must not exit 0 [DEF-120] (#157)
+
+### Other
+
+- changelog for v0.1.53 [skip ci]
+
+
 ## [0.1.53](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.52...v0.1.53) - 2026-09-28
 
 ### Fixed

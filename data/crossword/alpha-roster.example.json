@@ -1,20 +1,44 @@
-[
-  {
-    "email": "tester@example.com",
-    "name": "Test Tester",
-    "username": "tester",
-    "password": "change-me-before-sending",
-    "consent": true,
-    "consent_recorded_at": "2026-10-01",
-    "consent_source": "asked in person, agreed to a closed-alpha invite"
+{
+  "_comment": [
+    "Two accepted shapes. The object form is the one the DEF-120 card produces:",
+    "a `Name <email>` roster plus ONE consent answer for the wave. Prefer it.",
+    "The bare-array form is still accepted for per-row consent.",
+    "",
+    "consent.answer:   'all'      -> every row is emailable unless it sets consent:false",
+    "                  'partial'  -> grants nothing by itself; mark the agreed rows",
+    "                  'none'     -> nothing is emailable",
+    "consent.recorded_at: the date the answer was given (YYYY-MM-DD).",
+    "consent.source:      where that answer came from, e.g. 'issue-card:cb560df2'.",
+    "All three are required for a wave-level answer to count, exactly as they are",
+    "per row. Omit any one and the wave consent is ignored — the gate is default-deny.",
+    "",
+    "Per row, only email and name are needed. username is derived from the address",
+    "and reported in the dry run. password is machine-generated at send time and",
+    "the recipient replaces it via the login page's forgot-password link. Supply",
+    "either if you want to pin it, but do not put real credentials in a file you",
+    "might commit."
+  ],
+  "consent": {
+    "answer": "all",
+    "recorded_at": "2026-10-01",
+    "source": "issue-card:cb560df2"
   },
-  {
-    "email": "noreply@example.com",
-    "name": "No Consent Yet",
-    "username": "noconsent",
-    "password": "change-me-before-sending",
-    "consent": false,
-    "consent_recorded_at": "",
-    "consent_source": ""
-  }
-]
+  "roster": [
+    {
+      "email": "tester@example.com",
+      "name": "Test Tester"
+    },
+    {
+      "email": "noreply@example.com",
+      "name": "No Consent Yet",
+      "consent": false
+    },
+    {
+      "email": "partial@example.com",
+      "name": "Marked Individually",
+      "consent": true,
+      "consent_recorded_at": "2026-10-01",
+      "consent_source": "asked directly, agreed to a closed-alpha invite"
+    }
+  ]
+}

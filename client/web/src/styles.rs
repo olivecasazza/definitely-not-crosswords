@@ -405,9 +405,10 @@ a { color: inherit; text-decoration: none; }
 
   /* The co-op socket's status pill (DEF-175 §5). A warning pill breathes at
      2.4s. Under `reduce` it renders static — a status indicator that demands
-     attention through motion is wrong for the users who have asked for least
+      attention through motion is wrong for the users who have asked for least
      motion, and the text alone already carries the whole message. The stale
-     dimming is an opacity, not an animation, so it needs no guard. */
+     dimming is a `color-mix` on a non-text decoration, not an animation, so it
+     needs no guard. */
   .cw-conn-pill { animation: none !important; opacity: 1 !important; }
 
   /* The Pro upsell spinner: freeze the rotation, keep the 3/4 ring so it

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.50](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.49...v0.1.50) - 2026-09-28
+
+First release to reach **production** since v0.1.49. Production was 23 commits behind
+`main` because `deploy-production.yml` only fires on a `v*` tag push, so every fix below
+existed on main and staging only. The headline change is the front door: production used
+to stamp `immutable, max-age=31536000` on its own `/_assets` 404s, so a transient miss
+became a year-long pinned edge object and the app bundle rendered blank.
+
+### Fixed
+
+- *(server)* never mark `/_assets` errors immutable; canary checks the served bundle (#122)
+- *(web)* gate the Pro CTA on whether checkout can actually start (#123)
+- *(web)* guard every animated surface behind `prefers-reduced-motion` (#124)
+- *(server)* guard production indexing until the Pro price is announced (#120)
+- *(ops)* make the Pro price announcement settable from the Helm chart (#150) (#121)
+- *(web)* correct the board keyboard layer to the DEF-142 spec (#118)
+- *(web)* give the crossword grid's row wrappers `role="row"` (#119)
+
+### Added
+
+- *(e2e)* canary a real Pro click through to a Lemon Squeezy checkout (#126)
+- *(e2e)* assert the landed checkout is store 390247 / variant 1718877 (#127)
+- *(e2e)* probe the production served artifact, not just staging (#125)
+
 ## [0.1.49](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.48...v0.1.49) - 2026-09-27
 
 ### Added

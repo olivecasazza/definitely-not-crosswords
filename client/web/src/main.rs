@@ -123,6 +123,15 @@ fn Shell() -> Element {
     // The read is the subscription; the value itself is unused.
     let recover = use_signal(|| 0_u32);
     let _ = recover.read();
+    // DEF-183 D10: "Go home" mutates two signals in one click — this `recover`
+    // bump and the router's push, which dioxus-router handles in a
+    // document-level listener that runs AFTER this element's own onclick. Which
+    // one lands first is not this handler's to decide, and if the bump wins the
+    // boundary re-runs at the OLD route and re-mounts the page that just threw.
+    // Subscribing this scope to the route as well means any navigation re-runs
+    // the boundary at the NEW route, so the order cannot matter. Deliberately
+    // not hand-rolled into the click handler.
+    let _route = use_route::<Route>();
 
     rsx! {
         div { class: "app-shell",
@@ -167,22 +176,20 @@ fn PageErrorPanel(errors: ErrorContext, recover: Signal<u32>) -> Element {
 
     rsx! {
         div {
-            class: "app-card",
+            class: "app-card app-error-panel",
             role: "alert",
-            style: "margin:auto;max-width:34rem;padding:1.5rem;display:flex;flex-direction:column;gap:.75rem",
             p {
-                class: "muted",
-                style: "margin:0;font-family:var(--mono);font-size:.625rem;letter-spacing:.05em;text-transform:uppercase",
+                class: "muted app-eyebrow",
                 "Page error"
             }
             h1 {
                 id: "page-error",
                 tabindex: "-1",
-                style: "margin:0;font-size:1.125rem;font-weight:700;color:var(--color-error)",
+                class: "app-error-title",
                 "Something broke on this page"
             }
-            p { class: "muted", style: "margin:0", "The rest of the app still works." }
-            div { style: "display:flex;gap:.5rem;flex-wrap:wrap",
+            p { class: "muted", "The rest of the app still works." }
+            div { class: "app-error-actions",
                 button {
                     class: "app-btn app-btn-active",
                     r#type: "button",

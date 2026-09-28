@@ -220,15 +220,52 @@ a { color: inherit; text-decoration: none; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
 
 .app-card { background-color: var(--bg-card); border: 1px solid var(--border-app); border-radius: 0; }
-.app-btn { font-family: var(--font-sans); padding: .5rem .9rem; font-size: var(--fs-md); font-weight: 600;
-  border: 1px solid var(--border-app); border-radius: 0; background-color: var(--bg-card); color: var(--text-secondary);
-  transition: all .15s ease; cursor: pointer; }
-.app-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+/* The border is the CONTROL BOUNDARY, not a card edge: WCAG 1.4.11 wants 3:1
+   against the surface behind it, and --border-app is 1.19:1 on the dark card
+   (3.20:1 light, which is why this read as a dark-only bug). --text-secondary is
+   6.9:1 dark / 7.2:1 light — the same token the boot card's .boot-btn uses, and
+   the one the light palette already picked over #71717a for the label. */
+.app-btn { font-family: var(--font-sans); padding: .5rem .9rem; min-height: 44px; font-size: var(--fs-md);
+  font-weight: 600; border: 1px solid var(--text-secondary); border-radius: 0; background-color: var(--bg-card);
+  color: var(--text-secondary); transition: all .15s ease; cursor: pointer; }
+/* Hover brightens to --text-primary (15:1 dark / 16.6:1 light), not to
+   --border-hover, which is 1.6:1 on the dark card: the old hover rule quietly
+   dropped the boundary below 3:1 in the very state the pointer is on. */
+.app-btn:hover { color: var(--text-primary); border-color: var(--text-primary); }
 .app-btn:disabled { opacity: .5; cursor: not-allowed; }
-.app-btn-active { color: var(--text-primary); border-color: var(--color-primary); }
+/* `.app-btn:hover` is (0,2,0) and would otherwise beat this (0,1,0), so the
+   accent used to vanish under the pointer — the `.section-tab-active` idiom
+   below, one line up, for the same reason. */
+.app-btn-active, .app-btn-active:hover { color: var(--text-primary); border-color: var(--color-primary); }
+/* The house ring (panel-kit ships `.ws-root :focus-visible`, which cannot reach
+   an .app-btn rendered outside a workspace — the post-mount error panel is a
+   SIBLING of .ws-root under main.app-main, so it fell back to the UA ring). */
+.app-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+/* 44px, not 2.75rem: the boot card's .boot-btn measures 44.0px because it renders
+   BEFORE panel-kit exists, when the root is still 16px. panel-kit's
+   `body, html, #main` rule sets font-size:13px on <html>, so every rem in the app
+   resolves against 13px and 2.75rem is 35.75px here — the delta's arithmetic
+   assumed the pre-boot root. Measured in Chromium: 2.75rem -> 35.75px, 44px ->
+   44.0px. This is a house-atom change: every .app-btn in the app grows, including
+   the header's theme toggle / Sign in / Sign out / Resume and the confirm modal. */
 .app-input { background-color: var(--bg-cell-empty); color: var(--text-primary); border: 1px solid var(--border-app);
   border-radius: 0; outline: none; padding: .4rem .6rem; transition: border-color .15s ease; }
 .app-input:focus { border-color: var(--color-primary); }
+
+/* ── Post-mount render-error panel (PageErrorPanel, main.rs) ─────────────────
+   Atoms rather than five inline `style` attributes: the panel is the one place
+   that cannot be re-themed or reduced-motion-tuned without editing Rust, and an
+   inline style cannot be reached by a stylesheet rule at all. Composed from the
+   atoms above, so it re-themes with them. */
+.app-error-panel { margin: auto; max-width: 34rem; padding: 1.5rem; display: flex;
+  flex-direction: column; gap: .75rem; }
+/* Nothing resets p/h1 margins in panel-kit or DESIGN (panel-kit.css zeroes only
+   `body`), so the panel zeroes its own copy rows explicitly. */
+.app-error-panel p { margin: 0; }
+.app-error-title { margin: 0; font-size: 1.125rem; font-weight: 700; color: var(--color-error); }
+.app-error-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+.app-eyebrow { margin: 0; font-family: var(--mono, monospace); font-size: var(--fs-2xs);
+  letter-spacing: .05em; text-transform: uppercase; }
 
 /* panel-kit's "traffic light" window controls (`.light`) are pure-color circles
    with no text content (see panel-kit.css) — there is no font to match, so

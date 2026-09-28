@@ -63,12 +63,17 @@ fn web_dist() -> &'static Path {
 /// fallback, then index protection layered over both.
 fn app(env: &str, announced: bool, dist: &Path) -> Router {
     let dist = dist.to_str().expect("temp path is utf-8");
+    // `origin::for_env` reads `APP_ORIGIN`, which these tests must not be
+    // perturbed by whatever the developer's shell has exported, so the
+    // environment's own default is what gets asserted on here. The
+    // placeholder-resolution tests below take an explicit origin instead.
     seo::protect_index(
         spa::mount(
             Router::new()
                 .route("/api/healthz", get(|| async { "ok" }))
                 .route("/api/trpc/:proc", get(|| async { "[]" })),
             dist,
+            "https://crosswords.test",
         ),
         env,
         announced,
@@ -305,4 +310,121 @@ async fn real_routes_still_win_over_the_fallback() {
         res.body
     );
     assert!(res.body.contains("Disallow: /"), "got {}", res.body);
+}
+
+// --- DEF-196: the canonical is per-URL, not a consolidation hint ------------
+//
+// One image serves staging and production, and the build cannot know which of
+// the two it is producing a canonical for, so the served shell carries a
+// placeholder and `spa::mount` resolves it against the origin it is given.
+// These run the real `spa::mount` over a shell shaped like the real one.
+
+/// A shell with the absolute-URL tags `client/flake.nix` actually writes, and
+/// the placeholder in each. The `og:image` path is the bundle's own hashed
+/// directory, so it exercises the interaction of both placeholders.
+const SHELL_WITH_ORIGIN: &str = concat!(
+    "<!doctype html><html><head>",
+    "<link rel=\"canonical\" href=\"__ORIGIN__/\" />",
+    "<meta property=\"og:url\" content=\"__ORIGIN__/\" />",
+    "<meta property=\"og:image\" content=\"__ORIGIN__/_assets/deadbeefdeadbeef/og.png\" />",
+    "</head><body><div id=\"main\"></div></body></html>"
+);
+
+/// A dist whose shell is `SHELL_WITH_ORIGIN`, distinct per origin so the two
+/// tests below cannot share a tree.
+fn dist_for(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("dnc-origin-{}-{}", tag, std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let assets = dir.join("_assets").join("deadbeefdeadbeef");
+    fs::create_dir_all(&assets).expect("temp dist is writable");
+    fs::write(dir.join("index.html"), SHELL_WITH_ORIGIN).expect("write shell");
+    dir
+}
+
+/// `GET /` against a server mounted with `origin`, returning the body.
+async fn shell_served_with(origin: &str, dist: &Path) -> String {
+    let dist = dist.to_str().expect("temp path is utf-8");
+    let mut app = spa::mount(Router::new(), dist, origin);
+    let res = app
+        .call(
+            Request::builder()
+                .uri("/")
+                .body(Body::empty())
+                .expect("static request builds"),
+        )
+        .await
+        .expect("the fallback answers /");
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024)
+        .await
+        .expect("shell body reads");
+    String::from_utf8(bytes.to_vec()).expect("the shell is utf-8")
+}
+
+/// The regression, stated as the served bytes: a staging deploy must not claim
+/// production is where it lives. It used to, from one shared artifact.
+#[tokio::test]
+async fn staging_does_not_serve_production_as_its_own_canonical() {
+    let dist = dist_for("staging");
+    let body = shell_served_with("https://crosswords-staging.casazza.io", &dist).await;
+
+    assert!(
+        body.contains("rel=\"canonical\" href=\"https://crosswords-staging.casazza.io/\""),
+        "staging must name its own origin, got {body}"
+    );
+    assert!(
+        !body.contains("crosswords.casazza.io"),
+        "staging's served HTML still points somewhere on the production host, got {body}"
+    );
+    assert!(
+        !body.contains("__ORIGIN__"),
+        "an unresolved placeholder would ship to a scraper, got {body}"
+    );
+}
+
+/// And the fix must not cost production its own canonical: that one WAS right
+/// before, and a change that made both hosts name staging would be a new bug of
+/// the same shape.
+#[tokio::test]
+async fn production_still_names_production() {
+    let dist = dist_for("production");
+    let body = shell_served_with("https://crosswords.casazza.io", &dist).await;
+
+    assert!(
+        body.contains("rel=\"canonical\" href=\"https://crosswords.casazza.io/\""),
+        "production must still name itself, got {body}"
+    );
+    assert!(
+        !body.contains("crosswords-staging"),
+        "production must not name staging, got {body}"
+    );
+}
+
+/// `og:image` is an absolute URL resolved against the same origin, and its path
+/// has to survive substitution intact — the card lives inside the bundle's own
+/// hashed directory, and a mangled path is an empty preview box.
+#[tokio::test]
+async fn og_image_keeps_its_hashed_path_under_the_serving_origin() {
+    let dist = dist_for("ogimage");
+    let body = shell_served_with("https://crosswords-staging.casazza.io", &dist).await;
+
+    assert!(
+        body.contains(
+            "property=\"og:image\" content=\"https://crosswords-staging.casazza.io/_assets/deadbeefdeadbeef/og.png\""
+        ),
+        "og:image must be the serving origin plus the bundle's own hashed path, got {body}"
+    );
+    assert!(!body.contains("//_assets"), "doubled separator, got {body}");
+}
+
+/// A dist built before the placeholder existed keeps its own bytes. This is the
+/// state a rolling update is briefly in, and it is a valid document — so it has
+/// to be served, not refused.
+#[tokio::test]
+async fn a_shell_without_the_placeholder_is_still_served() {
+    let body = shell_served_with("https://crosswords-staging.casazza.io", web_dist()).await;
+    assert!(
+        body.contains("<title>definitely-not-crosswords</title>"),
+        "got {body}"
+    );
 }

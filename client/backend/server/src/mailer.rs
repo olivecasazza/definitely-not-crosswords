@@ -78,14 +78,10 @@ impl Mailer {
     /// on a domain onboarded for Email Sending), `APP_ORIGIN` (optional —
     /// defaults derived from APP_ENV, which maps 1:1 to a public host).
     pub fn from_env(app_env: &str) -> Self {
-        let origin = std::env::var("APP_ORIGIN").unwrap_or_else(|_| {
-            match app_env {
-                "production" => "https://crosswords.casazza.io",
-                "staging" => "https://crosswords-staging.casazza.io",
-                _ => "http://localhost:3001",
-            }
-            .to_string()
-        });
+        // The origin is the same absolute origin the served shell's canonical
+        // names, so it comes from the one module that decides it (see
+        // `crate::origin`) rather than a second copy of the host table here.
+        let origin = crate::origin::for_env(app_env);
         // noreply.casazza.io (not the apex) is what's onboarded for Email
         // Sending, so the From must sit on that subdomain or Cloudflare rejects
         // it — hence the doubled "noreply".

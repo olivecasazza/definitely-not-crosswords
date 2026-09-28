@@ -122,7 +122,15 @@ img=$(printf '%s' "$head" | grep -oE '<meta property="og:image" content="[^"]+"'
 if [ -z "$img" ]; then
   fail "no og:image in the served head"
 else
-  path="${img#https://crosswords.casazza.io}"
+  # The origin is __ORIGIN__ (DEF-196): one image is deployed to staging and
+  # production alike, so the build has no origin to name and the server resolves
+  # it per deploy (client/backend/server/src/origin.rs). Strip whatever origin
+  # precedes the path — the placeholder as written, or a scheme+host if a
+  # literal ever creeps back in — rather than asserting a specific host here,
+  # which is exactly the hardcoding this check must not reintroduce. What
+  # matters is the PATH: same hash, real file.
+  path="${img#__ORIGIN__}"
+  path="${path#*://*}"
   echo
   echo "og:image -> $img"
   if [ "$path" = "/_assets/$bundleHash/og.png" ]; then
@@ -136,6 +144,22 @@ else
     fail "og:image does not resolve to a file in the dist — the SPA fallback would serve HTML"
   fi
 fi
+
+# The origin is a per-deploy fact, so no host may be baked into the artifact at
+# all: a literal here is one host's answer served to the other (DEF-196).
+for host in crosswords.casazza.io crosswords-staging.casazza.io; do
+  if printf '%s' "$head" | grep -qF "$host"; then
+    fail "$host is baked into the served head — the origin must be __ORIGIN__, resolved per deploy"
+  else
+    pass "no hardcoded origin in the head ($host absent)"
+  fi
+done
+
+# ...and the placeholder the server looks for must be there in its place, or the
+# two halves of the substitution have drifted apart.
+for tag in '<link rel="canonical" href="__ORIGIN__/"' 'property="og:url" content="__ORIGIN__/"'; do
+  if printf '%s' "$head" | grep -qF "$tag"; then pass "head has $tag"; else fail "head is missing $tag"; fi
+done
 
 for want in \
   'property="og:image:width" content="1200"' \

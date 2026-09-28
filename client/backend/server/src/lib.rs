@@ -7,6 +7,7 @@ pub mod auth_routes;
 pub mod checkout;
 pub mod ctx;
 pub mod mailer;
+pub mod origin;
 pub mod routers;
 pub mod seo;
 pub mod spa;

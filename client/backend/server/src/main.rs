@@ -157,8 +157,16 @@ async fn main() -> anyhow::Result<()> {
     // paths boot the shell, which get a real 404) are the part that has to be
     // testable, and `tests/spa_fallback.rs` tests them through this function
     // rather than through a stand-in.
+    //
+    // The origin is passed in rather than read from the env in there, so the
+    // shell's `rel=canonical` names the host this process actually answers on
+    // — the same one the mailer builds its links from, via `origin::for_env`.
     let app = match std::env::var("WEB_DIST") {
-        Ok(dir) if !dir.is_empty() => spa::mount(app, &dir),
+        Ok(dir) if !dir.is_empty() => {
+            let origin = crossword_server::origin::for_env(&env);
+            tracing::info!("serving absolute URLs in the shell as {origin}");
+            spa::mount(app, &dir, &origin)
+        }
         _ => app,
     };
 

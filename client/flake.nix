@@ -265,6 +265,18 @@
                     carry. The description is the approved home.rs tagline, so the snippet
                     and the product cannot drift apart.
 
+                    The plan tail is not decoration, it is the plan (DEF-202). The snippet is
+                    the ONLY copy a searcher ever reads, so a tail of "Free to play." on its
+                    own read as a description of a free product and was vaguer than what the
+                    repo actually ships. "Free plan: $0, unlimited solving." is the Free row
+                    of README.md "Plans & pricing" (55-62) verbatim, and it is 150 chars —
+                    inside the ~160 a search engine will show. "Free to play." survives at
+                    home.rs:150, where it is qualified on the same line by "No card
+                    required." and is read next to the live pricing panel; truncated to
+                    these 150 characters it loses that qualifier and becomes a claim about
+                    the whole product. Change either half of this description only
+                    together with the other, and only against README.md 55-62.
+
                     Two escapes bite in this block, and both are build breaks, not runtime
                     ones. buildPhase is a Nix indented string, so a dollar before an
                     opening brace is an antiquotation Nix evaluates as an expression
@@ -284,12 +296,12 @@
                     at. summary_large_image with no og:image reserves an empty box and
                     previews worse; add the image and this in one PR. -->
               <title>definitely-not-crosswords — free real-time co-op crosswords</title>
-              <meta name="description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free to play." />
+              <meta name="description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free plan: $0, unlimited solving." />
                <link rel="canonical" href="https://crosswords.casazza.io/" />
               <meta property="og:type" content="website" />
               <meta property="og:site_name" content="definitely-not-crosswords" />
               <meta property="og:title" content="definitely-not-crosswords — free real-time co-op crosswords" />
-              <meta property="og:description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free to play." />
+              <meta property="og:description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free plan: $0, unlimited solving." />
               <meta property="og:url" content="https://crosswords.casazza.io/" />
               <meta name="twitter:card" content="summary" />
               <style>

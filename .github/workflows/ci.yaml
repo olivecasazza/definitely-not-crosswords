@@ -318,3 +318,46 @@ jobs:
 
           gh workflow run ci.yaml -R ${{ github.repository }} --ref main
           echo "Dispatched a main build of $(gh api repos/${{ github.repository }}/commits/main --jq .sha)."
+
+      # The same trap swallows the release. `release-plz.yml` is triggered only by
+      # `push` to main, and this job's merge authenticates as GITHUB_TOKEN, so the
+      # version-bump PR landing emits no push event, no release-plz run happens,
+      # and the tag is never cut. That is why v0.1.49's bump PR (#106) merged and
+      # shipped nothing: the next release-plz run on main was triggered by an
+      # unrelated push days later, and it only refreshes an open release PR — it
+      # does not go back and cut the tag for a version that already merged. Every
+      # release therefore needs a human to hand-dispatch release-plz, which is
+      # exactly how v0.1.50 got its tag.
+      #
+      # workflow_dispatch is the documented exception to "token-triggered events
+      # create no run", and the step above already relies on it to build main. So
+      # dispatch release-plz here too, but only for release-plz's own release PR:
+      # for every other auto-merged PR, `release-plz release` would find
+      # Cargo.toml already at the newest tag, do nothing, and burn ~4 minutes
+      # cloning panel-kit and installing Rust on every single merge.
+      #
+      # Dispatching is what makes the chain complete: release-plz cuts the tag
+      # with RELEASE_PLZ_TOKEN (a PAT), so the tag's push DOES create a run, and
+      # ci.yaml's `push: tags: [v*']` builds the versioned image that Flux
+      # promotes. One dispatch, tag, image, release.
+      - name: Cut the release tag when release-plz's own release PR is auto-merged
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
+          fi
+
+          HEAD_REF=$(gh pr view "$PR_NUMBER" -R ${{ github.repository }} --json headRefName --jq .headRefName)
+          case "$HEAD_REF" in
+            release-plz-*) ;;
+            *)
+              echo "PR #$PR_NUMBER is on $HEAD_REF, not a release-plz release PR —"
+              echo "no tag to cut. (Ordinary merges are already covered above.)"
+              exit 0
+              ;;
+          esac
+
+          gh workflow run release-plz.yml -R ${{ github.repository }} --ref main
+          echo "Dispatched release-plz: tag + GitHub release for #$PR_NUMBER."

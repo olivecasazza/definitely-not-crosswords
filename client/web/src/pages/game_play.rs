@@ -1719,16 +1719,16 @@ fn render_board(
                                             // it — 3.94:1 on --bg-cell-letter in
                                             // light mode, under AA. The position
                                             // is last-known; the letter is not.
-                                            let ring_color = if r.stale {
+                                            let ring = if r.stale {
                                                 format!(
-                                                    "color-mix(in srgb, {} 55%, transparent)",
-                                                    r.color
+                                                    "box-shadow: inset 0 0 0 2px {c}, inset 0 0 0 4px color-mix(in srgb, {c} 55%, transparent);",
+                                                    c = &r.color
                                                 )
                                             } else {
-                                                r.color.clone()
+                                                format!("box-shadow: inset 0 0 0 2px {};", r.color)
                                             };
                                             (
-                                                format!("box-shadow: inset 0 0 0 2px {ring_color};"),
+                                                ring,
                                                 format!(
                                                     "{} is working here{}",
                                                     r.name,
@@ -1740,7 +1740,7 @@ fn render_board(
                                         None => (String::new(), String::new(), false),
                                     };
                                     // A state hook for the e2e suite, not a style: the
-                                    // visual treatment is the ring colour above.
+                                    // visual treatment is the ring above.
                                     if ring_stale {
                                         classes.push_str(" cw-ring-stale");
                                     }
@@ -2041,7 +2041,7 @@ fn render_players_strip(
                     // the chip with that player's ring) carries the staleness
                     // instead, and the title says it in words.
                     let underline = if stale {
-                        format!("border-bottom: 2px solid color-mix(in srgb, {color} 55%, transparent);")
+                        format!("border-bottom: 2px dashed color-mix(in srgb, {color} 55%, transparent);")
                     } else {
                         format!("border-bottom: 2px solid {color};")
                     };
@@ -2241,8 +2241,6 @@ const GAME_CSS: &str = r#"
    fell to 3.89:1 on --bg-card and the confirmed letter inside a stale ring fell
    to 3.94:1 on --bg-cell-letter, both under AA in light mode. Only the
    non-text decoration is dimmed now; the classes stay as state hooks for e2e. */
-.cw-chip-stale { border-bottom-style: dashed; }
-.cw-ring-stale { outline: none; }
 .cw-join-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: var(--scrim); backdrop-filter: blur(2px); }
 .cw-join-card { display: flex; flex-direction: column; gap: 12px; max-width: 22rem; padding: 24px 28px; text-align: center; background: var(--bg-card); border: 1px solid var(--border-app); }
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }

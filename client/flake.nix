@@ -247,7 +247,15 @@
               <!-- Scripting disabled: #boot can never run, so it would sit on "Loading" forever
                    and cover this page. Hide it so the <noscript> card below is what is read.
                    Parsed only when scripting is off, so the JS path is untouched. -->
-              <noscript><style>#boot{display:none!important}</style></noscript>
+              <noscript><style>#boot{display:none!important}
+              /* DEF-183 D5: .light-mode is set by the pre-boot script below, which by
+                 definition does not run here, so a light-mode user with scripting off got
+                 the dark card in every case. This override lives INSIDE <noscript>, so it
+                 is parsed only when scripting is off and cannot fight the app. Values are
+                 the .light-mode row of the boot palette below. */
+              @media (prefers-color-scheme: light){
+                body{--b-bg:#ededf0;--b-card:#f7f7f8;--b-fg:#18181b;--b-dim:#52525b;--b-line:#8a8a93;--b-err:#b02a20;--b-primary:#775600}}
+              </style></noscript>
               <!-- Machine-readable copy (DEF-164). This <head> is the ONLY descriptive
                     content a crawler or a link-preview scraper ever sees: every word of
                     positioning and the price are rendered client-side by the WASM bundle,
@@ -295,21 +303,50 @@
               :root{--b-bg:#121212;--b-card:#18181b;--b-fg:#f4f4f5;--b-dim:#a1a1aa;--b-line:#27272a;--b-err:#ff8c8c;--b-primary:#feea99}
               .light-mode{--b-bg:#ededf0;--b-card:#f7f7f8;--b-fg:#18181b;--b-dim:#52525b;--b-line:#8a8a93;--b-err:#b02a20;--b-primary:#775600}
               html,body{height:100%}
-              body{margin:0;background:var(--b-bg);color:var(--b-fg);
-                font:500 .875rem/1.6 Montserrat,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+              body{margin:0;background:var(--b-bg);color:var(--b-fg)}
+              /* DEF-183 D9: this shorthand was on `body`, and a font shorthand sets
+                 font-weight:500 with it. panel-kit's `body,html,#main` rule and DESIGN's
+                 `body` rule both override family/size/line-height but NOT weight, and this
+                 <style> outlives the card (only #boot is removed at handoff) — so from this
+                 release on, every element that does not set its own weight rendered at 500.
+                 Scoped to the two surfaces that exist before the app mounts. */
+              #boot,noscript .boot-card{font:500 .875rem/1.6 Montserrat,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
               #boot{position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;
                 padding:max(1.5rem,env(safe-area-inset-top)) max(1.5rem,env(safe-area-inset-right))
                        max(1.5rem,env(safe-area-inset-bottom)) max(1.5rem,env(safe-area-inset-left))}
               .boot-card{width:100%;max-width:26rem;background:var(--b-card);border:1px solid var(--b-line);
                 padding:1.25rem;display:flex;flex-direction:column;gap:.75rem}
+              /* DEF-183 D4: the JS boot card is centred by #boot's flex; this card sat in
+                 normal flow at margin:4rem auto, so the two no-app cards disagreed (64px
+                 above / 533px below at a 720px viewport). Full-bleed flex centring; the
+                 card keeps its own max-width:26rem above. */
+              .boot-noscript{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:1.5rem}
               .boot-mark{margin:0;font:700 .625rem/1.2 Inconsolata,ui-monospace,monospace;
                 letter-spacing:.05em;text-transform:uppercase;color:var(--b-dim)}
               .boot-title{margin:0;font-size:1rem;font-weight:700}
               .boot-title:focus{outline:none}
-              .boot-body{margin:0;font-size:.75rem;color:var(--b-dim)}
+              .boot-body{margin:0;font-size:.75rem;color:var(--b-dim);
+                /* DEF-183 D3: the card is centre-anchored, so a row that grows moves the
+                   whole card. Two lines is the longest copy the three states produce, and
+                   this row INHERITS the card's 1.6 line-height, so a line here is
+                   1.6 x .75rem = 2.4rem, not 1.4 x (that is .boot-err, below). */
+                min-height:2.4rem}
               .boot-err{margin:0;font:700 .75rem/1.4 Inconsolata,ui-monospace,monospace;color:var(--b-err);
-                overflow-wrap:anywhere}
+                overflow-wrap:anywhere;min-height:3.15rem}
               .boot-actions{display:flex;gap:.5rem;flex-wrap:wrap}
+              /* DEF-183 D3: the error line and the action row are ALWAYS rendered and
+                 toggled by visibility, so the space they need is reserved before the user
+                 ever needs it (measured: Loading 122.8px -> failed 294.0px, CLS 0.056).
+                 The min-heights above are load-bearing: visibility:hidden reserves the
+                 box but an EMPTY <p> still collapses to a zero-height line box.
+                 3.15rem is THREE lines, not one, because the reason a real failure
+                 carries is a URL: "Failed to fetch dynamically imported module:
+                 https://host/_assets/<64-hex>/crossword-web.js?r=<ms>" measures 137
+                 characters, i.e. 3 lines at this width. One reserved line left the
+                 failed card 38px taller than the loading one (CLS 0.006) when measured
+                 against real fonts. A pathological message longer than 3 lines would
+                 still grow the card by one line. */
+              #boot-err,#boot-actions{visibility:hidden}
               /* Border is --b-dim, not --b-line: a control boundary needs 3:1 and --b-line is
                  1.19:1 on the dark card. --b-dim is 6.91:1 dark / 7.22:1 light. */
               .boot-btn{font:600 .875rem/1 inherit;padding:.6rem .9rem;min-height:2.75rem;cursor:pointer;
@@ -319,9 +356,12 @@
               /* The one action that can fix this: the house .app-btn-active idiom
                  (styles.rs:221), 14.7:1 dark / 6.3:1 light. */
               .boot-btn-primary{color:var(--b-fg);border-color:var(--b-primary)}
-              /* Scoped to the boot card: an author rule beating the UA [hidden] rule is why
-                 !important is needed, and a global one would reach into app styles post-boot. */
-              #boot [hidden],noscript [hidden]{display:none !important}
+              /* DEF-183 D3: the #boot half of this rule is gone — nothing inside #boot uses
+                 `hidden` any more (the error and action rows are visibility-toggled so
+                 their space is reserved). Kept for noscript-only content: an author rule
+                 beating the UA [hidden] rule is why !important is needed, and a global one
+                 would reach into app styles post-boot. */
+              noscript [hidden]{display:none !important}
               </style>
               </head>
               <body>
@@ -331,18 +371,18 @@
                   <p class="boot-mark">definitely-not-crosswords</p>
                   <h1 class="boot-title" id="boot-title" tabindex="-1">Loading</h1>
                   <p class="boot-body" id="boot-body">Fetching the app&#8230;</p>
-                  <p class="boot-err" id="boot-err" hidden></p>
-                  <div class="boot-actions" id="boot-actions" hidden>
+                  <p class="boot-err" id="boot-err" aria-hidden="true"></p>
+                  <div class="boot-actions" id="boot-actions" aria-hidden="true">
                     <button class="boot-btn boot-btn-primary" id="boot-retry" type="button">Retry</button>
                     <button class="boot-btn" id="boot-reload" type="button">Reload</button>
                   </div>
                 </div>
               </div>
-              <noscript><div class="boot-card" style="margin:4rem auto;max-width:26rem">
+              <noscript><div class="boot-noscript"><div class="boot-card">
                 <p class="boot-mark">definitely-not-crosswords</p>
                 <h1 class="boot-title">JavaScript is required</h1>
                 <p class="boot-body">This is a WebAssembly app, so it needs JavaScript enabled to run.</p>
-              </div></noscript>
+              </div></div></noscript>
               <script type="module">
               // Pre-boot loader. Runs BEFORE the wasm exists, so nothing here may reference
               // the app's stylesheet — panel_kit::CSS and styles::DESIGN are injected by
@@ -351,7 +391,13 @@
               const setTitle = (t) => { const n = $("boot-title"); if (n) n.textContent = t; };
               const setBody = (t) => { const n = $("boot-body"); if (n) n.textContent = t; };
               const showActions = (on) => {
-                for (const id of ["boot-err", "boot-actions"]) { const n = $(id); if (n) n.hidden = !on; }
+                // DEF-183 D3: the rows are always rendered — that is what reserves their
+                // space — so "show" is visibility + aria-hidden. The `hidden` attribute
+                // would collapse the row back to nothing and move the card again.
+                for (const id of ["boot-err", "boot-actions"]) {
+                  const n = $(id);
+                  if (n) { n.style.visibility = on ? "visible" : ""; n.setAttribute("aria-hidden", on ? "false" : "true"); }
+                }
               };
               const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -383,13 +429,15 @@
                 setBody("The app didn't download. That's on us, not your connection — try again.");
                 const err = $("boot-err"); if (err) err.textContent = reason;
                 showActions(true);
-                $("boot").setAttribute("role", "alert");
+                // DEF-183 D2: no role swap. An explicit aria-live beats the implicit value
+                // of `role`, so swapping status->alert changed nothing for assistive tech
+                // while the e2e asserted the attribute instead of the announcement. The
+                // card announces politely once, as a status, in every state.
                 $("boot-retry").focus(); mark("failed");
               }
 
               function reset() {
                 setTitle("Loading"); setBody("Fetching the app…"); showActions(false);
-                $("boot").setAttribute("role", "status");
               }
 
               async function boot(auto) {

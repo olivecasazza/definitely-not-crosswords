@@ -248,7 +248,42 @@
                    and cover this page. Hide it so the <noscript> card below is what is read.
                    Parsed only when scripting is off, so the JS path is untouched. -->
               <noscript><style>#boot{display:none!important}</style></noscript>
-              <title>definitely-not-crosswords</title>
+              <!-- Machine-readable copy (DEF-164). This <head> is the ONLY descriptive
+                    content a crawler or a link-preview scraper ever sees: every word of
+                    positioning and the price are rendered client-side by the WASM bundle,
+                    after load, so the copy that decides whether anyone clicks has to live
+                    here — in the build, not in the app. A <title> that is just the repo
+                    slug is all a search result or a Discord/Slack/iMessage card can
+                    carry. The description is the approved home.rs tagline, so the snippet
+                    and the product cannot drift apart.
+
+                    Two escapes bite in this block, and both are build breaks, not runtime
+                    ones. buildPhase is a Nix indented string, so a dollar before an
+                    opening brace is an antiquotation Nix evaluates as an expression
+                    (DEF-163) — which is how this very sentence has to escape it. The
+                    heredoc is quoted, so the shell leaves the JS template literals alone,
+                    but Nix still parses the string. The copy below contains none of them —
+                    keep it that way.
+
+                    canonical/og:url name production explicitly instead of interpolating an
+                    origin: one artifact is served by staging and production alike, and a
+                    canonical pointing at the preferred copy is correct from both. Staging
+                    stays noindex, nofollow via X-Robots-Tag, so it leaks nothing.
+                    Deliberately no <meta name="robots">: a client-side index would fight
+                    the server header that closes staging.
+
+                    twitter:card is summary because the repo has no image asset to point
+                    at. summary_large_image with no og:image reserves an empty box and
+                    previews worse; add the image and this in one PR. -->
+              <title>definitely-not-crosswords — free real-time co-op crosswords</title>
+              <meta name="description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free to play." />
+               <link rel="canonical" href="https://crosswords.casazza.io/" />
+              <meta property="og:type" content="website" />
+              <meta property="og:site_name" content="definitely-not-crosswords" />
+              <meta property="og:title" content="definitely-not-crosswords — free real-time co-op crosswords" />
+              <meta property="og:description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free to play." />
+              <meta property="og:url" content="https://crosswords.casazza.io/" />
+              <meta name="twitter:card" content="summary" />
               <style>
               /* BOOT CSS - pre-wasm only. panel_kit::CSS and styles::DESIGN are injected by the
                  app (client/web/src/main.rs:107-108), so none of the tokens or atoms below exist

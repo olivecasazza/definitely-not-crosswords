@@ -19,6 +19,7 @@ use crossword_core::game::{
 use dioxus::prelude::*;
 use futures::StreamExt;
 use gloo_timers::future::{IntervalStream, TimeoutFuture};
+use panel_kit::loading::ProgressBar;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -309,6 +310,87 @@ fn viewport() -> (f64, f64) {
             ))
         })
         .unwrap_or((1440.0, 900.0))
+}
+
+/// The play screen's pre-board state: one `activeGame.get` in flight.
+///
+/// `role`/`aria-busy` are set once, here, on a node that mounts once — see
+/// [`PlayStatusError`] for why this is a component and not a branch.
+#[component]
+fn PlayStatusLoading() -> Element {
+    rsx! {
+        div { class: "gp-status",
+            div { class: "app-card gp-status-card",
+                role: "status",
+                // Polite: nothing is wrong yet. One announcement, on appearance
+                // — the card leaves the DOM when the board mounts, and a
+                // removal from a live region is not announced, so there is no
+                // churn behind the board.
+                aria_live: "polite",
+                aria_busy: "true",
+                h1 { class: "gp-status-title", "Loading game…" }
+                div { class: "gp-status-body",
+                    // `fraction: None` is panel-kit's honest indeterminate state:
+                    // one round trip reports no progress, so the bar animates
+                    // and no percentage is fabricated. The reduced-motion guard
+                    // is panel-kit's own (assets/panel-kit.css), which holds a
+                    // static 40% sliver — a full-width bar would claim
+                    // completion, which is a lie the user cannot see through.
+                    ProgressBar { fraction: None, label: "Loading game…" }
+                }
+                // Always in the DOM, never in the tab order: `.gp-status-actions`
+                // is hidden by the `[aria-hidden]` rule, and `visibility: hidden`
+                // takes the link out of the focus order with it. That is what
+                // keeps this card non-interactive AND reserves the 44px the
+                // error state's recovery row needs, so the card cannot resize
+                // when the state flips.
+                div { class: "gp-status-actions", aria_hidden: "true",
+                    Link { to: Route::Games {}, class: "app-btn", "Back to games" }
+                }
+            }
+        }
+    }
+}
+
+/// The play screen's pre-board failure. `message` is whatever `activeGame.get`
+/// reported — "Game not found", or a mapped transport status (net.rs:49).
+///
+/// A component rather than a second branch of `GamePlay` for one reason: the
+/// role has to be SET ONCE, ON MOUNT. Dioxus patches a same-shaped subtree, so
+/// two branches returning the same element skeleton would swap `role="status"`
+/// for `role="alert"` in place, and DEF-183 D2 measured that swapping a live
+/// region's role re-announces it. Two component types at one position in the
+/// tree means the old card unmounts and this one mounts.
+///
+/// Focus deliberately does NOT move here. The user may be mid-keyboard-
+/// navigation when a slow request fails, and yanking focus on an async
+/// page-level error is hostile; the alert role announces it instead. The card
+/// has exactly one tab stop, the recovery link.
+#[component]
+fn PlayStatusError(message: String) -> Element {
+    rsx! {
+        div { class: "gp-status",
+            div { class: "app-card gp-status-card",
+                // Assertive: this one is worth interrupting for.
+                role: "alert",
+                aria_busy: "false",
+                h1 { class: "gp-status-title", "Couldn't load game" }
+                div { class: "gp-status-body",
+                    // `--text-secondary`, not `--color-error`: the heading
+                    // already says what happened and the alert role carries the
+                    // urgency, so the body is the same 6.9:1 dark / 7.2:1 light
+                    // secondary ink as every other dim line in the app.
+                    p { class: "gp-status-detail", "{message}" }
+                }
+                div { class: "gp-status-actions",
+                    // `.app-btn`, whose border is --text-secondary (6.9:1 dark /
+                    // 7.2:1 light) after the DEF-188 D1 fix — a control boundary
+                    // needs 3:1 and --border-app is 1.19:1 on the dark card.
+                    Link { to: Route::Games {}, class: "app-btn", "Back to games" }
+                }
+            }
+        }
+    }
 }
 
 #[component]
@@ -1309,18 +1391,10 @@ pub fn GamePlay(id: String) -> Element {
 
     // ------------------------------------------------------------------------
     if *loading.read() {
-        return rsx! {
-            div { class: "container", p { class: "muted", "Loading game…" } }
-        };
+        return rsx! { PlayStatusLoading {} };
     }
     if let Some(e) = load_error.read().clone() {
-        return rsx! {
-            div { class: "container",
-                h1 { "Couldn't load game" }
-                p { class: "muted", "{e}" }
-                Link { to: Route::Games {}, class: "app-btn", "Back to games" }
-            }
-        };
+        return rsx! { PlayStatusError { message: e } };
     }
 
     let ws = use_workspace_local();

@@ -476,6 +476,47 @@ a { color: inherit; text-decoration: none; }
 /* Centred loading / empty / error message, used by every list and detail panel. */
 .game-status { padding: 2.5rem 1.5rem; text-align: center; font-size: var(--fs-xs);
   font-family: var(--mono, monospace); line-height: 1.6; }
+/* ── Play screen pre-board states (DEF-195, spec DEF-180) ───────────────────
+   The play screen's first paint used to be a bare <p class="muted">, and its
+   error branch a bare <h1> + <p> + <Link>. Both are what a user sees first
+   when they open a game, and both were the only surfaces in the app with no
+   card around them. They share one card now, and the card is sized to the
+   ERROR state in both: the body slot reserves its space with a min-height and
+   the recovery row is always in the DOM, so the card cannot resize when the
+   state flips. That is DEF-183 D3's remedy, measured there at CLS 0.056 on
+   the boot card (122.8px loading -> 294.0px failed). */
+/* Fills .app-main rather than claiming 100dvh: the play screen renders below
+   the site header, so a 100dvh box that starts under it would centre the card
+   half a header too low AND make the app shell's fixed height scroll — the
+   .app-shell/.app-main flex pair (styles.rs:280-283) is the app's own #boot
+   pattern, with the header subtracted. */
+.gp-status { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+.gp-status-card { width: 100%; max-width: 26rem; padding: 1.25rem;
+  display: flex; flex-direction: column; gap: .75rem; }
+/* The card border stays .app-card's --border-app (1.19:1 dark). That is the
+   app-wide boundary, not a control: the card is a decorative box and the text
+   inside carries the meaning. The controls inside (the .app-btn recovery link)
+   are a different story and get --text-secondary. */
+/* `--text-primary` explicitly, not inherited: `body` cross-fades `color` over
+   .15s (styles.rs:213), so an inherited title is mid-transition for the first
+   frames of a theme flip — which is exactly when a contrast check reads it. */
+.gp-status-title { margin: 0; font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+/* One slot, never two rows. The bar and the detail swap inside it, and its
+   min-height — three lines of .75rem/1.6 at the 13px root panel-kit sets —
+   is what makes the loading and error cards exactly the same height. Without
+   it a one-line "Game not found" would leave the card 28px shorter than the
+   failure that carries a URL. */
+.gp-status-body { min-height: 3.6rem; display: flex; flex-direction: column; justify-content: center; }
+.gp-status-detail { margin: 0; font-size: .75rem; line-height: 1.6; color: var(--text-secondary);
+  /* A network failure carries a URL, so it wraps; without this the card is
+     wider than the viewport at 360px. The boot card's .boot-err rule. */
+  overflow-wrap: anywhere; }
+.gp-status-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+/* Keyed off the ARIA state so the visual and the announced state cannot
+   disagree: a `visibility: hidden` row keeps its box (which is the point — the
+   space is reserved before the user ever needs it) but leaves the tab order,
+   so the loading card has no tab stop and the error card has exactly one. */
+.gp-status-actions[aria-hidden="true"] { visibility: hidden; }
 .error { color: var(--color-error); }
 .success { color: var(--color-success); }
 "#;

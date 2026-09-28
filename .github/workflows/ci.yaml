@@ -133,6 +133,55 @@ jobs:
             -f tag="${GITHUB_SHA}"
           echo "Dispatched a staging deploy of ${GITHUB_SHA}."
 
+  # Every `#[test]` in the workspace was an unexecuted assertion: no job in any
+  # workflow invoked cargo, so the 77 natively-runnable tests (23 in
+  # core/db/auth/events, 54 in the server) had never been run by any pipeline.
+  # The flake already defined a `cargo-test` check, but nothing executed it —
+  # see the note on `build-and-push` about GitHub Actions running no Nix builds,
+  # and note that the buildbot-nix enrolment described in buildbot-nix.toml is
+  # not reporting statuses, so these checks have no other runner.
+  #
+  # The wasm crate's 23 tests are excluded on purpose: `crossword-web` needs
+  # wasm-bindgen-test in a browser, which no runner here provides.
+  #
+  # This runs the two `cargo-test*` checks from the client flake rather than a
+  # bare `cargo test`, so the suite is built by the same pinned, reproducible
+  # toolchain as the image — including the vendored onnxruntime the server needs
+  # to link at all, which a plain `cargo test` on a stock runner cannot do.
+  rust-test:
+    name: Rust Test Suite
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # actions/checkout
+    # pull_request_review is listed because `auto-merge` fires on it and waits on
+    # this job (see its `needs`). Without the event here, a review would skip
+    # this job and the merge would be gated on a result that never came — a
+    # permanently-pending `needs` entry blocks the dependent job for good.
+    # It costs one cached Nix test build per review; the gate is worth it.
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'pull_request_review' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Cache Nix store
+        uses: cachix/cachix-action@v17
+        with:
+          name: nix-community
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      # `cargo-test` covers the four bare-sandbox crates; `cargo-test-server`
+      # covers the backend, which is the half that needs onnxruntime. Building
+      # the check runs the tests — crane's cargoTest executes them, and a
+      # non-zero test result fails the build.
+      - name: Run the workspace test suite
+        run: |
+          nix build --option allow-import-from-derivation true --no-link --print-out-paths \
+            ./client#checks.x86_64-linux.cargo-test \
+            ./client#checks.x86_64-linux.cargo-test-server
+
   conventional-commits-check:
     name: Conventional Commits Check
     runs-on: ubuntu-latest
@@ -203,7 +252,13 @@ jobs:
       contents: write
       pull-requests: write
       actions: write
-    needs: [ conventional-commits-check, approval-check ]
+    # `rust-test` is in `needs` because a test job nothing waits on is advice,
+    # not a gate. This job is the thing that actually lands commits: it calls
+    # `gh pr merge --auto`, and `main` has no branch protection
+    # (`GET /branches/main/protection` → 404), so there are no required status
+    # checks for auto-merge to wait on and it merges on the first green signal
+    # GitHub offers. Without `rust-test` here, a red suite merges silently.
+    needs: [ conventional-commits-check, approval-check, rust-test ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
       - name: Enable Auto-Merge

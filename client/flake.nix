@@ -363,6 +363,28 @@
                 inherit cargoArtifacts;
               }
             );
+            # `cargo-test` above can only reach the four crates in
+            # `commonArgs.cargoExtraArgs` (core/db/auth/events = 23 tests): the
+            # server is excluded there because it static-links onnxruntime, and
+            # the wasm crate has no native test runner. That left the backend's
+            # 58 tests — the auth gate, the wire format, the generator, the grid
+            # JSON, and the whole `tests/` suite — unexecuted by any pipeline
+            # (DEF-133). This check builds the server with `ortEnv` so `ort-sys`
+            # links the same vendored onnxruntime the release binary does, and
+            # runs its tests.
+            #
+            # Nothing here needs a network, a database, or the generator assets:
+            # sqlx is used with runtime queries only (no `query!` macros, so no
+            # DATABASE_URL at build time), and the embedding tests self-skip via
+            # `test_model()` returning None when `data/crossword` is absent.
+            # The DB-backed `job_create` tests stay `#[ignore]`d and are not part
+            # of this count.
+            cargo-test-server = craneLib.cargoTest (
+              serverArgs
+              // {
+                cargoArtifacts = serverCargoArtifacts;
+              }
+            );
             # Web crate: clippy runs but warnings don't fail the build yet — the
             # UI was scaffolded fast and still carries ~90 style lints (manual
             # split_once, needless clones, …). ponytail: gate on real errors now,

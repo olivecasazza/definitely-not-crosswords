@@ -2,6 +2,7 @@
 //! (`routers::generator::try_handle`) and `Ctx` without going through the
 //! Axum router. The binary keeps its `main.rs`; both share these modules.
 
+pub mod assets;
 pub mod auth_routes;
 pub mod checkout;
 pub mod ctx;

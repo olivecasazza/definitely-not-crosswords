@@ -29,6 +29,10 @@
 #      honest equivalent is upstream of the send: a consent gate that refuses to
 #      email anyone who has not consented, plus `--withdraw` to take a row out
 #      of the wave. A real unsubscribe is a mailer change, not a script change.
+#      A withdrawal is recorded in a ledger OUTSIDE the repo and honoured by
+#      that same gate. It is never written back into the roster (DEF-228): the
+#      roster is a tracked file when it is the example, so a `git commit -a`
+#      after a withdrawal would stage a consent change nobody reviewed.
 #   3. The roster accepts the shape the DEF-120 card actually collects. A bare
 #      `Name <email>` list plus one consent answer is enough — consent is
 #      recorded once for the wave rather than hand-filled twelve times, and a
@@ -41,11 +45,21 @@
 # Usage:
 #   scripts/alpha-invite-send.sh [--send] [--roster PATH] [--base-url URL]
 #                                [--log PATH] [--verify] [--withdraw EMAIL]
+#                                [--withdrawals PATH]
 #
 # Env:
 #   ALPHA_ROSTER, ALPHA_BASE_URL, ALPHA_LOG   defaults for the flags above.
+#   ALPHA_WITHDRAWALS                         the withdrawal ledger. Defaults
+#                                            to ~/.local/state/alpha-invite/
+#                                            withdrawals.jsonl. Must be outside
+#                                            the git worktree; a send honours
+#                                            every address in it.
 #   ALPHA_ADMIN_EMAIL / ALPHA_ADMIN_PASSWORD  admin session for --verify
 #                                            (or ALPHA_SESSION_COOKIE).
+#
+# `--withdraw EMAIL` records the withdrawal and exits 0 without sending. The
+# roster is not written, ever — the address lands in the ledger instead, and the
+# consent gate below refuses it on the next run whatever the roster says.
 #
 # Exit codes: 0 ok, 1 preflight/validation failure, 2 send completed with
 # failures (see the log), 3 usage.
@@ -57,21 +71,36 @@ ROSTER="${ALPHA_ROSTER:-data/crossword/alpha-roster.json}"
 BASE_URL="${ALPHA_BASE_URL:-https://crosswords-staging.casazza.io}"
 LOG="${ALPHA_LOG:-}"
 VERIFY=0
+# The withdrawal ledger is append-only and lives outside the repo. It is a
+# separate file from --log on purpose: the send path truncates --log at the
+# start of a wave, and a consent record must not be the thing a wave overwrites.
+if [[ -n "${ALPHA_WITHDRAWALS:-}" ]]; then
+  WITHDRAWALS="$ALPHA_WITHDRAWALS"
+elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
+  WITHDRAWALS="$XDG_STATE_HOME/alpha-invite/withdrawals.jsonl"
+elif [[ -n "${HOME:-}" ]]; then
+  WITHDRAWALS="$HOME/.local/state/alpha-invite/withdrawals.jsonl"
+else
+  WITHDRAWALS=""
+fi
 
+# Print the header comment. Keyed to the `set -euo pipefail` line rather than a
+# line number, so editing the header above cannot silently truncate --help.
 usage() {
-  sed -n '2,51p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --send)      SEND=1 ;;
-    --verify)    VERIFY=1 ;;
-    --roster)    ROSTER="${2:?--roster needs a path}"; shift ;;
-    --base-url)  BASE_URL="${2:?--base-url needs a URL}"; shift ;;
-    --log)       LOG="${2:?--log needs a path}"; shift ;;
-    --withdraw)  WITHDRAW="${2:?--withdraw needs an email}"; shift ;;
-    -h|--help)   usage; exit 0 ;;
-    *)           echo "unknown argument: $1" >&2; usage >&2; exit 3 ;;
+    --send)        SEND=1 ;;
+    --verify)      VERIFY=1 ;;
+    --roster)      ROSTER="${2:?--roster needs a path}"; shift ;;
+    --base-url)    BASE_URL="${2:?--base-url needs a URL}"; shift ;;
+    --log)         LOG="${2:?--log needs a path}"; shift ;;
+    --withdraw)    WITHDRAW="${2:?--withdraw needs an email}"; shift ;;
+    --withdrawals) WITHDRAWALS="${2:?--withdrawals needs a path}"; shift ;;
+    -h|--help)     usage; exit 0 ;;
+    *)             echo "unknown argument: $1" >&2; usage >&2; exit 3 ;;
   esac
   shift
 done
@@ -86,6 +115,58 @@ command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 1; }
 logline() {
   [[ -n "$LOG" ]] || return 0
   printf '%s\n' "$1" >> "$LOG"
+}
+
+# The git worktree that would contain a path, or empty if it is outside every
+# repo. Resolving the parent rather than the file itself lets a ledger be created
+# on demand. A consent record must not be written where `git commit -a` could
+# sweep it in, so this is the check that keeps the tree clean.
+worktree_root() {
+  local dir="$1"
+  while [[ ! -d "$dir" ]]; do
+    dir="$(dirname -- "$dir")"
+    [[ "$dir" == "/" ]] && return 0
+  done
+  git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true
+}
+
+# A YYYY-MM-DD that names a real calendar day, as epoch seconds, or empty.
+# jq's strptime normalises (2026-02-31 becomes 2026-03-02), so the round trip is
+# what separates a date from a string that is merely shaped like one. jq rather
+# than `date -d` on purpose: the dependency set is curl, jq and openssl, and
+# `date -d` is GNU-only. An unparseable date yields nothing, which the caller
+# reads as "refuse" — fail closed.
+date_epoch() {
+  jq -rn --arg d "$1" '
+    ($d | try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) as $back
+    | if $back == $d then ($d | strptime("%Y-%m-%d") | mktime) else empty end'
+}
+
+# The withdrawal ledger: one JSON object per line, outside the repo. The gate
+# honours it, so a withdrawal takes a person out of the wave without the roster
+# being touched. An unreadable ledger is a fail-closed abort, not a silent
+# "nothing is withdrawn" — the send would otherwise mail someone who opted out.
+# WITHDRAWN (addresses) and WITHDRAWN_DATES (address -> withdrawal date) are
+# deliberately global: the gate reads them per row.
+load_withdrawals() {
+  WITHDRAWN='[]'
+  WITHDRAWN_DATES='{}'
+  [[ -f "$WITHDRAWALS" ]] || return 0
+  local parsed
+  if ! parsed="$(jq -s '
+      [ .[] | select((.event // "withdraw") == "withdraw") ]
+      | { emails: [ .[] | (.email // empty) | select(length > 0) ],
+          dates:  (reduce .[] as $r ({}; .[$r.email] = ($r.consent_withdrawn_at // ""))) }' \
+      "$WITHDRAWALS" 2>&1)"; then
+    echo "ABORT: the withdrawal ledger at $WITHDRAWALS is not readable JSON." >&2
+    printf '  %s\n' "${parsed%%$'\n'*}" >&2
+    echo "  A withdrawal that cannot be read is a withdrawal that is not" >&2
+    echo "  honoured. Fix the ledger, or point --withdrawals at the right one," >&2
+    echo "  and re-run." >&2
+    exit 1
+  fi
+  WITHDRAWN="$(jq -r '.emails' <<< "$parsed")"
+  WITHDRAWN_DATES="$(jq -r '.dates' <<< "$parsed")"
 }
 
 # ── Preconditions ────────────────────────────────────────────────────────────
@@ -159,6 +240,10 @@ if [[ -n "$WAVE_CONSENT_RAW" ]]; then
   WAVE_SOURCE="$(cut -d'|' -f3 <<< "$WAVE_CONSENT_RAW")"
 fi
 
+# Loaded before the header so the ledger in force is printed on every run, and
+# before the gate so a withdrawn address cannot be emailed.
+load_withdrawals
+
 echo "alpha invite send  $(date -u '+%Y-%m-%dT%H:%MZ')"
 echo "host:              $BASE_URL"
 echo "roster:            $ROSTER"
@@ -167,12 +252,137 @@ if [[ -n "$WAVE_ANSWER" ]]; then
 else
   echo "wave consent:      none recorded"
 fi
+if [[ -n "$WITHDRAW" ]]; then
+  echo "withdrawals:       ${WITHDRAWALS:-(none configured)} — this run records $WITHDRAW"
+elif [[ "$(jq 'length' <<< "$WITHDRAWN")" -gt 0 ]]; then
+  echo "withdrawals:       $WITHDRAWALS ($(jq -r 'unique | join(", ")' <<< "$WITHDRAWN"))"
+else
+  echo "withdrawals:       none recorded${WITHDRAWALS:+ ($WITHDRAWALS)}"
+fi
 if [[ $SEND == 1 ]]; then
   echo "mode:              SEND"
 else
   echo "mode:              DRY-RUN (nothing is sent)"
 fi
 echo
+
+# ── Withdraw: take a person out of the wave ──────────────────────────────────
+# Placed before the network preflight on purpose: a withdrawal is a local ledger
+# write, and the ability to withdraw must not depend on the target host being up
+# or on mailDelivery being smtp. Staging being down is exactly when someone asks
+# to be taken off the list.
+#
+# DEF-228. Two things this block used to do are gone, and both are deliberate:
+#
+#   * It rewrote the roster in place. That file is tracked when it is the
+#     example and gitignored when it is real, and `mv` over either dirties the
+#     working tree — so the next `git commit -a` silently stages a consent
+#     change nobody reviewed. The roster is now never written at all. The
+#     withdrawal lands in the ledger and the gate below honours it, which is the
+#     same effect with nothing left in the tree to commit.
+#
+#   * It stamped `consent_withdrawn_at` from the system clock. The wave is the
+#     Oct 12 wave, so consent dates legitimately sit in the future relative to
+#     "now", and a naive `date +%F` wrote a withdrawal three days before the
+#     consent it withdrew. A ledger that can say "withdrawn before it was
+#     granted" is not a consent ledger, so the preflight refuses instead of
+#     emitting one.
+if [[ -n "$WITHDRAW" ]]; then
+  command -v git >/dev/null || { echo "git is required for --withdraw" >&2; exit 1; }
+
+  idx="$(jq -r --arg e "$WITHDRAW" 'to_entries[] | select((.value.email // "") == $e) | .key' "$TMPD/roster.json" | head -1)"
+  if [[ -z "$idx" ]]; then
+    echo "withdraw: no row for $WITHDRAW" >&2
+    exit 1
+  fi
+
+  # The consent this withdrawal retracts: the row's own date, or the wave's
+  # when the row inherits a wave `all` answer. A row with no recorded consent
+  # has nothing to date a withdrawal against; it is recorded as a
+  # do-not-contact instead, which is the safer reading of "take me off".
+  recorded="$(jq -r --argjson i "$idx" --arg wa "$WAVE_ANSWER" --arg wr "$WAVE_RECORDED" '
+      .[$i] as $r
+      | (if ($r.consent_recorded_at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+         then $r.consent_recorded_at
+         elif $wa == "all" and (($r | has("consent")) | not)
+              and ($wr | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
+         then $wr
+         else "" end)' "$TMPD/roster.json")"
+
+  today="$(date -u +%F)"
+  if [[ -n "$recorded" ]]; then
+    recorded_epoch="$(date_epoch "$recorded")"
+    if [[ -z "$recorded_epoch" ]]; then
+      echo "ABORT: row $idx ($WITHDRAW) has consent_recorded_at '$recorded'," >&2
+      echo "  which is not a real calendar date. A withdrawal cannot be ordered" >&2
+      echo "  against it. Correct the date to the day the person actually agreed" >&2
+      echo "  (YYYY-MM-DD) and re-run." >&2
+      exit 1
+    fi
+    if [[ "$(date_epoch "$today")" -lt "$recorded_epoch" ]]; then
+      echo "ABORT: withdrawing $WITHDRAW would record consent_withdrawn_at" >&2
+      echo "  $today, before the consent it withdraws was recorded on" >&2
+      echo "  $recorded (row $idx, field consent_recorded_at)." >&2
+      echo "  A withdrawal that precedes the consent is a record this script" >&2
+      echo "  will not emit. Either the roster date is wrong — correct it, with" >&2
+      echo "  the source, to the day the person actually agreed — or the" >&2
+      echo "  withdrawal is premature: re-run it on or after $recorded." >&2
+      exit 1
+    fi
+  else
+    echo "  note: row $idx ($WITHDRAW) has no consent_recorded_at, so there is" >&2
+    echo "  nothing to date the withdrawal against. Recorded as a do-not-contact." >&2
+  fi
+
+  if [[ -z "$WITHDRAWALS" ]]; then
+    echo "ABORT: --withdraw has nowhere to record this: --withdrawals PATH or" >&2
+    echo "  ALPHA_WITHDRAWALS. The roster is never modified, so without a ledger" >&2
+    echo "  the withdrawal would be a no-op and the next send would still mail" >&2
+    echo "  $WITHDRAW. Put it outside the repo, e.g." >&2
+    echo "  ~/.local/state/alpha-invite/withdrawals.jsonl" >&2
+    exit 1
+  fi
+  if [[ -e "$WITHDRAWALS" && ! -f "$WITHDRAWALS" ]]; then
+    echo "ABORT: $WITHDRAWALS exists and is not a regular file." >&2
+    exit 1
+  fi
+  if [[ -n "$(worktree_root "$WITHDRAWALS")" ]]; then
+    echo "ABORT: the withdrawal ledger $WITHDRAWALS is inside a git worktree." >&2
+    echo "  A consent record must not be written where 'git commit -a' could" >&2
+    echo "  sweep it in. Point --withdrawals at a path outside the repo." >&2
+    exit 1
+  fi
+  ledger_dir="$(dirname -- "$WITHDRAWALS")"
+  if [[ ! -d "$ledger_dir" ]] && ! mkdir -p -- "$ledger_dir"; then
+    echo "ABORT: cannot create $ledger_dir for the withdrawal ledger." >&2
+    exit 1
+  fi
+  if [[ -f "$WITHDRAWALS" && ! -w "$WITHDRAWALS" ]]; then
+    echo "ABORT: the withdrawal ledger $WITHDRAWALS is not writable." >&2
+    exit 1
+  fi
+
+  if jq -e --arg e "$WITHDRAW" 'index($e) != null' <<< "$WITHDRAWN" >/dev/null 2>&1; then
+    prior="$(jq -r --arg e "$WITHDRAW" '.[$e] // "an unknown date"' <<< "$WITHDRAWN_DATES")"
+    echo "withdraw: $WITHDRAW is already withdrawn ($prior) in $WITHDRAWALS."
+    echo "  Nothing appended. To invite them again, delete that line from the"
+    echo "  ledger: a re-consent is a new, dated act, not a re-run of this."
+    exit 0
+  fi
+
+  jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+         --arg e "$WITHDRAW" --argjson row "$idx" --arg roster "$ROSTER" \
+         --arg rec "$recorded" --arg wd "$today" \
+         --arg by "${SUDO_USER:-${USER:-unknown}}@$(hostname -s 2>/dev/null || echo unknown)" \
+         '{ts:$ts,event:"withdraw",email:$e,row:$row,roster:$roster,
+           consent_recorded_at:(if $rec == "" then null else $rec end),
+           consent_withdrawn_at:$wd,by:$by}' >> "$WITHDRAWALS"
+
+  echo "withdrew $WITHDRAW from the wave (row $idx)."
+  echo "  recorded in $WITHDRAWALS as consent_withdrawn_at=$today"
+  echo "  the roster was not modified. Re-run without --withdraw to see the gate."
+  exit 0
+fi
 
 # ── Pre-flight: would mail even leave this host? ─────────────────────────────
 # DEF-201: with SMTP_USER/SMTP_PASSWORD unset the mailer logs the body and
@@ -204,29 +414,43 @@ echo "  rows: $ROWS"
 # A row qualifies on its own, or inherits a wave-level `all` answer. A wave
 # `partial` answer grants nothing here: which people agreed is per-person
 # information, and a wave-level "some" would let the script guess.
+#
+# The withdrawal ledger overrides both. It is a recorded "do not send", so it
+# wins whatever the roster says — including `consent: true`, and including a
+# re-run after someone edits the roster by hand (DEF-228). Nothing here can
+# un-withdraw an address; only deleting its line from the ledger can, and that
+# is a human decision made in a consent record rather than by this script.
 consented() {
-  jq -r --argjson i "$1" --arg wa "$WAVE_ANSWER" '
+  jq -r --argjson i "$1" --arg wa "$WAVE_ANSWER" --argjson w "$WITHDRAWN" '
     .[$i] as $r
     | (if ($r.consent // false) == true
           and (($r.consent_recorded_at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
           and (($r.consent_source // "") | length) > 0
        then "yes" else "no" end) as $own
-    | if $own == "yes" then "yes"
+    | if ($w | index($r.email // "")) != null then "no"
+      elif $own == "yes" then "yes"
       elif $wa == "all" and (($r | has("consent")) | not) then "yes"
       else "no" end' "$TMPD/roster.json"
 }
 
 SKIPPED_COUNT=0
 SKIPPED_LIST=""
+WITHDRAWN_COUNT=0
+WITHDRAWN_LIST=""
 for i in $(seq 0 $((ROWS - 1))); do
   if [[ "$(consented "$i")" != "yes" ]]; then
     who="$(jq -r --argjson i "$i" '(.[$i].email // ("row " + ($i | tostring)))' "$TMPD/roster.json")"
-    SKIPPED_LIST+="    - $who"$'\n'
-    SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+    if jq -e --arg e "$who" 'index($e) != null' <<< "$WITHDRAWN" >/dev/null 2>&1; then
+      WITHDRAWN_LIST+="    - $who (withdrawn $(jq -r --arg e "$who" '.[$e] // "date not recorded"' <<< "$WITHDRAWN_DATES"))"$'\n'
+      WITHDRAWN_COUNT=$((WITHDRAWN_COUNT + 1))
+    else
+      SKIPPED_LIST+="    - $who"$'\n'
+      SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+    fi
   fi
 done
 
-# --withdraw mutates the roster, so the gate report above would describe the
+# --withdraw records the withdrawal, so the gate report below would describe the
 # wave as it was, not as it is. Say nothing there and let the re-run speak.
 if [[ $SKIPPED_COUNT -gt 0 && -z "$WITHDRAW" ]]; then
   echo
@@ -235,30 +459,14 @@ if [[ $SKIPPED_COUNT -gt 0 && -z "$WITHDRAW" ]]; then
   echo "  Each needs consent: true, consent_recorded_at (YYYY-MM-DD), and"
   echo "  consent_source. See data/crossword/alpha-roster.example.json."
 fi
-echo
-
-# ── Withdraw: take a person out of the wave ──────────────────────────────────
-if [[ -n "$WITHDRAW" ]]; then
-  idx="$(jq -r --arg e "$WITHDRAW" 'to_entries[] | select((.value.email // "") == $e) | .key' "$TMPD/roster.json" | head -1)"
-  if [[ -z "$idx" ]]; then
-    echo "withdraw: no row for $WITHDRAW" >&2
-    exit 1
-  fi
-  tmp="$(mktemp)"
-  if [[ "$ROSTER_KIND" == object ]]; then
-    jq --argjson i "$idx" \
-       '.roster[$i].consent = false | .roster[$i].consent_withdrawn_at = (now | strftime("%Y-%m-%d"))' \
-       "$ROSTER" > "$tmp"
-  else
-    jq --argjson i "$idx" \
-       '.[$i].consent = false | .[$i].consent_withdrawn_at = (now | strftime("%Y-%m-%d"))' \
-       "$ROSTER" > "$tmp"
-  fi
-  mv "$tmp" "$ROSTER"
-  echo "withdrew $WITHDRAW from the wave (row $idx, consent=false)."
-  echo "Re-run without --withdraw to see the updated gate."
-  exit 0
+if [[ $WITHDRAWN_COUNT -gt 0 && -z "$WITHDRAW" ]]; then
+  echo
+  echo "  WITHDRAWAL LEDGER: $WITHDRAWN_COUNT row(s) will NOT be emailed:"
+  printf '%s' "$WITHDRAWN_LIST"
+  echo "  Recorded in the ledger, not in the roster. consent:true here does not"
+  echo "  undo a withdrawal; only deleting that line from $WITHDRAWALS does."
 fi
+echo
 
 # ── The email the product will actually send ─────────────────────────────────
 # Reconstructed verbatim from mailer.rs:168-181. The token is minted server-side
@@ -487,6 +695,7 @@ done
 echo "── summary"
 echo "  rows:               $ROWS"
 echo "  skipped (consent):  $SKIPPED_COUNT"
+echo "  withdrawn:          $WITHDRAWN_COUNT"
 if [[ $SEND == 1 ]]; then
   echo "  sent:               $ok"
   echo "  failed:             $failed"

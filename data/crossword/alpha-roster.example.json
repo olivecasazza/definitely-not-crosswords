@@ -16,7 +16,13 @@
     "and reported in the dry run. password is machine-generated at send time and",
     "the recipient replaces it via the login page's forgot-password link. Supply",
     "either if you want to pin it, but do not put real credentials in a file you",
-    "might commit."
+    "might commit.",
+    "",
+    "`--withdraw EMAIL` never edits this file. It appends a dated record to the",
+    "withdrawal ledger (--withdrawals PATH, default",
+    "~/.local/state/alpha-invite/withdrawals.jsonl — outside the repo, because a",
+    "consent change staged by a later `git commit -a` is a consent change nobody",
+    "reviewed) and the send gate refuses that address whatever this file says."
   ],
   "consent": {
     "answer": "all",

@@ -44,6 +44,17 @@ environment: "production"
 # README.md "Plans & pricing" 55-62) before this goes true. An unreviewed tail
 # here is not a copy nit, it is the product's first impression shipping by
 # accident. If the copy changes, change it in the same commit as this flag.
+#
+# Copy sign-off (DEF-196, request recorded on DEF-194): the description as
+# committed in d7c74c9 and DEF-202 is APPROVED, and this gate is satisfied on
+# the copy side. Marketing checked it against its source rather than the
+# rendered shell: it is the home.rs:104 tagline plus the home.rs:150 foot line
+# ("Free plan: $0, unlimited solving." against README.md "Plans & pricing"
+# 55-62), and it claims nothing untrue. An earlier objection to this copy was
+# raised as unapproved and then WITHDRAWN — do not re-raise it without a new
+# reason; the reasoning is on DEF-196 and the sign-off on DEF-194. What still
+# gates this flag is the CEO naming the announcement date (DEF-144 / DEF-149),
+# not a copy review.
 proPriceAnnounced: false
 
 image:

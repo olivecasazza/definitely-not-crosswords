@@ -42,6 +42,15 @@
 //! `X-Robots-Tag` still lands on the 404s as well as on the shell — a closed
 //! surface must say so on the document that says the page is missing, not just
 //! on the one a crawler lands on.
+//!
+//! ## The origin is filled in here, not in the build
+//!
+//! The shell is one artifact served by two hosts, so the absolute URLs in its
+//! `<head>` — `rel=canonical`, `og:url`, `og:image`, `twitter:image` — carry
+//! [`crate::origin::ORIGIN_PLACEHOLDER`] and are resolved against this deploy's
+//! own origin when the document is read. See [`crate::origin`] for why a
+//! canonical is a per-URL assertion and not a consolidation hint, and why that
+//! makes the build the wrong place to decide it.
 
 use axum::{
     extract::Request,
@@ -53,6 +62,7 @@ use std::path::Path;
 use tower::ServiceBuilder;
 
 use crate::assets::CacheControlOnOkLayer;
+use crate::origin;
 
 /// The 404 body. Plain text on purpose: the HTML shell *is* the claim that the
 /// requested page exists, so it cannot also be the evidence that it doesn't.
@@ -80,7 +90,13 @@ const FALLBACK_CACHE_CONTROL: &str = "no-store";
 /// This is the whole `WEB_DIST` block of `main.rs`, factored out so the
 /// request-routing decisions in it are testable without a database or a
 /// running server — the routing is the part of it that broke, and the part
-/// that has to stay working.
+/// that has to keep working.
+///
+/// `origin` is the absolute origin this deploy is served on (see
+/// [`crate::origin::for_env`]). It is substituted into the shell's absolute
+/// URLs here, at read time, because the image is the same bytes on staging and
+/// production and the build cannot know which of the two it is producing a
+/// canonical for.
 ///
 /// # Panics
 ///
@@ -88,7 +104,7 @@ const FALLBACK_CACHE_CONTROL: &str = "no-store";
 /// cannot boot the app has nothing to serve, and failing at startup is the
 /// honest report — the alternative is a pod that answers every request with an
 /// empty body.
-pub fn mount<S>(app: Router<S>, dist: &str) -> Router<S>
+pub fn mount<S>(app: Router<S>, dist: &str, origin: &str) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
@@ -105,7 +121,20 @@ where
 
     let index_html = std::fs::read_to_string(format!("{dist}/index.html"))
         .expect("WEB_DIST is set but index.html is missing");
-    tracing::info!("serving frontend bundle from {dist}");
+    // Once, here: every route is answered with the same document, so resolving
+    // the placeholder per request would be the same work every request.
+    //
+    // A dist with no placeholder in it is a dist built before this existed, and
+    // it keeps its own hardcoded origin — a rolling update pairs new pods with
+    // an old image, and that is a working document, not a broken one. Worth a
+    // log line because it is the one state where the canonical can be wrong
+    // again, and nothing else says so.
+    if index_html.contains(origin::ORIGIN_PLACEHOLDER) {
+        tracing::info!("serving frontend bundle from {dist}, absolute URLs resolved to {origin}");
+    } else {
+        tracing::info!("serving frontend bundle from {dist}");
+    }
+    let index_html = origin::substitute(&index_html, origin);
 
     app.nest_service("/_assets", assets)
         .fallback(move |req: Request| {

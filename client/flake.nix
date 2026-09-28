@@ -318,21 +318,38 @@
                     but Nix still parses the string. The copy below contains none of them —
                     keep it that way.
 
-                    canonical/og:url name production explicitly instead of interpolating an
-                    origin: one artifact is served by staging and production alike, and a
-                    canonical pointing at the preferred copy is correct from both. Staging
-                    stays noindex, nofollow via X-Robots-Tag, so it leaks nothing.
-                    Deliberately no <meta name="robots">: a client-side index would fight
-                    the server header that closes staging.
+                    rel=canonical and og:url carry the __ORIGIN__ placeholder, substituted by
+                    the server when it reads index.html at startup (spa.rs + origin.rs) rather
+                    than named here. There is no build-time origin to name: one image is built
+                    and deployed to staging AND production (ci.yaml pushes :latest and :<sha>
+                    to a single GAR repository, and both releases pull the same tag), so a
+                    literal written here is one host's answer baked into an artifact the other
+                    host also serves.
+
+                    And rel=canonical is a per-URL assertion about where THIS page is
+                    canonically located, not a hint that consolidates two hosts onto one.
+                    Naming production is correct on production and simply false on staging,
+                    where it asserts that staging is a duplicate of production — a
+                    consolidation signal pointing the wrong way for any future decision to
+                    surface staging, and inert on production. The version of this comment
+                    that argued the opposite ("a canonical pointing at the preferred copy is
+                    correct from both") was wrong; one artifact is two answers, and each host
+                    has to give its own.
+
+                    Staging stays noindex, nofollow via X-Robots-Tag either way, so this is a
+                    correctness fix, not a leak fix. Deliberately no <meta name="robots">: a
+                    client-side index would fight the server header that closes staging.
 
                     og:image points at the bundle's OWN hashed directory, and it must be an
-                    absolute URL: a scraper resolves og:image against the page it found, but
-                    the tag is a build output with no origin interpolation, so the production
-                    origin is named exactly as canonical and og:url are — one artifact, two
-                    deploys, no per-environment string to keep in step. The path therefore
-                    repeats the __BUNDLE_HASH__ placeholder the glue line below uses, and the
-                    same single sed substitutes both, so the card can never be advertised at
-                    a hash the bundle is not actually served from.
+                    absolute URL: a scraper resolves og:image against the page it found. It
+                    takes __ORIGIN__ for the same reason canonical does — the origin this
+                    build is served from is the only one whose /_assets actually contains
+                    it. Its path therefore repeats the __BUNDLE_HASH__ placeholder the glue
+                    line below uses, and the same single sed substitutes both, so the card
+                    can never be advertised at a hash the bundle is not actually served
+                    from. Note the two substitutions are different mechanisms and both are
+                    needed: the sed runs in THIS build, the __ORIGIN__ one runs when the
+                    server reads the finished index.html.
 
                     og:image is inside /_assets because that is the only prefix the server
                     serves as files; anything else resolves to the SPA fallback and answers
@@ -349,18 +366,18 @@
                     together in one change; splitting them re-creates the empty box. -->
               <title>definitely-not-crosswords — free real-time co-op crosswords</title>
               <meta name="description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free plan: $0, unlimited solving." />
-               <link rel="canonical" href="https://crosswords.casazza.io/" />
+              <link rel="canonical" href="__ORIGIN__/" />
               <meta property="og:type" content="website" />
               <meta property="og:site_name" content="definitely-not-crosswords" />
               <meta property="og:title" content="definitely-not-crosswords — free real-time co-op crosswords" />
               <meta property="og:description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free plan: $0, unlimited solving." />
-              <meta property="og:url" content="https://crosswords.casazza.io/" />
-              <meta property="og:image" content="https://crosswords.casazza.io/_assets/__BUNDLE_HASH__/og.png" />
+              <meta property="og:url" content="__ORIGIN__/" />
+              <meta property="og:image" content="__ORIGIN__/_assets/__BUNDLE_HASH__/og.png" />
               <meta property="og:image:width" content="1200" />
               <meta property="og:image:height" content="630" />
               <meta property="og:image:alt" content="definitely-not-crosswords — free real-time co-op crosswords. Solve the same grid together, see every move as it happens. Free plan: $0, unlimited solving." />
               <meta name="twitter:card" content="summary_large_image" />
-              <meta name="twitter:image" content="https://crosswords.casazza.io/_assets/__BUNDLE_HASH__/og.png" />
+              <meta name="twitter:image" content="__ORIGIN__/_assets/__BUNDLE_HASH__/og.png" />
               <meta name="twitter:image:alt" content="definitely-not-crosswords — free real-time co-op crosswords. Solve the same grid together, see every move as it happens. Free plan: $0, unlimited solving." />
               <style>
               /* BOOT CSS - pre-wasm only. panel_kit::CSS and styles::DESIGN are injected by the

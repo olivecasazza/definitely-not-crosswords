@@ -23,6 +23,7 @@ use crossword_auth::{AuthContext, AuthService};
 use crossword_db::AppEvent;
 use crossword_events::EventBus;
 use crossword_server::{
+    assets::CacheControlOnOkLayer,
     auth_routes, checkout,
     ctx::Ctx,
     mailer::Mailer,
@@ -156,12 +157,14 @@ async fn main() -> anyhow::Result<()> {
     let app = match std::env::var("WEB_DIST") {
         Ok(dir) if !dir.is_empty() => {
             // Assets live under /_assets/<content-hash>/ (see client/flake.nix),
-            // so bytes at a given URL never change — cache them forever.
+            // so bytes at a given URL never change — cache them forever. BUT
+            // only stamp `immutable` on a real 200: `SetResponseHeaderLayer::
+            // overriding` fires on every response including ServeDir's 404s, and
+            // a `immutable, max-age=31536000` on a transiently-missing asset is
+            // what pinned a year-long cached 404 at the edge (DEF-140/145/152).
+            // Errors get no explicit max-age, so the edge revalidates them.
             let assets = tower::ServiceBuilder::new()
-                .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
-                    axum::http::header::CACHE_CONTROL,
-                    axum::http::HeaderValue::from_static("public, max-age=31536000, immutable"),
-                ))
+                .layer(CacheControlOnOkLayer)
                 .service(tower_http::services::ServeDir::new(format!(
                     "{dir}/_assets"
                 )));

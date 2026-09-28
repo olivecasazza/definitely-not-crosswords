@@ -81,6 +81,31 @@ jobs:
             sleep 20
           done
           echo "::error::staging unreachable for 5m before the nightly run"; exit 1
+      # DEF-152: a green Playwright run proves the browsers reached ONE PoP; it
+      # does NOT prove the content-hashed bundle is 200 everywhere. A poisoned
+      # edge entry (a cached 404) leaves `/` green while the front door is blank
+      # for every visitor whose PoP holds the bad object. So before the specs,
+      # probe the ACTUAL served artifact: parse the content-hash out of the live
+      # index.html and require a 200 on that exact URL from THIS runner. A fresh
+      # content-hash can never be a pre-existing cache HIT, so a poisoned entry
+      # fails here the moment it appears, instead of looking healthy for hours.
+      - name: Verify the served bundle artifact is 200 (not just `/`)
+        run: |
+          index="$(curl -fsS --max-time 30 "$E2E_BASE_URL/")"
+          glue="$(printf '%s' "$index" | grep -o '/_assets/[^"]*crossword-web\.js' | head -1 || true)"
+          if [ -z "$glue" ]; then
+            echo "::error::no /_assets/*/crossword-web.js in $E2E_BASE_URL/ — bundle layout changed; update this check"
+            exit 1
+          fi
+          wasm_url="$E2E_BASE_URL$(dirname "$glue")/crossword-web_bg.wasm"
+          for url in "$E2E_BASE_URL$glue" "$wasm_url"; do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url")"
+            if [ "$code" != "200" ]; then
+              echo "::error::served artifact $url returned HTTP $code (want 200) — possible poisoned edge cache entry"
+              exit 1
+            fi
+            echo "ok  $url -> 200"
+          done
       - name: Install deps
         working-directory: e2e
         run: npm ci

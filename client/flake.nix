@@ -198,6 +198,39 @@
                 --out-dir $stage --out-name crossword-web "$wasm"
               wasm-opt -Oz -o $stage/crossword-web_bg.wasm $stage/crossword-web_bg.wasm || true
 
+              # The link-preview card (DEF-190) joins the bundle BEFORE it is
+              # hashed, and that ordering is load-bearing twice over.
+              #
+              # 1. It has to sit under /_assets to be reachable AT ALL. The
+              #    server mounts exactly one static dir and answers every other
+              #    path with the SPA fallback (backend/server/src/main.rs:157-196),
+              #    which returns index.html as 200 text/html. A card at the dist
+              #    root therefore "succeeds" with 200 and hands the scraper HTML
+              #    instead of an image: measured on staging before this change,
+              #    GET /og-image.png answered 200 text/html, 14923 bytes. That is
+              #    worse than no tag, which is the failure this issue exists to
+              #    prevent — so the card is placed where the server actually
+              #    serves files from, not where it would be tidier.
+              #
+              # 2. Being inside the hash gives it the bundle's immutability
+              #    guarantee for free: bytes at a hashed URL never change, so the
+              #    edge's max-age=31536000 immutable stamp (assets.rs:50-61) can
+              #    never pin a stale card, and editing the card changes the hash
+              #    and busts every URL that points at it. A stable /og-image.png
+              #    at the dist root could not have either property, and adding a
+              #    cache-busting query to it is what DEF-140/145/152 exist to
+              #    stop.
+              #
+              # Copied in as og.png (a fixed name) because the head references one
+              # file; the content addressing is the hashed directory around it.
+              # The source is a committed asset, not generated here: the build must
+              # not depend on Pillow or a font, which are not in this closure.
+              # scripts/make-og-image.py regenerates these bytes,
+              # scripts/check-og-image.sh --regen asserts the committed file is
+              # exactly what it produces, and scripts/verify-og-image-build.sh
+              # runs the steps above and asserts the head advertises this path.
+              cp ${./web/og-image.png} $stage/og.png
+
               # Content-address the WHOLE bundle under one immutable prefix.
               #
               # The previous scheme put a ?v=<hash> query on the glue and the
@@ -292,9 +325,28 @@
                     Deliberately no <meta name="robots">: a client-side index would fight
                     the server header that closes staging.
 
-                    twitter:card is summary because the repo has no image asset to point
-                    at. summary_large_image with no og:image reserves an empty box and
-                    previews worse; add the image and this in one PR. -->
+                    og:image points at the bundle's OWN hashed directory, and it must be an
+                    absolute URL: a scraper resolves og:image against the page it found, but
+                    the tag is a build output with no origin interpolation, so the production
+                    origin is named exactly as canonical and og:url are — one artifact, two
+                    deploys, no per-environment string to keep in step. The path therefore
+                    repeats the __BUNDLE_HASH__ placeholder the glue line below uses, and the
+                    same single sed substitutes both, so the card can never be advertised at
+                    a hash the bundle is not actually served from.
+
+                    og:image is inside /_assets because that is the only prefix the server
+                    serves as files; anything else resolves to the SPA fallback and answers
+                    200 text/html (see the copy step in this buildPhase). og:image:alt is not
+                    decoration: it is the text a scraper shows when it cannot render the
+                    image at all, so it must read as the product rather than describe a file
+                    ("1200x630 PNG" is the failure mode). It repeats the tagline and the Free
+                    plan claim already made above, in that order.
+
+                    twitter:card is summary_large_image now that there is an image to fill
+                    the large box. Before DEF-190 it was summary, and deliberately so: with
+                    no og:image, summary_large_image reserves a large empty area and previews
+                    WORSE than a compact text card. The tag, the image and the card type move
+                    together in one change; splitting them re-creates the empty box. -->
               <title>definitely-not-crosswords — free real-time co-op crosswords</title>
               <meta name="description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free plan: $0, unlimited solving." />
                <link rel="canonical" href="https://crosswords.casazza.io/" />
@@ -303,7 +355,13 @@
               <meta property="og:title" content="definitely-not-crosswords — free real-time co-op crosswords" />
               <meta property="og:description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free plan: $0, unlimited solving." />
               <meta property="og:url" content="https://crosswords.casazza.io/" />
-              <meta name="twitter:card" content="summary" />
+              <meta property="og:image" content="https://crosswords.casazza.io/_assets/__BUNDLE_HASH__/og.png" />
+              <meta property="og:image:width" content="1200" />
+              <meta property="og:image:height" content="630" />
+              <meta property="og:image:alt" content="definitely-not-crosswords — free real-time co-op crosswords. Solve the same grid together, see every move as it happens. Free plan: $0, unlimited solving." />
+              <meta name="twitter:card" content="summary_large_image" />
+              <meta name="twitter:image" content="https://crosswords.casazza.io/_assets/__BUNDLE_HASH__/og.png" />
+              <meta name="twitter:image:alt" content="definitely-not-crosswords — free real-time co-op crosswords. Solve the same grid together, see every move as it happens. Free plan: $0, unlimited solving." />
               <style>
               /* BOOT CSS - pre-wasm only. panel_kit::CSS and styles::DESIGN are injected by the
                  app (client/web/src/main.rs:107-108), so none of the tokens or atoms below exist

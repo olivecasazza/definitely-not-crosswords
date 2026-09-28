@@ -459,7 +459,13 @@ a { color: inherit; text-decoration: none; }
 .toast-host { position: fixed; top: 3.5rem; right: 1rem; z-index: 300;
   display: flex; flex-direction: column; gap: .5rem; max-width: 22rem; pointer-events: none; }
 .toast { pointer-events: auto; cursor: pointer; background: var(--bg-card);
-  border: 1px solid var(--border-app); border-left: 3px solid var(--text-secondary);
+  border: 1px solid var(--border-app);
+  /* Severity is carried by the 1px left edge, not a 3px side-tab. A thick
+     coloured border down one side is the most recognisable tell of a
+     generated UI, and at 1px the accent still reads as severity while the
+     toast stops shouting over the page it is reporting on. The colour is
+     reinforced by the toast's own text so severity never rests on hue alone. */
+  border-left: 1px solid var(--text-secondary);
   padding: .6rem .9rem; font-family: var(--mono, monospace); font-size: var(--fs-xs); line-height: 1.5; }
 .toast-error { border-left-color: var(--color-error); }
 .toast-success { border-left-color: var(--color-success); }

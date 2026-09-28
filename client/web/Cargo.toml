@@ -21,7 +21,9 @@ web-sys = { version = "0.3", features = [
   "Window", "Location", "Document", "Element", "DomTokenList", "console",
   # Event/EventTarget: reset_password.rs registers a native submit listener,
   # because Dioxus 0.6 can't cancel a form's default action (see there).
-  "Event", "EventTarget",
+  # net.rs registers the window online/offline listeners for the subscription
+  # connection state machine, and reads `navigator.onLine` off Navigator.
+  "Event", "EventTarget", "Navigator",
 ] }
 # Pinned to the wasm-bindgen-cli nixpkgs ships (panel-kit's lock pins the same);
 # dx refuses to bindgen against a mismatched CLI.

@@ -11,7 +11,7 @@ use crate::components::admin::{
 use crate::components::generation_progress::{GenerationProgress, Progress};
 use crate::components::identicon::Identicon;
 use crate::components::ui::Drawer;
-use crate::net::{mutation, query, subscribe, trpc_err_msg, Subscription};
+use crate::net::{self, mutation, query, subscribe, trpc_err_msg, Subscription};
 use crate::store::{use_app_state, Severity};
 use crate::Route;
 use crossword_core::fmt::{format_date, format_datetime, rel_time};
@@ -1011,6 +1011,11 @@ pub fn AdminIndex() -> Element {
                                             _ => {}
                                         }
                                     },
+                                    // Supervised like every other subscription
+                                    // (so a dropped stream reconnects), but the
+                                    // admin console has no connection pill to
+                                    // render. DEF-175.
+                                    net::ignore_state,
                                 );
                                 sub_handle.set(Some(handle));
                             },

@@ -241,6 +241,10 @@ fn run_generation(recipe: Recipe, mut gs: GenSignals, state: AppState) {
                 _ => {}
             }
         },
+        // The generation screen shows its own progress bar, not a connection
+        // pill; the socket behind it is supervised all the same, so a dropped
+        // stream reconnects instead of silently stalling the run. DEF-175.
+        net::ignore_state,
     );
     gs.handle.set(Some(handle));
 }

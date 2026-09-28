@@ -33,6 +33,17 @@ environment: "production"
 # this is true. Only an explicit affirmative opens indexing, so a typo here
 # keeps the deploy protected. Default false = closed until the CEO names the
 # announcement date; flip it only in that deploy (DEF-144 / DEF-149).
+#
+# This flag is the only thing standing between the served shell and a crawler, so
+# flipping it publishes whatever copy is in client/flake.nix at that commit —
+# the <meta name="description"> and <meta property="og:description"> are the
+# entire indexed surface, because every other word of positioning and the price
+# is rendered client-side by the WASM bundle. Copy sign-off is therefore part of
+# this gate, not a separate step: the description must be the one reviewed under
+# DEF-202 (tagline + "Free plan: $0, unlimited solving.", traceable to
+# README.md "Plans & pricing" 55-62) before this goes true. An unreviewed tail
+# here is not a copy nit, it is the product's first impression shipping by
+# accident. If the copy changes, change it in the same commit as this flag.
 proPriceAnnounced: false
 
 image:

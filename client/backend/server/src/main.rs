@@ -23,12 +23,11 @@ use crossword_auth::{AuthContext, AuthService};
 use crossword_db::AppEvent;
 use crossword_events::EventBus;
 use crossword_server::{
-    assets::CacheControlOnOkLayer,
     auth_routes, checkout,
     ctx::Ctx,
     mailer::Mailer,
     routers::{self},
-    seo,
+    seo, spa,
     state::{req_auth, AppState},
     webhook,
     wire::envelope,
@@ -153,45 +152,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Optionally serve the built wasm frontend on the same origin, so the
     // relative `/api` paths + page-derived WS origin "just work" with no proxy.
-    // SPA fallback: unknown paths return index.html for client-side routing.
+    // `spa::mount` owns the whole thing — the `/_assets` static service and the
+    // routing fallback behind it — because the routing decisions in it (which
+    // paths boot the shell, which get a real 404) are the part that has to be
+    // testable, and `tests/spa_fallback.rs` tests them through this function
+    // rather than through a stand-in.
     let app = match std::env::var("WEB_DIST") {
-        Ok(dir) if !dir.is_empty() => {
-            // Assets live under /_assets/<content-hash>/ (see client/flake.nix),
-            // so bytes at a given URL never change — cache them forever. BUT
-            // only stamp `immutable` on a real 200: `SetResponseHeaderLayer::
-            // overriding` fires on every response including ServeDir's 404s, and
-            // a `immutable, max-age=31536000` on a transiently-missing asset is
-            // what pinned a year-long cached 404 at the edge (DEF-140/145/152).
-            // Errors get no explicit max-age, so the edge revalidates them.
-            let assets = tower::ServiceBuilder::new()
-                .layer(CacheControlOnOkLayer)
-                .service(tower_http::services::ServeDir::new(format!(
-                    "{dir}/_assets"
-                )));
-
-            // index.html is the POINTER to the current bundle and must never be
-            // reused. `no-cache` is NOT enough here: every file in a nix store
-            // path has mtime 1970-01-01T00:00:01 and ServeDir sends
-            // Last-Modified with no ETag, so every release advertises an
-            // identical validator — a revalidation of changed content answers
-            // 304 and refreshes the stale entry's TTL indefinitely. `no-store`
-            // means it is never stored, so it is never conditionally
-            // revalidated. (A bogus 304 under /_assets is harmless by contrast:
-            // that content genuinely never changes.)
-            let index_html = std::fs::read_to_string(format!("{dir}/index.html"))
-                .expect("WEB_DIST is set but index.html is missing");
-            tracing::info!("serving frontend bundle from {dir}");
-            // SPA fallback: unknown paths return index.html for client-side routing.
-            app.nest_service("/_assets", assets).fallback(move || {
-                let body = index_html.clone();
-                async move {
-                    (
-                        [(axum::http::header::CACHE_CONTROL, "no-store")],
-                        axum::response::Html(body),
-                    )
-                }
-            })
-        }
+        Ok(dir) if !dir.is_empty() => spa::mount(app, &dir),
         _ => app,
     };
 

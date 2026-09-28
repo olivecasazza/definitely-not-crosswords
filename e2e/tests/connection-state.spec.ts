@@ -377,6 +377,10 @@ test("a reconnect reconciles the board without a reload (DEF-175 c3)", async ({ 
 // not rounded toward the fix.
 
 /** A stale chip, with the name's own computed colour and the surface behind it. */
+async function firstChipBorderBottomStyle(page: Page) {
+  return page.locator(".cw-chip").first().evaluate((chip) => getComputedStyle(chip).borderBottomStyle);
+}
+
 async function staleChip(page: Page) {
   return page.evaluate(() => {
     const chip = document.querySelector<HTMLElement>(".cw-chip-stale");
@@ -386,6 +390,7 @@ async function staleChip(page: Page) {
       text: (chip.textContent ?? "").trim(),
       colour: cs.color,
       background: cs.backgroundColor,
+      borderBottomStyle: cs.borderBottomStyle,
       // The bug WAS an opacity. Assert it stays gone rather than trusting the
       // comment next to it.
       opacity: cs.opacity,
@@ -405,6 +410,7 @@ async function staleRingCell(page: Page) {
       background: cs.backgroundColor,
       opacity: cs.opacity,
       ring: cs.boxShadow,
+      insetBands: cs.boxShadow.match(/inset/g)?.length ?? 0,
     };
   });
 }
@@ -459,6 +465,10 @@ test("a stale roster chip keeps its name above AA in both themes (DEF-188 A1)", 
   if (!(await openPlayScreen(page))) {
     test.skip(true, "no playable game available on staging");
   }
+  await inEachTheme(page, async (theme) => {
+    expect(await firstChipBorderBottomStyle(page), `live chip underline in ${theme}`).toBe("solid");
+  });
+
   // Staleness is global, not per-player: one dropped socket marks every chip.
   sockets.block();
   await sockets.drop();
@@ -468,6 +478,7 @@ test("a stale roster chip keeps its name above AA in both themes (DEF-188 A1)", 
     const chip = await staleChip(page);
     expect(chip.text, `no name in the stale chip (${theme})`).not.toBe("");
     expect(chip.opacity, `stale chip is dimmed by opacity (${theme})`).toBe("1");
+    expect(chip.borderBottomStyle, `stale chip underline in ${theme}`).toBe("dashed");
     expect(
       contrast(chip.colour, chip.background),
       `stale chip name in ${theme}: ${ratio(contrast(chip.colour, chip.background))}`,
@@ -497,6 +508,13 @@ test("a stale presence ring never dims the letter it surrounds (DEF-188 A2)", as
   await expect(page.locator('[title*="is working here"]').first()).toBeVisible({
     timeout: 30_000,
   });
+  await inEachTheme(page, async (theme) => {
+    const liveBands = await page
+      .locator('[title*="is working here"]')
+      .first()
+      .evaluate((cell) => getComputedStyle(cell).boxShadow.match(/inset/g)?.length ?? 0);
+    expect(liveBands, `live ring inset bands in ${theme}`).toBe(1);
+  });
 
   // Now go offline, which is what makes a ring last-known rather than live.
   sockets.block();
@@ -507,9 +525,7 @@ test("a stale presence ring never dims the letter it surrounds (DEF-188 A2)", as
     const cell = await staleRingCell(page);
     expect(cell.opacity, `stale ring cell is dimmed by opacity (${theme})`).toBe("1");
     expect(cell.letter, `stale ring cell has no letter (${theme})`).not.toBe("");
-    // The staleness has to be visible SOMEWHERE, or A1's fix just hid it: the
-    // ring colour is now a color-mix, not the presence token at full strength.
-    expect(cell.ring, `stale ring has no inset ring (${theme})`).toContain("inset");
+    expect(cell.insetBands, `stale ring inset bands in ${theme}: ${cell.ring}`).toBe(2);
     expect(
       contrast(cell.colour, cell.background),
       `letter on a stale ring in ${theme}: ${ratio(contrast(cell.colour, cell.background))}`,

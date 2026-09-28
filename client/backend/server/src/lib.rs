@@ -9,6 +9,7 @@ pub mod ctx;
 pub mod mailer;
 pub mod routers;
 pub mod seo;
+pub mod spa;
 pub mod state;
 pub mod webhook;
 pub mod wire;

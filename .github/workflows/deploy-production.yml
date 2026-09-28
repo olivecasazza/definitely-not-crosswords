@@ -111,17 +111,26 @@ jobs:
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BASE_URL/api/healthz" 2>/dev/null) || code=000
             if [ "$code" = "200" ]; then
               cfg=$(curl -s --max-time 15 "$BASE_URL/api/config" 2>/dev/null) || cfg=""
-              echo "healthz=200 from $BASE_URL; /api/config -> ${cfg:-<empty>}"
               # A release/tag deploy must be serving exactly that version. Continuous
               # staging deploys a :<sha> image while /api/config reports the crate
               # version, so only assert the version when the tag is a version tag.
+              #
+              # A version MISMATCH is a retry condition, not a verdict. The
+              # previous pod answers 200 for the entire rolling update, so the
+              # first poll lands on the old build and the loop bailed after
+              # ~1s of its 18m budget — v0.1.51 (run 36470396096) was reported
+              # "the tag bump landed but the wrong build is live" and exited 1
+              # while the deploy then completed correctly. The check has to
+              # wait for the new pod the same way it waits for the new pod to
+              # answer at all; that is the whole point of the 30x20s poll.
               case "$TAG" in
                 *v[0-9]*)
                   got=$(printf '%s' "$cfg" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
                   want="${TAG##*v}"
                   if [ "$got" != "$want" ]; then
-                    echo "::error::$BASE_URL answers but serves version ${got:-unknown}, want $want — the tag bump landed but the wrong build is live."
-                    exit 1
+                    echo "healthz=200 from $BASE_URL but serving ${got:-unknown}, want $want — the previous pod is still up, rolling out — retry $i/30"
+                    sleep 20
+                    continue
                   fi
                   echo "serving expected version $got"
                   ;;
@@ -129,11 +138,12 @@ jobs:
                   echo "tag $TAG is not a version tag; skipping the version assertion"
                   ;;
               esac
+              echo "healthz=200 from $BASE_URL; /api/config -> ${cfg:-<empty>}"
               echo "::notice::Post-deploy readiness OK: $BASE_URL is serving."
               exit 0
             fi
             echo "healthz=$code from $BASE_URL — retry $i/30"
             sleep 20
           done
-          echo "::error::$BASE_URL never returned 200 from /api/healthz (tag $TAG). The tag bump to nixlab succeeded but the service is not serving. Do NOT treat this run as a healthy deploy — triage the cluster/app before closing the incident."
+          echo "::error::$BASE_URL did not come up on $TAG within the poll budget. The tag bump to nixlab succeeded but the service is not serving it. Do NOT treat this run as a healthy deploy — triage the cluster/app before closing the incident."
           exit 1

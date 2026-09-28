@@ -92,9 +92,18 @@ jobs:
       - name: Verify the served bundle artifact is 200 (not just `/`)
         run: |
           index="$(curl -fsS --max-time 30 "$E2E_BASE_URL/")"
-          glue="$(printf '%s' "$index" | grep -o '/_assets/[^"]*crossword-web\.js' | head -1 || true)"
+          # Anchor on the hash's actual shape, not "whatever precedes .js".
+          # The served shell carries the boot card's own CSS comment, which
+          # documents a failure message with the literal text
+          # `https://host/_assets/<64-hex>/crossword-web.js?r=<ms>` — and it sits
+          # in <head>, ABOVE the real <script> tag. The old `/[^"]*/` pattern
+          # matched that comment first, so the probe requested a URL that has
+          # never existed and reported a 404 as a poisoned edge entry. The bundle
+          # hash is `sha256sum | cut -c1-16` (client/flake.nix), i.e. exactly 16
+          # lowercase hex chars, so match that and nothing else.
+          glue="$(printf '%s' "$index" | grep -o '/_assets/[0-9a-f]\{16\}/crossword-web\.js' | head -1 || true)"
           if [ -z "$glue" ]; then
-            echo "::error::no /_assets/*/crossword-web.js in $E2E_BASE_URL/ — bundle layout changed; update this check"
+            echo "::error::no /_assets/<16-hex>/crossword-web.js in $E2E_BASE_URL/ — bundle layout changed; update this check"
             exit 1
           fi
           wasm_url="$E2E_BASE_URL$(dirname "$glue")/crossword-web_bg.wasm"
@@ -164,9 +173,14 @@ jobs:
           set -uo pipefail
           index="$(curl -fsS --max-time 30 "$PROD_URL/")" || {
             echo "::error::production index.html unreachable at $PROD_URL/"; exit 1; }
-          glue="$(printf '%s' "$index" | grep -o '/_assets/[^"]*crossword-web\.js' | head -1 || true)"
+          # Same anchor as the staging probe, for the same reason: the boot
+          # card's CSS comment in <head> names a `/_assets/<64-hex>/…` example
+          # before the real <script> tag, and an unanchored match probes a URL
+          # that never existed. That is how a green production probe became a
+          # permanent red one the moment this build shipped.
+          glue="$(printf '%s' "$index" | grep -o '/_assets/[0-9a-f]\{16\}/crossword-web\.js' | head -1 || true)"
           if [ -z "$glue" ]; then
-            echo "::error::no /_assets/*/crossword-web.js in production index.html — bundle layout changed; update this check"
+            echo "::error::no /_assets/<16-hex>/crossword-web.js in production index.html — bundle layout changed; update this check"
             exit 1
           fi
           # Sample repeatedly instead of once. A poisoned edge entry splits by

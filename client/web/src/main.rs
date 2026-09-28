@@ -87,6 +87,22 @@ fn App() -> Element {
         set_light_class(light);
     });
 
+    // DEF-148 backstop: the shell's boot card (#boot, injected by
+    // client/flake.nix) is removed by a MutationObserver on the first mutation of
+    // #main. That observer is JS in a <script> block, so it can fail to attach for
+    // reasons this app can't see. If it did, the app would boot *underneath* the
+    // card and the user would stare at "Loading" with a working app behind it.
+    // We get here only after the app has rendered, so removing the card now is
+    // always the right answer and is a no-op in the normal case.
+    use_effect(|| {
+        if let Some(boot) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id("boot"))
+        {
+            let _ = boot.remove();
+        }
+    });
+
     rsx! {
         style { {PANEL_CSS} }
         style { {DESIGN} }
@@ -99,14 +115,95 @@ fn App() -> Element {
 /// chrome (panels + dock) — no extra nav strips here.
 #[component]
 fn Shell() -> Element {
+    // DEF-148: bumped by the error panel's "Try again" / "Go home" to make this
+    // scope — and with it the ErrorBoundary below — re-render after the errors are
+    // cleared. Nothing else can: while the boundary's fallback is up its children
+    // (the Outlet) are not mounted, so a navigation never reaches them, and
+    // `ErrorContext::clear_errors` does not mark the boundary's own scope dirty.
+    // The read is the subscription; the value itself is unused.
+    let recover = use_signal(|| 0_u32);
+    let _ = recover.read();
+
     rsx! {
         div { class: "app-shell",
             StagingBanner {}
             AppHeader {}
-            main { class: "app-main", Outlet::<Route> {} }
+            main { class: "app-main",
+                // DEF-148 §7: a render error in any page must not unmount the
+                // whole app. Kept INSIDE Shell so the header, footer and tab bar
+                // stay mounted — losing the nav on one bad page is worse than the
+                // error. `panic!()` is not catchable in WASM (dioxus-core 0.6.3
+                // `CapturedPanic` is never constructed there), so a page has to
+                // bubble an `Err` with `?` to reach this boundary.
+                ErrorBoundary {
+                    handle_error: move |errors: ErrorContext| rsx! {
+                        PageErrorPanel { errors, recover }
+                    },
+                    Outlet::<Route> {}
+                }
+            }
             AppFooter {}
             ToastHost {}
             TabBar {}
+        }
+    }
+}
+
+/// DEF-148 §7 post-mount render-error fallback. Rendered by the `ErrorBoundary`
+/// in `Shell` in place of the routed page; the shell chrome around it is
+/// untouched.
+#[component]
+fn PageErrorPanel(errors: ErrorContext, recover: Signal<u32>) -> Element {
+    // Move focus onto the panel heading so a keyboard or screen-reader user lands
+    // on the recovery controls instead of at the top of the document. `eval` runs
+    // after the render's DOM mutations are flushed, so the node exists by then.
+    use_effect(|| {
+        dioxus::document::eval("document.getElementById('page-error')?.focus()");
+    });
+
+    // `ErrorContext` is a shared handle (Clone + PartialEq, not Copy), so each
+    // handler needs its own copy.
+    let retry_errors = errors.clone();
+
+    rsx! {
+        div {
+            class: "app-card",
+            role: "alert",
+            style: "margin:auto;max-width:34rem;padding:1.5rem;display:flex;flex-direction:column;gap:.75rem",
+            p {
+                class: "muted",
+                style: "margin:0;font-family:var(--mono);font-size:.625rem;letter-spacing:.05em;text-transform:uppercase",
+                "Page error"
+            }
+            h1 {
+                id: "page-error",
+                tabindex: "-1",
+                style: "margin:0;font-size:1.125rem;font-weight:700;color:var(--color-error)",
+                "Something broke on this page"
+            }
+            p { class: "muted", style: "margin:0", "The rest of the app still works." }
+            div { style: "display:flex;gap:.5rem;flex-wrap:wrap",
+                button {
+                    class: "app-btn app-btn-active",
+                    r#type: "button",
+                    onclick: move |_| {
+                        let _ = retry_errors.clear_errors();
+                        let next = *recover.peek() + 1;
+                        recover.set(next);
+                    },
+                    "Try again"
+                }
+                Link {
+                    to: Route::Home {},
+                    class: "app-btn",
+                    onclick: move |_| {
+                        let _ = errors.clear_errors();
+                        let next = *recover.peek() + 1;
+                        recover.set(next);
+                    },
+                    "Go home"
+                }
+            }
         }
     }
 }

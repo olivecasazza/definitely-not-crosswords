@@ -131,13 +131,15 @@ worktree_root() {
 }
 
 # A YYYY-MM-DD that names a real calendar day, as epoch seconds, or empty.
-# `date -d` normalises (2026-02-31 becomes 2026-03-03), so the round trip is what
-# separates a date from a string that is shaped like one.
+# jq's strptime normalises (2026-02-31 becomes 2026-03-02), so the round trip is
+# what separates a date from a string that is merely shaped like one. jq rather
+# than `date -d` on purpose: the dependency set is curl, jq and openssl, and
+# `date -d` is GNU-only. An unparseable date yields nothing, which the caller
+# reads as "refuse" — fail closed.
 date_epoch() {
-  local d="$1" back
-  back="$(date -u -d "$d" +%F 2>/dev/null)" || return 0
-  [[ "$back" == "$d" ]] || return 0
-  date -u -d "$d" +%s 2>/dev/null || true
+  jq -rn --arg d "$1" '
+    ($d | try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) as $back
+    | if $back == $d then ($d | strptime("%Y-%m-%d") | mktime) else empty end'
 }
 
 # The withdrawal ledger: one JSON object per line, outside the repo. The gate

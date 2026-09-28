@@ -123,10 +123,11 @@ pub fn ProUpgrade() -> Element {
             };
 
             if !resp.ok() {
-                checkout_error.set(format!(
-                    "Could not start checkout (HTTP {}).",
-                    resp.status()
-                ));
+                // Never surface the raw status. A 500 here is this deployment
+                // having no Lemon Squeezy credentials, which reads as a bug
+                // rather than the honest "unavailable" state it is.
+                checkout_error
+                    .set("Checkout is unavailable right now — please try again later.".to_string());
                 upgrading.set(false);
                 return;
             }
@@ -151,6 +152,12 @@ pub fn ProUpgrade() -> Element {
     let is_pro = sub.as_ref().map(|s| s.is_pro).unwrap_or(false);
     let quota_used = sub.as_ref().map(|s| s.quota_used).unwrap_or(0);
     let quota_limit = sub.as_ref().and_then(|s| s.quota_limit);
+    // The purchase button needs a non-Pro subscriber AND a deployment that can
+    // actually start a checkout. `proCheckout` mirrors the chart's
+    // `billing.lemonSqueezy.enabled`, which gates the LEMONSQUEEZY_* injection
+    // — so the button can no longer render where POST /api/checkout 500s
+    // (DEF-166).
+    let pro_checkout = state.feature(|f| f.pro_checkout);
 
     let quota_str = {
         let limit = match quota_limit {
@@ -194,8 +201,8 @@ pub fn ProUpgrade() -> Element {
                 }
             }
 
-            // Upsell section — only when not Pro
-            if !is_pro {
+            // Upsell section — only when not Pro and checkout is possible
+            if !is_pro && pro_checkout {
                 // Upgrade button
                 button {
                     r#type: "button",
@@ -214,6 +221,14 @@ pub fn ProUpgrade() -> Element {
                         style: "margin: 0; font-size: .6875rem; font-family: var(--mono); padding-left: .25rem;",
                         "{checkout_error}"
                     }
+                }
+            }
+            // Same plan row, no purchase control: the price stays visible, the
+            // offer does not pretend to be available.
+            if !is_pro && !pro_checkout {
+                p { class: "muted",
+                    style: "margin: 0; font-size: .75rem; font-family: var(--mono);",
+                    "Pro — $10/year: unlimited generation, teams of 10. Opening soon."
                 }
             }
         }

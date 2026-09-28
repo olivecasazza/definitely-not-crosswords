@@ -3,6 +3,8 @@
 
 use dioxus::prelude::*;
 
+use crate::store::use_app_state;
+
 /// The dimmed dots form a plus/cross: column x=14 (rows 2–18) and row y=10
 /// (x=6–22), matching the original `AppHeader.vue` logo's `opacity-30` circles.
 fn dimmed(x: i32, y: i32) -> bool {
@@ -36,11 +38,15 @@ pub fn BrandLogo(size: u32) -> Element {
 }
 
 /// A centered brand panel: logo + title + subtitle + plan pricing. Used by the
-/// auth pages — pricing lives here so it's visible before signing in.
-// ponytail: literals, not fetched. Lemon Squeezy variant 1718877 is the source of
-// truth for the price ($10/yr, verified against the LS API 2026-08-08) — this is a
-// copy, so change both together. Wire to /api/config if the price starts moving.
+/// auth pages — pricing lives here so it's visible before signing in. ponytail:
+/// literals, not fetched. Lemon Squeezy variant 1718877 is the source of
+/// truth for the price ($10/yr, verified against the LS API 2026-08-08) — this is a
+/// copy, so change both together. Wire to /api/config if the price starts moving.
 pub fn brand_panel(subtitle: &str) -> Element {
+    let state = use_app_state();
+    // The Pro line is the one pricing surface a visitor can act on from here,
+    // so it must not read as purchasable where billing is off (DEF-166).
+    let pro_checkout = state.feature(|f| f.pro_checkout);
     rsx! {
         div { style: "display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; gap:1rem; padding:1.5rem;",
             BrandLogo { size: 72 }
@@ -51,7 +57,11 @@ pub fn brand_panel(subtitle: &str) -> Element {
                 p { class: "muted", style: "margin:0;",
                     "Free — solve unlimited puzzles, generate 5 a month, teams of 4." }
                 p { class: "muted", style: "margin:0;",
-                    "Pro — $10/year: unlimited generation, teams of 10. Cancel anytime." }
+                    if pro_checkout {
+                        "Pro — $10/year: unlimited generation, teams of 10. Cancel anytime."
+                    } else {
+                        "Pro — $10/year: unlimited generation, teams of 10. Opening soon."
+                    } }
             }
         }
     }

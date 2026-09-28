@@ -46,3 +46,17 @@ test("api health is green", async ({ request }) => {
   const res = await request.get("/api/healthz");
   expect(res.status()).toBe(200);
 });
+
+test("config exposes the Pro checkout capability flag", async ({ request }) => {
+  const res = await request.get("/api/config");
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  // The wasm bundle gates the Pro purchase button on this flag, so it has to
+  // be a real boolean: a missing flag silently hides the button (safe), a
+  // string or a hardcoded true silently offers a checkout that 500s.
+  // See DEF-166.
+  expect(typeof body.features?.proCheckout).toBe("boolean");
+  // The environment-scoped flags must survive alongside it.
+  expect(typeof body.features?.stagingBanner).toBe("boolean");
+  expect(typeof body.features?.devLoginBypass).toBe("boolean");
+});

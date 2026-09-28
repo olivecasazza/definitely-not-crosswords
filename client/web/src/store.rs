@@ -87,6 +87,12 @@ pub struct Features {
     /// Show the staging beta banner (staging only).
     #[serde(default)]
     pub staging_banner: bool,
+    /// Whether Pro can actually be purchased here. True only where the
+    /// deployment injected the Lemon Squeezy credentials; the server derives
+    /// it from the chart's `billing.lemonSqueezy.enabled` flag (DEF-166).
+    /// Every surface that offers a Pro purchase gates on this.
+    #[serde(default)]
+    pub pro_checkout: bool,
 }
 
 /// Severity of a [`Toast`]; picks the accent border colour.

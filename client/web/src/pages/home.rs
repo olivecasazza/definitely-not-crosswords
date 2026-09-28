@@ -89,6 +89,10 @@ fn GuestHome() -> Element {
     // the old viewport-fraction geometry forever.
     let ws = crate::workspace::use_panel_workspace("home_layout_guest_v2", guest_layout);
     crate::store::sync_panel_mode(ws.snapshot);
+    // Pro pricing is announced here before signup, so it has to say whether
+    // Pro can be bought yet — the $10/yr figure is public on production and
+    // must not read as a live offer where checkout cannot start (DEF-166).
+    let pro_checkout = use_app_state().feature(|f| f.pro_checkout);
 
     let body = move |kind: GuestPanel, _max: bool| -> Element {
         match kind {
@@ -127,7 +131,12 @@ fn GuestHome() -> Element {
                             span { class: "home-feature-icon", "★" }
                             div { class: "home-feature-body",
                                 p { class: "home-feature-title", "Free, or Pro for $10/year" }
-                                p { class: "home-feature-desc", "Solving is always free; generate 5 puzzles a month and build teams of 4. Pro adds unlimited generation and teams of 10. Cancel anytime." }
+                                p { class: "home-feature-desc",
+                                    if pro_checkout {
+                                        "Solving is always free; generate 5 puzzles a month and build teams of 4. Pro adds unlimited generation and teams of 10. Cancel anytime."
+                                    } else {
+                                        "Solving is always free; generate 5 puzzles a month and build teams of 4. Pro adds unlimited generation and teams of 10. Opening soon."
+                                    } }
                             }
                         }
                     }

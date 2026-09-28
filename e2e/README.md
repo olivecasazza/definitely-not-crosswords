@@ -7,6 +7,15 @@ change to the user-facing flow does — which is exactly when the canary should
 page you.
 
 - `tests/smoke.spec.ts` — unauthenticated canary (no creds; safe nightly).
+- `tests/pro-checkout.spec.ts` — billing canary: signs in, asserts the priced
+  `Upgrade to Pro — $10/year` CTA is **visible**, clicks it, and asserts the
+  browser lands on a real `lemonsqueezy.com` checkout. This is the only thing
+  that proves the `LEMONSQUEEZY_*` key is *valid* rather than merely *present*
+  (`/api/config`'s `proCheckout` flag only proves presence). It creates a
+  checkout and **stops there** — never complete it: staging runs the ~90%-off
+  beta code, so a finished order is a real charge that also fires the live
+  `/api/webhooks/lemonsqueezy` handler. Skipped unless `E2E_EMAIL` /
+  `E2E_PASSWORD` are set.
 - `tests/demo.spec.ts` — authenticated premium tour; its 1080p recording is the
   demo video. Skipped unless `E2E_EMAIL` / `E2E_PASSWORD` are set.
 - `tests/helpers.ts` — human-ish interaction helpers (jittered dwells, waypoint
@@ -46,6 +55,8 @@ npm ci
 npx playwright install chromium         # NixOS: browsers need FHS libs — run in
                                         # the mcr.microsoft.com/playwright container
 E2E_BASE_URL=https://crosswords-staging.casazza.io npm run canary
+# billing canary (creates a Lemon Squeezy checkout, never completes it):
+E2E_EMAIL=... E2E_PASSWORD=... npm run pro-checkout
 # authenticated demo (records video under test-results/):
 E2E_EMAIL=... E2E_PASSWORD=... E2E_EMAIL_2=... E2E_PASSWORD_2=... npm run demo
 npm run report
@@ -58,9 +69,11 @@ npm run report
 - **On release** — records + publishes `demo.mp4` to the GitHub release.
 - Runs in the official Playwright container (browsers preinstalled).
 
-To enable the authenticated demo + a fuller canary, add repo secrets
-`E2E_EMAIL` / `E2E_PASSWORD` (a dedicated staging test account) and optionally
-`E2E_EMAIL_2` / `E2E_PASSWORD_2` (a second account for the co-op chapter).
+To enable the authenticated demo, the billing canary, and a fuller canary, add
+repo secrets `E2E_EMAIL` / `E2E_PASSWORD` (a dedicated staging test account) and
+optionally `E2E_EMAIL_2` / `E2E_PASSWORD_2` (a second account for the co-op
+chapter). The billing canary and the demo both need that account to be a
+**Free** subscriber — a Pro account has no upgrade control to click.
 
 ## Follow-up: AI self-heal (lower maintenance still)
 

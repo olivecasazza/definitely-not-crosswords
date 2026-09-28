@@ -13,17 +13,27 @@
 #   account and email that person a 24h verification link, which is the closest
 #   thing to an invite that exists. This script drives that path.
 #
-# Two consequences this script refuses to paper over:
+# Three consequences this script refuses to paper over:
 #
 #   1. `user.signup` requires a username AND a password for the recipient
-#      (routers/user.rs:94-102). Someone else choosing a tester's password is
-#      not an invite, so the roster carries one per row and the script never
-#      invents one. A row without a password is a hard error, not a default.
+#      (routers/user.rs:94-102). Neither is invented per person. A username is
+#      derived from the address the person gave and reported, never chosen. A
+#      password is machine-generated at send time, unique per row, never printed
+#      and never written to the roster — the recipient replaces it themselves
+#      through the product's own `user.requestPasswordReset` flow, which is the
+#      only password path that does not require anyone to pick a stranger's
+#      credential. A row that supplies its own password is validated, not
+#      trusted.
 #   2. The verification email has no List-Unsubscribe header and no opt-out
 #      (mailer.rs:168-181). There is no unsubscribe path in the product. The
 #      honest equivalent is upstream of the send: a consent gate that refuses to
 #      email anyone who has not consented, plus `--withdraw` to take a row out
 #      of the wave. A real unsubscribe is a mailer change, not a script change.
+#   3. The roster accepts the shape the DEF-120 card actually collects. A bare
+#      `Name <email>` list plus one consent answer is enough — consent is
+#      recorded once for the wave rather than hand-filled twelve times, and a
+#      `consent: "partial"` answer still requires each consented row to be
+#      marked. Answering the card must not produce a wave of zero.
 #
 # Safe by default: with no flags this renders every request and every email and
 # sends nothing. Real sending needs `--send`.
@@ -49,7 +59,7 @@ LOG="${ALPHA_LOG:-}"
 VERIFY=0
 
 usage() {
-  sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,51p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -67,8 +77,9 @@ while [[ $# -gt 0 ]]; do
 done
 BASE_URL="${BASE_URL%/}"
 
-command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
-command -v jq   >/dev/null || { echo "jq is required"   >&2; exit 1; }
+command -v curl    >/dev/null || { echo "curl is required"    >&2; exit 1; }
+command -v jq      >/dev/null || { echo "jq is required"      >&2; exit 1; }
+command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 1; }
 
 # One append-only line per attempt. Failures have to be greppable after the fact
 # — the send is the step where a partial failure is invisible from the exit code.
@@ -81,18 +92,55 @@ logline() {
 if [[ ! -f "$ROSTER" ]]; then
   echo "ABORT: no roster at $ROSTER." >&2
   echo "Copy data/crossword/alpha-roster.example.json and fill it in. The real" >&2
-  echo "roster is gitignored: it holds addresses and passwords and must never" >&2
-  echo "enter git." >&2
+  echo "roster is gitignored: it holds addresses and must never enter git." >&2
   exit 1
 fi
-if ! jq -e 'type == "array"' "$ROSTER" >/dev/null 2>&1; then
-  echo "ABORT: $ROSTER is not a JSON array." >&2
+
+# The roster is either a bare array (one object per person) or an object with
+# `roster` plus a wave-level `consent` block. The object form exists because the
+# DEF-120 card collects one consent answer for the wave, not three fields per
+# person; requiring the per-row fields would mean the card's own answer could
+# not be executed without hand-editing twelve rows first.
+ROSTER_KIND="$(jq -r 'if type == "array" then "array" elif (.roster | type) == "array" then "object" else "invalid" end' "$ROSTER" 2>/dev/null || echo invalid)"
+if [[ "$ROSTER_KIND" == invalid ]]; then
+  echo "ABORT: $ROSTER is neither a JSON array nor an object with a roster array." >&2
   exit 1
+fi
+
+TMPD="$(mktemp -d)"
+trap 'rm -rf "$TMPD"' EXIT
+if [[ "$ROSTER_KIND" == object ]]; then
+  jq '.roster' "$ROSTER" > "$TMPD/roster.json"
+else
+  jq '.' "$ROSTER" > "$TMPD/roster.json"
+fi
+
+# Wave-level consent, honoured only when all three provenance fields are present
+# — the same three the per-row gate demands. `all` covers the wave; `partial`
+# deliberately does not, because which subset agreed is per-person information
+# this script has no other way to know.
+WAVE_CONSENT_RAW="$(jq -r '
+  (if type == "object" then (.consent // {}) else {} end)
+  | if ((.answer   // "") | test("^(all|partial|none)$"))
+    and ((.recorded_at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
+    and (((.source // "") | length) > 0)
+    then "\(.answer)|\(.recorded_at)|\(.source)" else "" end' "$ROSTER")"
+WAVE_ANSWER="${WAVE_CONSENT_RAW%%|*}"
+WAVE_RECORDED=""
+WAVE_SOURCE=""
+if [[ -n "$WAVE_CONSENT_RAW" ]]; then
+  WAVE_RECORDED="$(cut -d'|' -f2 <<< "$WAVE_CONSENT_RAW")"
+  WAVE_SOURCE="$(cut -d'|' -f3 <<< "$WAVE_CONSENT_RAW")"
 fi
 
 echo "alpha invite send  $(date -u '+%Y-%m-%dT%H:%MZ')"
 echo "host:              $BASE_URL"
 echo "roster:            $ROSTER"
+if [[ -n "$WAVE_ANSWER" ]]; then
+  echo "wave consent:      $WAVE_ANSWER (recorded $WAVE_RECORDED, source: $WAVE_SOURCE)"
+else
+  echo "wave consent:      none recorded"
+fi
 if [[ $SEND == 1 ]]; then
   echo "mode:              SEND"
 else
@@ -119,7 +167,7 @@ if [[ "$mode" != "smtp" ]]; then
 fi
 echo
 
-ROWS="$(jq 'length' "$ROSTER")"
+ROWS="$(jq 'length' "$TMPD/roster.json")"
 echo "  rows: $ROWS"
 
 # ── Consent gate (default-deny) ──────────────────────────────────────────────
@@ -127,20 +175,27 @@ echo "  rows: $ROWS"
 # recorded AND where it came from. Anything else is skipped and reported —
 # quietly dropping a person, or worse, quietly mailing one who never consented,
 # is the failure this gate exists to prevent.
+#
+# A row qualifies on its own, or inherits a wave-level `all` answer. A wave
+# `partial` answer grants nothing here: which people agreed is per-person
+# information, and a wave-level "some" would let the script guess.
 consented() {
-  jq -r --argjson i "$1" '
+  jq -r --argjson i "$1" --arg wa "$WAVE_ANSWER" '
     .[$i] as $r
-    | if ($r.consent // false) == true
-         and (($r.consent_recorded_at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
-         and (($r.consent_source // "") | length) > 0
-      then "yes" else "no" end' "$ROSTER"
+    | (if ($r.consent // false) == true
+          and (($r.consent_recorded_at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
+          and (($r.consent_source // "") | length) > 0
+       then "yes" else "no" end) as $own
+    | if $own == "yes" then "yes"
+      elif $wa == "all" and (($r | has("consent")) | not) then "yes"
+      else "no" end' "$TMPD/roster.json"
 }
 
 SKIPPED_COUNT=0
 SKIPPED_LIST=""
 for i in $(seq 0 $((ROWS - 1))); do
   if [[ "$(consented "$i")" != "yes" ]]; then
-    who="$(jq -r --argjson i "$i" '(.[$i].email // ("row " + ($i | tostring)))' "$ROSTER")"
+    who="$(jq -r --argjson i "$i" '(.[$i].email // ("row " + ($i | tostring)))' "$TMPD/roster.json")"
     SKIPPED_LIST+="    - $who"$'\n'
     SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
   fi
@@ -159,15 +214,21 @@ echo
 
 # ── Withdraw: take a person out of the wave ──────────────────────────────────
 if [[ -n "$WITHDRAW" ]]; then
-  idx="$(jq -r --arg e "$WITHDRAW" 'to_entries[] | select((.value.email // "") == $e) | .key' "$ROSTER" | head -1)"
+  idx="$(jq -r --arg e "$WITHDRAW" 'to_entries[] | select((.value.email // "") == $e) | .key' "$TMPD/roster.json" | head -1)"
   if [[ -z "$idx" ]]; then
     echo "withdraw: no row for $WITHDRAW" >&2
     exit 1
   fi
   tmp="$(mktemp)"
-  jq --argjson i "$idx" \
-     '.[$i].consent = false | .[$i].consent_withdrawn_at = (now | strftime("%Y-%m-%d"))' \
-     "$ROSTER" > "$tmp"
+  if [[ "$ROSTER_KIND" == object ]]; then
+    jq --argjson i "$idx" \
+       '.roster[$i].consent = false | .roster[$i].consent_withdrawn_at = (now | strftime("%Y-%m-%d"))' \
+       "$ROSTER" > "$tmp"
+  else
+    jq --argjson i "$idx" \
+       '.[$i].consent = false | .[$i].consent_withdrawn_at = (now | strftime("%Y-%m-%d"))' \
+       "$ROSTER" > "$tmp"
+  fi
   mv "$tmp" "$ROSTER"
   echo "withdrew $WITHDRAW from the wave (row $idx, consent=false)."
   echo "Re-run without --withdraw to see the updated gate."
@@ -251,7 +312,7 @@ if [[ $VERIFY == 1 ]]; then
   # would be lost) and a place to lose the -r flag and re-parse a quoted
   # string as JSON.
   echo "── verification state per roster row"
-  jq -rn --argjson users "$users" --slurpfile roster "$ROSTER" '
+  jq -rn --argjson users "$users" --slurpfile roster "$TMPD/roster.json" '
     ($roster[0] | map(.email // empty)) as $emails
     | $emails[]
     | . as $e
@@ -270,38 +331,103 @@ fi
 # ── Walk the roster ──────────────────────────────────────────────────────────
 if [[ -n "$LOG" ]]; then : > "$LOG"; fi
 
+# A username is a product identifier, not a secret, and the card gives an email
+# and a name. Deriving one from the address they supplied is not inventing
+# anything about them; it is reading the local part. It is always reported, so a
+# human can see every derived username before the send.
+derive_username() {
+  local base="${1%%@*}"
+  printf '%s' "$base" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -e 's/[^a-z0-9._-]//g' -e 's/^[._-]*//' -e 's/[._-]*$//'
+}
+
+# 32 characters from 24 random bytes. Machine-generated, unique per row, never
+# printed, never logged, never written back to the roster. The recipient replaces
+# it through the product's own reset flow, so it never has to reach them.
+gen_password() {
+  openssl rand -base64 24 | tr -d '\n=+/' | cut -c1-32
+}
+
+# ── Preflight: nothing is sent until every emailable row is sendable ─────────
+# A structurally broken row would otherwise fail mid-wave, after earlier rows had
+# already been mailed. For 12 real addresses that is the difference between a
+# clean abort and a partial send nobody can take back.
+PROBLEMS=()
+for i in $(seq 0 $((ROWS - 1))); do
+  [[ "$(consented "$i")" == "yes" ]] || continue
+  r_email="$(jq -r --argjson i "$i" '.[$i].email // ""'    "$TMPD/roster.json")"
+  r_name="$(jq  -r --argjson i "$i" '.[$i].name // ""'       "$TMPD/roster.json")"
+  r_user="$(jq  -r --argjson i "$i" '.[$i].username // ""'  "$TMPD/roster.json")"
+  if [[ -z "$r_email" || "$r_email" != *"@"* || "$r_email" == *" "* ]]; then
+    PROBLEMS+=("row $i: no usable email address (got '$r_email')")
+    continue
+  fi
+  if [[ -z "$r_name" ]]; then
+    PROBLEMS+=("row $i ($r_email): no name — user.signup rejects a missing name")
+  fi
+  if [[ -z "$r_user" && -z "$(derive_username "$r_email")" ]]; then
+    PROBLEMS+=("row $i ($r_email): no username, and none is derivable from the address")
+  fi
+done
+if [[ ${#PROBLEMS[@]} -gt 0 ]]; then
+  echo "ABORT: ${#PROBLEMS[@]} emailable row(s) cannot be sent:" >&2
+  printf '  - %s\n' "${PROBLEMS[@]}" >&2
+  echo "Nothing was sent. Fix the roster and re-run." >&2
+  exit 1
+fi
+
 ok=0
 failed=0
+generated=0
 for i in $(seq 0 $((ROWS - 1))); do
   [[ "$(consented "$i")" == "yes" ]] || continue
 
-  email="$(jq -r --argjson i "$i" '.[$i].email' "$ROSTER")"
-  name="$(jq    -r --argjson i "$i" '.[$i].name'    "$ROSTER")"
-  username="$(jq -r --argjson i "$i" '.[$i].username' "$ROSTER")"
-  password="$(jq -r --argjson i "$i" '.[$i].password // ""' "$ROSTER")"
+  email="$(jq -r --argjson i "$i" '.[$i].email' "$TMPD/roster.json")"
+  name="$(jq    -r --argjson i "$i" '.[$i].name'    "$TMPD/roster.json")"
+  username="$(jq -r --argjson i "$i" '.[$i].username // ""' "$TMPD/roster.json")"
+  password="$(jq -r --argjson i "$i" '.[$i].password // ""' "$TMPD/roster.json")"
 
-  # A row without a password is a hard error. Inventing one would mean the
-  # script chooses a stranger's credential, which is not an invite.
-  if [[ -z "$password" || ${#password} -lt 8 ]]; then
-    echo "! row $i ($email): no password (8+ chars required) — skipped." >&2
-    failed=$((failed + 1))
-    logline "$(jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg e "$email" \
-      '{ts:$ts,email:$e,action:"skipped",ok:false,reason:"no password in roster"}')"
-    continue
+  if [[ -z "$username" ]]; then
+    username="$(derive_username "$email")"
+    username_source="derived from the address"
+  else
+    username_source="from the roster"
+  fi
+
+  # A password that is there but too short is a mistake worth stopping on, not a
+  # row to skip quietly: skipping is how a person silently never gets invited.
+  if [[ -n "$password" && ${#password} -lt 8 ]]; then
+    echo "ABORT: row $i ($email) supplies a password under 8 characters." >&2
+    echo "  user.signup rejects it (routers/user.rs:99-101). Fix the roster," >&2
+    echo "  or remove the password field and let one be generated." >&2
+    exit 1
   fi
 
   echo "── row $i: $email"
   echo "   name:     $name"
-  echo "   username: $username"
+  echo "   username: $username ($username_source)"
 
   if [[ $SEND == 0 ]]; then
     echo "   request:   POST $BASE_URL/api/trpc/user.signup"
     echo "   body:      {\"0\":{\"email\":\"$email\",\"name\":\"$name\",\"username\":\"$username\",\"password\":\"<redacted>\"}}"
     echo "   fallback:  if the account exists, POST $BASE_URL/api/trpc/user.resendVerification"
+    if [[ -z "$password" ]]; then
+      echo "   password:  generated at send time — machine-generated, unique per row,"
+      echo "              never printed and never written to the roster. The recipient"
+      echo "              sets their own from the login page's forgot-password link"
+      echo "              (user.requestPasswordReset, routers/user.rs:218+)."
+    fi
     echo "   email the server will send:"
     render_email "$BASE_URL" "$email" | sed 's/^/     /'
     echo
     continue
+  fi
+
+  if [[ -z "$password" ]]; then
+    password="$(gen_password)"
+    generated=$((generated + 1))
+    echo "   password:  generated (value not shown)"
   fi
 
   # Real send. signup creates the account and mails the verification link; if the
@@ -339,20 +465,35 @@ echo "  skipped (consent):  $SKIPPED_COUNT"
 if [[ $SEND == 1 ]]; then
   echo "  sent:               $ok"
   echo "  failed:             $failed"
+  echo "  passwords generated: $generated (recipient sets their own; see below)"
   if [[ -n "$LOG" ]]; then echo "  log:                $LOG"; fi
   echo
   echo "  A 200 from signup is NOT proof of delivery. mailer::send logs and drops"
   echo "  failures and signup returns success either way. Confirm with --verify."
+  if [[ $generated -gt 0 ]]; then
+    echo
+    echo "  Each generated password is unique and was never written anywhere. The"
+    echo "  recipient cannot log in with it — that is the intent. They set their"
+    echo "  own from the login page's forgot-password link, which emails a 1h reset"
+    echo "  (user.requestPasswordReset → user.resetPassword)."
+  fi
   if [[ $failed -gt 0 ]]; then
     exit 2
   fi
 fi
 exit 0
 
-# ── Gap this script does not close ───────────────────────────────────────────
+# ── Gaps this script does not close ──────────────────────────────────────────
 # The product's only outbound mail is a verification or reset link. There is no
 # invite email, no personalization beyond the address itself, and no
 # unsubscribe mechanism. If the alpha needs a real invite ("here's your board,
 # come solve it") with an opt-out, that is a mailer change (a third template
 # plus a List-Unsubscribe header) and a product decision — not something a send
 # script can supply. Flagged for DEF-120.
+#
+# The generated-password path depends on that reset flow existing and being
+# discoverable from the login page. It does: `user.requestPasswordReset` mails a
+# 1h token and `user.resetPassword` consumes it (routers/user.rs:218-300). If a
+# future change removes the forgot-password link, this script must go back to
+# requiring a password per row — an account a recipient cannot log into is not
+# an invite.

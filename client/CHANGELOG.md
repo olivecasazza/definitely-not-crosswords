@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.52](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.51...v0.1.52) - 2026-09-28
+
+### Fixed
+
+- *(ci)* the canary probes a URL that never existed, and the deploy probe bails mid-rollout [DEF-103] (#153)
+
+### Other
+
+- changelog for v0.1.51 [skip ci]
+
+
 ## [0.1.51](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.50...v0.1.51) - 2026-09-28
 
 ### Added

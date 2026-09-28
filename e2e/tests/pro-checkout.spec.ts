@@ -37,6 +37,10 @@ const CTA = /upgrade to pro/i;
 /** Lemon Squeezy serves every checkout from its own domain, never ours. */
 const LS_HOST = /\.lemonsqueezy\.com$/i;
 
+/** The two ids the staging ExternalSecret carries (README "Plans & pricing"). */
+const STORE_ID = "390247";
+const VARIANT_ID = "1718877";
+
 /**
  * A checkout URL, not just a Lemon Squeezy host: `/checkout/buy/<uuid>` today,
  * `/embed/checkout/...` for the embedded flavour. Anchored on the path only so
@@ -160,14 +164,22 @@ test("a Pro click starts a real Lemon Squeezy checkout (no purchase)", async ({
     type: "lemon-squeezy-checkout",
     description: redacted,
   });
-  // The numeric ids are NOT in LS's checkout URL (it carries the variant's UUID
-  // and the store's subdomain), so record whether the page embeds them — if it
-  // does, they can be promoted to a hard assertion on a later run.
+  // The numeric store/variant are NOT in LS's checkout URL (it carries the
+  // variant's UUID and the store's subdomain) — but the checkout page embeds
+  // LS's own payload, which does carry them. That turns "some checkout on LS"
+  // into "the checkout for store 390247, variant 1718877": the two literals
+  // below are the ids this repo's README and the staging ExternalSecret name,
+  // and a checkout created against a different store cannot render them.
+  // (First measured on run 36378794830: both present, twice each.)
   const html = await page.content();
-  console.log(
-    `pro-checkout: page html mentions store 390247: ${html.includes("390247")}, ` +
-      `variant 1718877: ${html.includes("1718877")}`,
-  );
+  expect(
+    html.includes(STORE_ID),
+    `the Lemon Squeezy checkout page does not mention store ${STORE_ID} — the landed checkout is not ours`,
+  ).toBe(true);
+  expect(
+    html.includes(VARIANT_ID),
+    `the Lemon Squeezy checkout page does not mention variant ${VARIANT_ID} — the landed checkout is not the Pro plan`,
+  ).toBe(true);
 
   // ── 5. STOP. No purchase. ─────────────────────────────────────────────────
   // The end state IS the assertion: still sitting on Lemon Squeezy's checkout

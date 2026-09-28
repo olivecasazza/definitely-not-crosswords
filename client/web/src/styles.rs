@@ -7,6 +7,13 @@
 //! The second block remaps panel-kit's own variables onto these tokens so the
 //! panel chrome on the play screen matches the rest of the app.
 
+// BOOT CSS: the pre-wasm boot card in client/flake.nix (the shell document, marked
+// "BOOT CSS" there) hardcodes copies of the six tokens below — --bg-app, --bg-card,
+// --text-primary, --text-secondary, --border-app, --pastel-red — because
+// panel_kit::CSS and this stylesheet do not exist until the app mounts. That
+// duplication is deliberate; the two files point at each other. If the palette
+// changes here, change it there too, or grep `BOOT CSS`.
+
 pub const DESIGN: &str = r#"
 @import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
 

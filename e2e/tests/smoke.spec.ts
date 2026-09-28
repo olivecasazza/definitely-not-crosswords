@@ -8,8 +8,16 @@ import { test, expect } from "@playwright/test";
 test("home page loads and the WASM app hydrates", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveTitle(/crosswords/i);
-  // The app mounts into #main; hydration is done once real content appears.
-  await expect(page.locator("#main")).not.toBeEmpty();
+  // Assert on .app-shell, NOT on "#main is not empty". #main is shipped by the
+  // shell document itself (client/flake.nix), so a non-empty #main only proves
+  // that some HTML arrived — it is satisfied by a page whose bundle never
+  // loaded, which is how a 100%-blank front door stayed green. .app-shell is
+  // rendered by the Shell component (client/web/src/main.rs), so it exists only
+  // once the wasm is actually running. See DEF-148.
+  await expect(page.locator(".app-shell")).toBeVisible();
+  // The pre-boot card must be gone by then: it is removed on the first mutation
+  // of #main, with a Rust-side backstop if that observer never attached.
+  await expect(page.locator("#boot")).toHaveCount(0);
   // A primary call-to-action should be reachable from the landing page.
   await expect(
     page.getByRole("link", { name: /get started|sign in|play/i }).first(),
@@ -19,7 +27,7 @@ test("home page loads and the WASM app hydrates", async ({ page }) => {
 test("navigate to login and see the credentials form", async ({ page }) => {
   // Navigate the way a user does (SPA nav from home), not a cold deep-link.
   await page.goto("/");
-  await expect(page.locator("#main")).not.toBeEmpty();
+  await expect(page.locator(".app-shell")).toBeVisible();
   await page.getByRole("link", { name: /^sign in$/i }).first().click();
   await expect(page).toHaveURL(/\/auth\/login/);
   // Assert on the inputs/controls themselves (labels are decorative).
@@ -30,7 +38,7 @@ test("navigate to login and see the credentials form", async ({ page }) => {
 
 test("navigate to signup and see the registration form", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("#main")).not.toBeEmpty();
+  await expect(page.locator(".app-shell")).toBeVisible();
   await page.getByRole("link", { name: /create account/i }).first().click();
   await expect(page).toHaveURL(/\/auth\/signup/);
   await expect(page.locator('input[type="email"]')).toBeVisible();

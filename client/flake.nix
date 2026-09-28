@@ -234,14 +234,174 @@
               mkdir -p $out/_assets
               cp -r $stage $out/_assets/$bundleHash
 
-              cat > $out/index.html <<HTML
+              # Self-contained boot shell (DEF-148, spec DEF-146). The heredoc is
+              # QUOTED (<<'HTML') so the shell does not expand the JS template literals
+              # below; the bundle hash is a placeholder that sed substitutes afterwards.
+              # An unquoted heredoc eats dollar-brace expansions, backticks and command
+              # substitutions, and ships a 0-byte index.html. The doubled quote-brace on
+              # the glue line is the Nix escape for a literal dollar-brace, not a typo.
+              cat > $out/index.html <<'HTML'
               <!doctype html><html><head><meta charset="utf-8" />
               <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>definitely-not-crosswords</title></head>
-              <body><div id="main"></div>
-              <script type="module">import init from "/_assets/$bundleHash/crossword-web.js"; init();</script>
+              <meta name="color-scheme" content="dark light" />
+              <!-- Scripting disabled: #boot can never run, so it would sit on "Loading" forever
+                   and cover this page. Hide it so the <noscript> card below is what is read.
+                   Parsed only when scripting is off, so the JS path is untouched. -->
+              <noscript><style>#boot{display:none!important}</style></noscript>
+              <title>definitely-not-crosswords</title>
+              <style>
+              /* BOOT CSS - pre-wasm only. panel_kit::CSS and styles::DESIGN are injected by the
+                 app (client/web/src/main.rs:107-108), so none of the tokens or atoms below exist
+                 until the app mounts. These values are copied from styles.rs and MUST move
+                 with them: --bg-app:14 --bg-card:15 --text-primary:18 --text-secondary:19
+                 --border-app:20 --pastel-red:22 | light: --bg-app:104 --bg-card:105
+                 --text-primary:108 --text-secondary:112 --border-app:117 --pastel-red:122.
+                 Nothing here may be relied on after boot; #boot is removed at handoff. */
+              :root{--b-bg:#121212;--b-card:#18181b;--b-fg:#f4f4f5;--b-dim:#a1a1aa;--b-line:#27272a;--b-err:#ff8c8c;--b-primary:#feea99}
+              .light-mode{--b-bg:#ededf0;--b-card:#f7f7f8;--b-fg:#18181b;--b-dim:#52525b;--b-line:#8a8a93;--b-err:#b02a20;--b-primary:#775600}
+              html,body{height:100%}
+              body{margin:0;background:var(--b-bg);color:var(--b-fg);
+                font:500 .875rem/1.6 Montserrat,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+              #boot{position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;
+                padding:max(1.5rem,env(safe-area-inset-top)) max(1.5rem,env(safe-area-inset-right))
+                       max(1.5rem,env(safe-area-inset-bottom)) max(1.5rem,env(safe-area-inset-left))}
+              .boot-card{width:100%;max-width:26rem;background:var(--b-card);border:1px solid var(--b-line);
+                padding:1.25rem;display:flex;flex-direction:column;gap:.75rem}
+              .boot-mark{margin:0;font:700 .625rem/1.2 Inconsolata,ui-monospace,monospace;
+                letter-spacing:.05em;text-transform:uppercase;color:var(--b-dim)}
+              .boot-title{margin:0;font-size:1rem;font-weight:700}
+              .boot-title:focus{outline:none}
+              .boot-body{margin:0;font-size:.75rem;color:var(--b-dim)}
+              .boot-err{margin:0;font:700 .75rem/1.4 Inconsolata,ui-monospace,monospace;color:var(--b-err);
+                overflow-wrap:anywhere}
+              .boot-actions{display:flex;gap:.5rem;flex-wrap:wrap}
+              /* Border is --b-dim, not --b-line: a control boundary needs 3:1 and --b-line is
+                 1.19:1 on the dark card. --b-dim is 6.91:1 dark / 7.22:1 light. */
+              .boot-btn{font:600 .875rem/1 inherit;padding:.6rem .9rem;min-height:2.75rem;cursor:pointer;
+                background:var(--b-card);color:var(--b-dim);border:1px solid var(--b-dim);text-decoration:none}
+              .boot-btn:hover,.boot-btn:focus-visible{color:var(--b-fg);border-color:var(--b-fg)}
+              .boot-btn:focus-visible{outline:2px solid var(--b-fg);outline-offset:2px}
+              /* The one action that can fix this: the house .app-btn-active idiom
+                 (styles.rs:221), 14.7:1 dark / 6.3:1 light. */
+              .boot-btn-primary{color:var(--b-fg);border-color:var(--b-primary)}
+              /* Scoped to the boot card: an author rule beating the UA [hidden] rule is why
+                 !important is needed, and a global one would reach into app styles post-boot. */
+              #boot [hidden],noscript [hidden]{display:none !important}
+              </style>
+              </head>
+              <body>
+              <div id="main"></div>
+              <div id="boot" role="status" aria-live="polite">
+                <div class="boot-card">
+                  <p class="boot-mark">definitely-not-crosswords</p>
+                  <h1 class="boot-title" id="boot-title" tabindex="-1">Loading</h1>
+                  <p class="boot-body" id="boot-body">Fetching the app&#8230;</p>
+                  <p class="boot-err" id="boot-err" hidden></p>
+                  <div class="boot-actions" id="boot-actions" hidden>
+                    <button class="boot-btn boot-btn-primary" id="boot-retry" type="button">Retry</button>
+                    <button class="boot-btn" id="boot-reload" type="button">Reload</button>
+                  </div>
+                </div>
+              </div>
+              <noscript><div class="boot-card" style="margin:4rem auto;max-width:26rem">
+                <p class="boot-mark">definitely-not-crosswords</p>
+                <h1 class="boot-title">JavaScript is required</h1>
+                <p class="boot-body">This is a WebAssembly app, so it needs JavaScript enabled to run.</p>
+              </div></noscript>
+              <script type="module">
+              // Pre-boot loader. Runs BEFORE the wasm exists, so nothing here may reference
+              // the app's stylesheet — panel_kit::CSS and styles::DESIGN are injected by
+              // client/web/src/main.rs only after the app mounts.
+              const $ = (id) => document.getElementById(id);
+              const setTitle = (t) => { const n = $("boot-title"); if (n) n.textContent = t; };
+              const setBody = (t) => { const n = $("boot-body"); if (n) n.textContent = t; };
+              const showActions = (on) => {
+                for (const id of ["boot-err", "boot-actions"]) { const n = $(id); if (n) n.hidden = !on; }
+              };
+              const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+              // Theme continuity: main.rs:83-88 reads the same key from inside the app, so
+              // setting the class here (before first paint) just removes the dark flash.
+              try { if (localStorage.getItem("theme") === "light")
+                      document.documentElement.classList.add("light-mode"); } catch {}
+
+              let tries = 0, tSlow = 0, tFail = 0, gen = 0, booted = false;
+              const mark = (state) => { const b = $("boot"); if (b) b.dataset.state = state; };
+
+              // Arm the two timers for the CURRENT attempt. `g` is the attempt's generation:
+              // a newer boot() bumps `gen`, so a slow timer or a 20s timeout belonging to an
+              // abandoned attempt can no longer touch the card.
+              function arm(g) {
+                clearTimeout(tSlow); clearTimeout(tFail);
+                tSlow = setTimeout(() => {
+                  const b = $("boot");
+                  if (g === gen && b && (b.dataset.state === "boot" || b.dataset.state === "retrying"))
+                    setBody("Still loading — this takes a moment on a slow connection.");
+                }, 4000);
+                tFail = setTimeout(() => { if (g === gen) fail("Timed out after 20s"); }, 20000);
+              }
+
+              function fail(reason) {
+                if (!$("boot")) return;                 // handed off already: never touch a detached card
+                clearTimeout(tSlow); clearTimeout(tFail);
+                setTitle("Couldn't load the app");
+                setBody("The app didn't download. That's on us, not your connection — try again.");
+                const err = $("boot-err"); if (err) err.textContent = reason;
+                showActions(true);
+                $("boot").setAttribute("role", "alert");
+                $("boot-retry").focus(); mark("failed");
+              }
+
+              function reset() {
+                setTitle("Loading"); setBody("Fetching the app…"); showActions(false);
+                $("boot").setAttribute("role", "status");
+              }
+
+              async function boot(auto) {
+                const g = ++gen;
+                reset();
+                mark(auto ? "retrying" : "boot");
+                arm(g);
+                try {
+                  // Exactly ONE automatic retry, per page load. ?r= busts a pinned edge 404
+                  // (DEF-145) and is safe here because the path is content-addressed
+                  // (client/flake.nix:219-232): the glue's own ./snippets/<crate-hash>/…
+                  // imports resolve against the PATH, not the query. Verified: a relative
+                  // import from a URL with ?r= resolves to the identical pathname. Do not
+                  // reintroduce query params on anything but this one top-level glue URL.
+                  const glue = `/_assets/__BUNDLE_HASH__/crossword-web.js''${auto || tries ? `?r=''${Date.now()}` : ""}`;
+                  const mod = await import(glue);
+                  await mod.default();
+                } catch (e) {
+                  if (g !== gen || booted) return;       // a newer attempt, or the app itself, owns the card now
+                  if (!auto && tries++ < 1) { mark("retrying"); await delay(1500); return boot(true); }
+                  fail(e && e.message ? e.message : String(e));
+                }
+              }
+
+              $("boot-retry").addEventListener("click", () => boot(false));
+              $("boot-reload").addEventListener("click", () => location.reload());
+
+              // Handoff: #main is the app's mount root. #boot is a SIBLING of #main on
+              // purpose — inside it, the canary's `#main is not empty` check would pass on a
+              // failed boot. Fixed + full-bleed, so the app is already laid out behind the
+              // card and removal causes no layout shift.
+              new MutationObserver(() => {
+                if ($("main").childElementCount) {
+                  // Latch before removing: a late failure from the attempt that was in flight
+                  // must not auto-retry and boot a SECOND copy of the app into #main.
+                  booted = true;
+                  clearTimeout(tSlow); clearTimeout(tFail);
+                  const b = $("boot");
+                  if (b) { b.remove(); mark("booted"); }
+                }
+              }).observe($("main"), { childList: true });
+
+              boot(false);
+              </script>
               </body></html>
               HTML
+              sed -i "s|__BUNDLE_HASH__|$bundleHash|g" $out/index.html
             '';
             dontInstall = true;
           };

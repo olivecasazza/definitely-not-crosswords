@@ -155,6 +155,16 @@ pub fn GenerationProgress(
     } else {
         ""
     };
+    // Marks the bar as indeterminate so the reduced-motion guard in
+    // styles.rs can drop it to a static partial width. Without it the bar
+    // would sit at its inline `width:100%` and claim completion for a run
+    // whose extent is by definition unknown. Only ever set on indeterminate
+    // bars, which is what makes the `!important` width there safe.
+    let indet_class = if indeterminate {
+        "gp-indeterminate"
+    } else {
+        ""
+    };
 
     let elapsed_label = {
         let s = elapsed_secs;
@@ -209,7 +219,7 @@ pub fn GenerationProgress(
                 }
                 div { class: "gp-bar-track",
                     div {
-                        class: "gp-bar-fill",
+                        class: "gp-bar-fill {indet_class}",
                         style: "{bar_color};{bar_anim};width:{bar_width}",
                     }
                 }

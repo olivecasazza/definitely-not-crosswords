@@ -299,6 +299,79 @@ a { color: inherit; text-decoration: none; }
 @keyframes square-pulse { 0%, 100% { opacity: .15; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .square-pulse-cell { animation: none; opacity: .6; } }
 
+/* ── Reduced motion ──────────────────────────────────────────────────────────
+   One guard for every animated surface in the app.
+
+   PRINCIPLE: reduced motion must not reduce INFORMATION. Every transition
+   here animates a state change that is also conveyed statically (a hovered
+   button is still --color-primary-bordered, a selected cell is still
+   --fill-yellow), so a transition becomes instant rather than absent. The
+   infinite loops carry no state at all — decorative attention — so they stop,
+   but each keeps a static read that still says "in progress" instead of
+   collapsing to a blank or, worse, to something reading as "done".
+
+   Follows the two existing guards in this codebase (.square-pulse-cell above,
+   .gp-bar-fill in generation_progress.rs) and panel-kit's precedent at
+   panel-kit.css:242-245, which holds an indeterminate bar at a static 40%
+   sliver because a full-width bar would claim completion.
+
+   WHY `!important` IS REQUIRED HERE
+   ─────────────────────────────────
+   This block lives in DESIGN, which main.rs:92 injects *before* the Router.
+   Every component and page emits its own `<style>` from inside that Router
+   (header.rs:152, pro_upgrade.rs:164, generation_progress.rs:184, the pages),
+   so in document order this stylesheet comes FIRST. At equal specificity the
+   later rule wins, so a plain declaration here loses to the component's own
+   `transition:`/`animation:` — every declaration below that targets a
+   component-local selector would be silently inert, including both infinite
+   loops. Measured in Chromium: with plain declarations the block leaves 14 of
+   the app's 20 animated surfaces still moving. `!important` is the correct
+   tool: a user preference must outrank component styling, and it is already
+   the established mechanism in this codebase (generation_progress.rs:327).
+   The four selectors whose CSS is in this same file (body, .app-btn,
+   .app-input, .section-tab) do not strictly need it, but it is applied
+   uniformly so the block has one rule rather than two. */
+@media (prefers-reduced-motion: reduce) {
+  /* Transitions → instant. The end state is unchanged; only the
+     interpolation goes. `body` is the theme-toggle cross-fade. */
+  body,
+  .app-btn,
+  .app-input,
+  .section-tab,
+  .site-header .navlink,
+  .game-row,
+  .games-continue-card,
+  .home-resume-card,
+  .home-daily-card,
+  .cg-rank-card,
+  .cw-letter,
+  .st-table-row,
+  .gp-bar-fill,
+  .st-bar-segment { transition: none !important; }
+
+  /* Transforms that reflow surrounding content: keep the colour change,
+     drop the scale. `transition: none` alone would make the 2% scale instant,
+     which removes the motion but keeps the reflow on hover. */
+  .site-header .brand svg,
+  .pro-upgrade .upgrade-btn { transition: none !important; transform: none !important; }
+
+  /* Infinite loops → static mid-opacity read. `.6` matches the
+     .square-pulse-cell guard above. */
+  .session-skeleton { animation: none !important; opacity: .6 !important; }
+
+  /* The Pro upsell spinner: freeze the rotation, keep the 3/4 ring so it
+     still reads as a spinner rather than a static dot. */
+  .pro-upgrade .spin-ring { animation: none !important; }
+
+  /* Indeterminate progress: a static partial-width sliver. Full width would
+     claim completion; 0% would claim nothing is happening. 40% matches
+     panel-kit's own .pk-progress-fill.indeterminate precedent. `!important`
+     is required because width is an inline style (generation_progress.rs:213)
+     and is safe because .gp-indeterminate is only ever set on indeterminate
+     bars. */
+  .gp-bar-fill.gp-indeterminate { animation: none !important; width: 40% !important; }
+}
+
 /* ── Modal + drawer (components/ui.rs) ──────────────────────────────────── */
 .modal-scrim, .drawer-scrim {
   position: fixed; inset: 0; z-index: 200; background: var(--scrim);

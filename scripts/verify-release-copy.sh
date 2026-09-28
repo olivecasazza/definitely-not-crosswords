@@ -12,6 +12,11 @@
 #                    "whatever this checkout would tag". Pass it explicitly to
 #                    assert a specific release instead.
 #
+#   EXPECTED_PRO_CHECKOUT=true|false  optional. Unset (the default) either
+#                    proCheckout value passes, which is what a release gate
+#                    wants. Set it to pin one host to one answer, e.g.
+#                    EXPECTED_PRO_CHECKOUT=false scripts/verify-release-copy.sh
+#
 # Two non-obvious things this has to get right, both learned the hard way:
 #
 #   1. The copy lives in the .wasm, NOT in the .js. index.html loads
@@ -34,6 +39,13 @@ EXPECTED_VERSION="${2:-$(sed -nE 's/^version = "([^"]+)"$/\1/p' "$REPO_ROOT/clie
 
 if [ -z "$EXPECTED_VERSION" ]; then
   echo "::error::could not read the workspace version from client/Cargo.toml; pass it as \$2" >&2
+  exit 2
+fi
+
+if [ -n "${EXPECTED_PRO_CHECKOUT:-}" ] \
+  && [ "$EXPECTED_PRO_CHECKOUT" != true ] \
+  && [ "$EXPECTED_PRO_CHECKOUT" != false ]; then
+  echo "::error::EXPECTED_PRO_CHECKOUT must be true or false, got '$EXPECTED_PRO_CHECKOUT'" >&2
   exit 2
 fi
 
@@ -63,10 +75,26 @@ fi
 # release whose /api/config lost the flag ships a bundle that can no longer
 # describe whether buying Pro is possible, so assert the deployed answer
 # rather than trusting the diff.
-if printf '%s' "$config" | grep -qE '"proCheckout":(true|false)'; then
-  pass "/api/config exposes boolean proCheckout ($(printf '%s' "$config" | grep -oE '"proCheckout":(true|false)'))"
-else
+#
+# The served .wasm is not evidence of this flag, and the copy assertions below
+# cannot stand in for it: both copy variants are compiled into one binary and
+# the branch between them is a runtime read of /api/config, so the same bundle
+# serves either value. Only /api/config can say which one this host returns.
+#
+# EXPECTED_PRO_CHECKOUT is optional. Unset — the default, and what the release
+# gate uses — either value passes, because a release may legitimately ship
+# with billing on or off. Set it to pin one host to one answer (DEF-199).
+pro_checkout="$(printf '%s' "$config" | grep -oE '"proCheckout":(true|false)' | head -1 || true)"
+if [ -z "$pro_checkout" ]; then
   fail "/api/config has no boolean proCheckout feature flag — the Pro CTA cannot be gated"
+elif [ -n "${EXPECTED_PRO_CHECKOUT:-}" ]; then
+  if [ "$pro_checkout" = "\"proCheckout\":$EXPECTED_PRO_CHECKOUT" ]; then
+    pass "/api/config proCheckout matches expected $EXPECTED_PRO_CHECKOUT ($pro_checkout)"
+  else
+    fail "$BASE_URL /api/config proCheckout is ${pro_checkout#'"proCheckout":'}, want $EXPECTED_PRO_CHECKOUT"
+  fi
+else
+  pass "/api/config exposes boolean proCheckout ($pro_checkout)"
 fi
 
 # --- locate the served wasm ------------------------------------------------

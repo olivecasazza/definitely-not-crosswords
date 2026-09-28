@@ -1,0 +1,20 @@
+[
+  {
+    "email": "tester@example.com",
+    "name": "Test Tester",
+    "username": "tester",
+    "password": "change-me-before-sending",
+    "consent": true,
+    "consent_recorded_at": "2026-10-01",
+    "consent_source": "asked in person, agreed to a closed-alpha invite"
+  },
+  {
+    "email": "noreply@example.com",
+    "name": "No Consent Yet",
+    "username": "noconsent",
+    "password": "change-me-before-sending",
+    "consent": false,
+    "consent_recorded_at": "",
+    "consent_source": ""
+  }
+]

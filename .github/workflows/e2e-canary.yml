@@ -131,6 +131,100 @@ jobs:
             -d "{\"content\":\"🚨 crosswords staging e2e canary FAILED — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
             "$DISCORD" || true
 
+  production-artifact:
+    name: Production served-artifact canary
+    runs-on: ubuntu-latest
+    # A SEPARATE job, not a step in `canary`, on purpose. The `canary` job
+    # drives the Playwright suite and the demo recording; letting a production
+    # alarm take that down would mean a blank front door also suppresses the
+    # release video. Separate = both alarms stay independent, and `workflow_dispatch`
+    # gives a one-command way to check production without touching staging.
+    steps:
+      # DEF-152 added an artifact probe, but bound it to $E2E_BASE_URL, which is
+      # STAGING. So the one environment with real visitors was never probed —
+      # and the failure we actually hit was invisible:
+      #
+      #   * staging served  /_assets/bf256d7687350f0b/...   200 on every sample
+      #   * production served /_assets/11b0c85674a7cd1c/...  404 on 13/40 samples
+      #
+      # production was blank for those visitors while the staging canary stayed
+      # green every night. Nothing in CI compares the two environments.
+      #
+      # The release machinery could not catch it either: production was 10
+      # commits behind main and BOTH environments reported `"version":"0.1.49"`,
+      # so the existing `/api/config` version gate was satisfied by a build that
+      # did not contain the fix. The version string is the release identity, not
+      # the content identity — only the content-hash URL tells you what is live.
+      #
+      # Runs on the same triggers as the rest of the canary.
+      - name: Probe production's served bundle
+        env:
+          PROD_URL: https://crosswords.casazza.io
+        run: |
+          set -uo pipefail
+          index="$(curl -fsS --max-time 30 "$PROD_URL/")" || {
+            echo "::error::production index.html unreachable at $PROD_URL/"; exit 1; }
+          glue="$(printf '%s' "$index" | grep -o '/_assets/[^"]*crossword-web\.js' | head -1 || true)"
+          if [ -z "$glue" ]; then
+            echo "::error::no /_assets/*/crossword-web.js in production index.html — bundle layout changed; update this check"
+            exit 1
+          fi
+          # Sample repeatedly instead of once. A poisoned edge entry splits by
+          # PoP (observed: 404 from SEA, 200 from PDX), so a single request is a
+          # coin flip and would make this alarm useless. 10 samples from one
+          # runner reliably catches a PoP split.
+          for url in "$PROD_URL$glue" "$PROD_URL$(dirname "$glue")/crossword-web_bg.wasm"; do
+            codes=""
+            for _ in $(seq 1 10); do
+              codes="$codes$(curl -sS -o /dev/null -w '%{http_code} ' --max-time 60 "$url")"
+            done
+            bad="$(printf '%s' "$codes" | tr ' ' '\n' | grep -vc '^200$' || true)"
+            if [ "$bad" -gt 0 ]; then
+              echo "::error::production artifact $url returned non-200 in $bad/10 samples [$codes] — blank front door for those visitors"
+              exit 1
+            fi
+            echo "ok  $url -> 200 on 10/10"
+          done
+
+      # The probe above says "is production blank right now". This says "can it
+      # get blank again", and it is the check whose absence let the trap re-arm.
+      #
+      # The root cause (DEF-140/145/152/158) was that the origin stamped
+      # `immutable, max-age=31536000` on its OWN 404s, so a transiently-missing
+      # asset during a deploy became a 1-year pinned edge object. #122 fixed that
+      # with CacheControlOnOkLayer — on main, and on staging, and NOT on
+      # production. Measured against a never-before-requested hash:
+      #
+      #   staging    404 -> cache-control: max-age=14400                             (fixed)
+      #   production 404 -> cache-control: public, max-age=31536000, immutable      (armed)
+      #
+      # A fresh random hash cannot be a cache HIT, so this reads the ORIGIN's
+      # headers directly. If the `immutable` directive ever comes back on a
+      # non-200, the trap is re-armed and this goes red before a visitor does.
+      - name: Production origin must not cache 404s immutably
+        env:
+          PROD_URL: https://crosswords.casazza.io
+        run: |
+          set -uo pipefail
+          probe="/_assets/$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')/crossword-web.js"
+          hdrs="$(curl -sS -D - -o /dev/null --max-time 60 "$PROD_URL$probe" 2>&1 || true)"
+          echo "probe: $PROD_URL$probe"
+          printf '%s\n' "$hdrs" | grep -i -E '^(HTTP/|cache-control|cf-cache-status)' || true
+          if printf '%s' "$hdrs" | grep -qi '^cache-control:.*immutable'; then
+            echo "::error::production stamps 'immutable' on a 404 for a never-cached hash — a transient miss will be pinned at the edge for a year (DEF-152 criterion 3 is not live here)"
+            exit 1
+          fi
+          echo "ok  production 404 carries no immutable directive — misses stay revalidatable"
+      - name: Alert Discord on production artifact failure
+        if: failure()
+        env:
+          DISCORD: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          [ -z "$DISCORD" ] && { echo "DISCORD_WEBHOOK unset; skipping alert"; exit 0; }
+          curl -sf -H 'Content-Type: application/json' \
+            -d "{\"content\":\"🚨 crosswords PRODUCTION artifact canary FAILED — blank/poisoned front door or the origin re-armed immutable-on-404 — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
+            "$DISCORD" || true
+
   publish-demo:
     name: Publish demo video
     needs: canary

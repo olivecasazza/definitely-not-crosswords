@@ -98,6 +98,9 @@ struct RemoteSelection {
     key: QKey,
     color: String,
     name: String,
+    /// The socket is reconnecting, so this ring is a last-known position rather
+    /// than a live one. Rendered dimmed instead of dropped (DEF-175 §4).
+    stale: bool,
 }
 
 /// Presence entries older than this many seconds stop rendering.
@@ -192,6 +195,66 @@ fn parse_members(data: &Value) -> Vec<MemberInfo> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Pull the board's source of truth out of an `activeGame.get` response.
+fn parse_board(data: &Value) -> (Vec<Question>, Vec<GameAction>) {
+    let questions: Vec<Question> = data
+        .get("game")
+        .and_then(|g| g.get("questions"))
+        .and_then(|q| serde_json::from_value(q.clone()).ok())
+        .unwrap_or_default();
+    let actions: Vec<GameAction> = data
+        .get("actions")
+        .and_then(|a| serde_json::from_value(a.clone()).ok())
+        .unwrap_or_default();
+    (questions, actions)
+}
+
+/// Replace `questions` / `actions` / `members` wholesale from `activeGame.get`.
+///
+/// The reconcile step of a reconnect (DEF-175 §3). Every action taken while
+/// the socket was down is missing from the local append-only `actions` list, and
+/// nothing else can recover it — so the only correct repair is to re-read the
+/// server's state and overwrite. All three are already signals, so this is a
+/// `set`, not a re-render of the page.
+fn reconcile_game(
+    id: &str,
+    questions: Signal<Vec<Question>>,
+    actions: Signal<Vec<GameAction>>,
+    members: Signal<Vec<MemberInfo>>,
+) {
+    let id = id.to_string();
+    let mut questions = questions;
+    let mut actions = actions;
+    let mut members = members;
+    spawn_local(async move {
+        let Ok(data) = net::query("activeGame.get", Some(json!({ "id": id }))).await else {
+            // Leave the board alone: a failed reconcile is strictly better
+            // than an empty one, and the next reconnect will try again.
+            return;
+        };
+        let (qs, acts) = parse_board(&data);
+        questions.set(qs);
+        actions.set(acts);
+        members.set(parse_members(&data));
+    });
+}
+
+/// Should stale presence be pruned right now?
+///
+/// The 45s TTL clears players who closed their tab without a goodbye. While the
+/// socket is only reconnecting, that is exactly what it cannot tell apart from
+/// "the network dropped" — the rings are stale but not absent, so they are kept
+/// and rendered dimmed (DEF-175 §4). `Connecting` is grouped with
+/// `Reconnecting` because it is the same situation one step earlier: nothing has
+/// arrived yet to say anyone left. `Offline` does prune — with the connection
+/// gone, a roster of ghosts is worse than an empty bar.
+fn retains_presence(state: &net::ConnectionState) -> bool {
+    matches!(
+        state,
+        net::ConnectionState::Connecting | net::ConnectionState::Reconnecting { .. }
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -297,9 +360,17 @@ pub fn GamePlay(id: String) -> Element {
     // history context and would panic. The effect below navigates in-runtime.
     let mut completed_redirect = use_signal(|| Option::<String>::None);
 
+    // Connection state for the co-op socket (DEF-175). One state for the whole
+    // screen, not one per subscription: all three emitters share it, so they
+    // cannot render three disagreeing badges. Taken here, in a `use_hook`, so
+    // the root-scoped signal behind it is created while a Dioxus runtime is
+    // live rather than from a bare task.
+    let conn = use_hook(net::connection);
+
     let id_for_load = id.clone();
 
     // --- load + subscribe (once) ---
+    let conn_for_load = conn.clone();
     use_hook(move || {
         let mut questions = questions;
         let mut actions = actions;
@@ -317,15 +388,7 @@ pub fn GamePlay(id: String) -> Element {
                     loading.set(false);
                 }
                 Ok(data) => {
-                    let qs: Vec<Question> = data
-                        .get("game")
-                        .and_then(|g| g.get("questions"))
-                        .and_then(|q| serde_json::from_value(q.clone()).ok())
-                        .unwrap_or_default();
-                    let acts: Vec<GameAction> = data
-                        .get("actions")
-                        .and_then(|a| serde_json::from_value(a.clone()).ok())
-                        .unwrap_or_default();
+                    let (qs, acts) = parse_board(&data);
                     questions.set(qs);
                     actions.set(acts);
                     members.set(parse_members(&data));
@@ -338,103 +401,170 @@ pub fn GamePlay(id: String) -> Element {
             }
         });
 
+        // Every subscription reports into the same connection state, and the
+        // first `Live` after a drop is where a dropped socket gets repaired.
+        //
+        // ORDERING IS LOAD-BEARING (DEF-175 §3). `net::supervise` reports
+        // `Live` only after the re-subscription's start frame has landed, so by
+        // the time this runs the sockets are already live again and the fetch
+        // below writes a superset of anything they delivered — overwriting
+        // cannot lose an action. Fetch-then-subscribe would drop every action
+        // taken in the gap between the two, which is the same class of bug as
+        // the `booted` latch in DEF-148.
+        //
+        // The first-ever `Live` is deliberately skipped: there is nothing to
+        // reconcile, and re-fetching would discard the optimistic local merge
+        // the player has not submitted yet.
+        let seen_live = Rc::new(RefCell::new(false));
+        let on_state = Rc::new(RefCell::new({
+            let questions = questions;
+            let actions = actions;
+            let members = members;
+            let seen_live = seen_live.clone();
+            let id = id_for_load.clone();
+            move |s: net::ConnectionState| {
+                if s != net::ConnectionState::Live
+                    || std::mem::replace(&mut *seen_live.borrow_mut(), true)
+                {
+                    return;
+                }
+                reconcile_game(&id, questions, actions, members);
+            }
+        }));
+        let on_state_for = move |s: net::ConnectionState| on_state.borrow_mut()(s);
+
         // Subscriptions: both emitters are global (no input). We filter by
         // activeGameId off the raw JSON before merging / navigating.
         let id_actions = id_for_load.clone();
-        let on_actions = net::subscribe("activeGame.onAddActions", None, move |data: Value| {
-            // payload is an array of GameAction; each carries activeGameId.
-            let arr = match data.as_array() {
-                Some(a) => a,
-                None => return,
-            };
-            let mut incoming: Vec<GameAction> = Vec::new();
-            for v in arr {
-                let belongs = v
-                    .get("activeGameId")
-                    .and_then(|x| x.as_str())
-                    .map(|s| s == id_actions)
-                    .unwrap_or(true);
-                if !belongs {
-                    continue;
-                }
-                if let Ok(a) = serde_json::from_value::<GameAction>(v.clone()) {
-                    incoming.push(a);
-                }
-            }
-            if !incoming.is_empty() {
-                // Stagger application so remote letters land one-by-one (≈90ms
-                // apart) instead of the whole word flashing in at once. The
-                // viewer sees the other player "typing" even though the wire
-                // protocol only carries the submitted guess.
-                let mut actions_sig = actions.clone();
-                spawn_local(async move {
-                    for (i, a) in incoming.into_iter().enumerate() {
-                        if i > 0 {
-                            TimeoutFuture::new(90).await;
-                        }
-                        let mut cur = actions_sig.peek().clone();
-                        cur.push(a);
-                        actions_sig.set(cur);
+        let on_actions = net::subscribe(
+            "activeGame.onAddActions",
+            None,
+            move |data: Value| {
+                // payload is an array of GameAction; each carries activeGameId.
+                let arr = match data.as_array() {
+                    Some(a) => a,
+                    None => return,
+                };
+                let mut incoming: Vec<GameAction> = Vec::new();
+                for v in arr {
+                    let belongs = v
+                        .get("activeGameId")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s == id_actions)
+                        .unwrap_or(true);
+                    if !belongs {
+                        continue;
                     }
-                });
-            }
-        });
+                    if let Ok(a) = serde_json::from_value::<GameAction>(v.clone()) {
+                        incoming.push(a);
+                    }
+                }
+                if !incoming.is_empty() {
+                    // Stagger application so remote letters land one-by-one (≈90ms
+                    // apart) instead of the whole word flashing in at once. The
+                    // viewer sees the other player "typing" even though the wire
+                    // protocol only carries the submitted guess.
+                    //
+                    // Deliberately NOT used on the reconcile path: there the whole
+                    // list is replaced at once, so the board snaps to correct
+                    // instead of replaying the outage. DEF-175 §3.
+                    let mut actions_sig = actions.clone();
+                    spawn_local(async move {
+                        for (i, a) in incoming.into_iter().enumerate() {
+                            if i > 0 {
+                                TimeoutFuture::new(90).await;
+                            }
+                            let mut cur = actions_sig.peek().clone();
+                            cur.push(a);
+                            actions_sig.set(cur);
+                        }
+                    });
+                }
+            },
+            on_state_for.clone(),
+        );
 
         let id_done = id_for_load.clone();
-        let on_done = net::subscribe("activeGame.onGameCompleted", None, move |data: Value| {
-            let active = data.get("activeGameId").and_then(|x| x.as_str());
-            let completed = data.get("completedGameId").and_then(|x| x.as_str());
-            if active == Some(id_done.as_str()) {
-                if let Some(cid) = completed {
-                    completed_redirect.set(Some(cid.to_string()));
+        let on_done = net::subscribe(
+            "activeGame.onGameCompleted",
+            None,
+            move |data: Value| {
+                let active = data.get("activeGameId").and_then(|x| x.as_str());
+                let completed = data.get("completedGameId").and_then(|x| x.as_str());
+                if active == Some(id_done.as_str()) {
+                    if let Some(cid) = completed {
+                        // Idempotent on purpose. A reconnect replays the
+                        // completion event, and `completed_redirect` drives a
+                        // navigation — setting it twice would double-navigate.
+                        // DEF-175 §3.
+                        if completed_redirect.peek().is_none() {
+                            completed_redirect.set(Some(cid.to_string()));
+                        }
+                    }
                 }
-            }
-        });
+            },
+            on_state_for.clone(),
+        );
 
         // Presence: other members' live clue selections. Global emitter like
         // the others — filter by activeGameId (and drop our own echoes).
         let id_pres = id_for_load.clone();
-        let on_presence = net::subscribe("activeGame.onPresence", None, move |data: Value| {
-            if data.get("activeGameId").and_then(|x| x.as_str()) != Some(id_pres.as_str()) {
-                return;
-            }
-            let uid = match data.get("userId").and_then(|x| x.as_str()) {
-                Some(u) => u.to_string(),
-                None => return,
-            };
-            if state.user().map(|u| u.id == uid).unwrap_or(false) {
-                return;
-            }
-            let selection = match (
-                data.get("number").and_then(|v| v.as_i64()),
-                data.get("direction")
+        let on_presence = net::subscribe(
+            "activeGame.onPresence",
+            None,
+            move |data: Value| {
+                if data.get("activeGameId").and_then(|x| x.as_str()) != Some(id_pres.as_str()) {
+                    return;
+                }
+                let uid = match data.get("userId").and_then(|x| x.as_str()) {
+                    Some(u) => u.to_string(),
+                    None => return,
+                };
+                if state.user().map(|u| u.id == uid).unwrap_or(false) {
+                    return;
+                }
+                let selection = match (
+                    data.get("number").and_then(|v| v.as_i64()),
+                    data.get("direction")
+                        .and_then(|x| x.as_str())
+                        .and_then(direction_from_str),
+                ) {
+                    (Some(n), Some(d)) => Some((n as i32, d)),
+                    _ => None,
+                };
+                let name = data
+                    .get("name")
                     .and_then(|x| x.as_str())
-                    .and_then(direction_from_str),
-            ) {
-                (Some(n), Some(d)) => Some((n as i32, d)),
-                _ => None,
-            };
-            let name = data
-                .get("name")
-                .and_then(|x| x.as_str())
-                .unwrap_or("Anonymous Player")
-                .to_string();
-            presence.write().insert(
-                uid,
-                PresenceEntry {
-                    name,
-                    selection,
-                    tick: *clock.peek(),
-                },
-            );
-        });
+                    .unwrap_or("Anonymous Player")
+                    .to_string();
+                presence.write().insert(
+                    uid,
+                    PresenceEntry {
+                        name,
+                        selection,
+                        tick: *clock.peek(),
+                    },
+                );
+            },
+            on_state_for,
+        );
 
         // Prune stale presence every 5s — a closed tab never sends a clear.
+        let conn_for_prune = conn_for_load.clone();
         spawn(async move {
             let mut ticks = IntervalStream::new(5_000);
             while ticks.next().await.is_some() {
                 let now = *clock.peek() + 5;
                 clock.set(now);
+                // Do NOT prune while the socket is merely reconnecting
+                // (DEF-175 §4). The TTL exists to clear players who closed
+                // their tab without a goodbye; during a reconnect these rings
+                // are last-known rather than absent, and dropping them makes a
+                // network blip read as "everyone left the game". The board
+                // renders them dimmed instead.
+                if retains_presence(&conn_for_prune.state()) {
+                    continue;
+                }
                 let any_stale = presence
                     .peek()
                     .values()
@@ -1170,6 +1300,13 @@ pub fn GamePlay(id: String) -> Element {
         });
     };
 
+    // "Retry now", on the offline pill. Re-enters the retry ladder with the
+    // attempt counter reset and no backoff wait (DEF-175 §2).
+    let retry_now = {
+        let conn = conn.clone();
+        move |_: Event<MouseData>| conn.retry_now()
+    };
+
     // ------------------------------------------------------------------------
     if *loading.read() {
         return rsx! {
@@ -1201,6 +1338,10 @@ pub fn GamePlay(id: String) -> Element {
     let board_data = board.read().clone();
     let (size, grid) = (*board_data).clone();
 
+    // Read with `read()`, not `peek()`: this is the render dependency that
+    // makes the connection pill follow the socket.
+    let conn_state = conn.signal();
+
     let body = move |kind: PanelId, _max: bool| -> Element {
         match kind {
             PanelId::Board => {
@@ -1213,6 +1354,9 @@ pub fn GamePlay(id: String) -> Element {
                     .unwrap_or(false);
                 let tick = *clock.read();
                 // Live remote selections → colored focus borders on the board.
+                // `stale_rings` dims them rather than dropping them while the
+                // socket is only reconnecting.
+                let stale_rings = retains_presence(&conn_state.read());
                 let remote: Vec<RemoteSelection> = presence
                     .read()
                     .iter()
@@ -1222,6 +1366,7 @@ pub fn GamePlay(id: String) -> Element {
                             key: q,
                             color: player_color(uid, my_id.as_deref()),
                             name: e.name.clone(),
+                            stale: stale_rings,
                         })
                     })
                     .collect();
@@ -1235,6 +1380,9 @@ pub fn GamePlay(id: String) -> Element {
                             tick,
                             *invite_copied.read(),
                             copy_invite.clone(),
+                            *conn_state.read(),
+                            stale_rings,
+                            retry_now.clone(),
                         )}
                         div { class: "cw-board-area",
                             {render_board(
@@ -1482,13 +1630,21 @@ fn render_board(
                                                     .any(|c| c.cord_x == x && c.cord_y == y)
                                         })
                                     });
-                                    let (ring, ring_title) = match remote_hit {
+                                    let (ring, ring_title, ring_stale) = match remote_hit {
                                         Some(r) => (
                                             format!("box-shadow: inset 0 0 0 2px {};", r.color),
                                             format!("{} is working here", r.name),
+                                            // Last-known, not live: the socket is
+                                            // reconnecting, so dim the cell rather
+                                            // than let the TTL prune the ring and
+                                            // read as "they left". DEF-175 §4.
+                                            r.stale,
                                         ),
-                                        None => (String::new(), String::new()),
+                                        None => (String::new(), String::new(), false),
                                     };
+                                    if ring_stale {
+                                        classes.push_str(" cw-ring-stale");
+                                    }
                                     let display = if selected {
                                         typed_at(x, y)
                                     } else {
@@ -1747,6 +1903,9 @@ fn render_players_strip(
     tick: u64,
     invite_copied: bool,
     mut copy_invite: impl FnMut(Event<MouseData>) + Clone + 'static,
+    conn: net::ConnectionState,
+    stale: bool,
+    retry_now: impl FnMut(Event<MouseData>) + Clone + 'static,
 ) -> Element {
     // (uid, name, is_owner, live selection)
     let mut chips: Vec<(String, String, bool, Option<QKey>)> = Vec::new();
@@ -1765,6 +1924,10 @@ fn render_players_strip(
         chips.push((uid.clone(), e.name.clone(), false, e.selection));
     }
 
+    // Snapshot the state before the closure below borrows other things, so the
+    // pill reads one consistent value.
+    let pill = render_conn_pill(conn, retry_now);
+
     rsx! {
         div { class: "cw-players",
             for (uid, name, is_owner, sel) in chips {
@@ -1773,7 +1936,7 @@ fn render_players_strip(
                     let is_you = Some(uid.as_str()) == my_id;
                     rsx! {
                         span {
-                            class: "cw-chip",
+                            class: if stale { "cw-chip cw-chip-stale" } else { "cw-chip" },
                             key: "{uid}",
                             // The underline correlates the chip with that
                             // player's focus ring on the board.
@@ -1795,10 +1958,74 @@ fn render_players_strip(
                     }
                 }
             }
+            {pill}
             button {
                 class: "cw-invite-btn",
                 onclick: move |e| copy_invite(e),
                 if invite_copied { "Link copied ✓" } else { "Copy invite link" }
+            }
+        }
+    }
+}
+
+/// The co-op socket's status pill, rendered in the roster bar (DEF-175 §5).
+///
+/// While the socket is live this renders NOTHING, and that is the assertion
+/// worth keeping: a permanent "connected" badge is chrome that is right 100% of
+/// the time, which is what makes it read as noise. The e2e spec asserts the
+/// absence rather than taking it on trust.
+///
+/// The copy is honest about the *direction* of the failure. During an outage the
+/// player's own letters are not reaching the other players, and that is the
+/// fact that changes what they do next — a vague "Connection lost" hides it.
+fn render_conn_pill(
+    state: net::ConnectionState,
+    mut retry_now: impl FnMut(Event<MouseData>) + Clone + 'static,
+) -> Element {
+    let (variant, label, attempt) = match state {
+        // No badge at all while healthy.
+        net::ConnectionState::Live => return rsx! {},
+        // "Connecting" is only ever the very first open, so say that rather
+        // than claiming a reconnect that has not happened yet.
+        net::ConnectionState::Connecting => ("warn", "Connecting…".to_string(), None),
+        net::ConnectionState::Reconnecting { attempt } => {
+            let label = "Reconnecting…".to_string();
+            if attempt > 1 {
+                ("warn", label, Some(attempt))
+            } else {
+                ("warn", label, None)
+            }
+        }
+        net::ConnectionState::Offline => (
+            "error",
+            "Connection lost — your letters aren't being shared".to_string(),
+            None,
+        ),
+    };
+    let key = match attempt {
+        Some(n) => format!("reconnecting-{n}"),
+        None => variant.to_string(),
+    };
+    let cls = format!("cw-conn-pill cw-conn-{variant}");
+    rsx! {
+        span {
+            // `data-conn-state` is the e2e hook: a test needs to tell
+            // "reconnecting" from "offline" without matching on copy.
+            class: "{cls}",
+            key: "{key}",
+            role: "status",
+            "aria-live": "polite",
+            "data-conn-state": "{variant}",
+            "{label}"
+            if let Some(n) = attempt {
+                span { class: "cw-conn-attempt", "({n}/{net::MAX_RETRY_ATTEMPTS})" }
+            }
+            if variant == "error" {
+                button {
+                    class: "cw-conn-retry",
+                    onclick: move |e| retry_now(e),
+                    "Retry now"
+                }
             }
         }
     }
@@ -1860,6 +2087,27 @@ const GAME_CSS: &str = r#"
 .cw-chip-clue { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .cw-invite-btn { margin-left: auto; padding: 4px 12px; font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .cw-invite-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+/* The co-op socket's status pill (DEF-175 §5). Rendered in the roster bar, which
+   is the co-op surface: always visible, already carrying per-player live state,
+   and where a player looks to understand who is doing what.
+
+   Fill and ink come from the same theme-stable pair the selection fills use
+   (--fill-yellow/--fill-ink, --fill-green/--fill-ink): --color-warning and
+   --color-error are --pastel-yellow/--pastel-red, which light mode darkens and
+   flips the ink on. --contrast-ink is dark in both themes on the pastels and
+   white on the light-mode pastels, so it clears 4.5:1 against either fill in
+   either theme (measured: 14.9:1 and 8.0:1 dark, 6.7:1 and 6.6:1 light). */
+.cw-conn-pill { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; padding: 3px 10px; font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; line-height: 1.4; border: 1px solid; animation: cw-conn-breathe 2.4s ease-in-out infinite; }
+@keyframes cw-conn-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .72; } }
+.cw-conn-warn { background: var(--color-warning); color: var(--contrast-ink); border-color: var(--pastel-yellow); }
+.cw-conn-error { background: var(--color-error); color: var(--contrast-ink); border-color: var(--pastel-red); }
+.cw-conn-attempt { font-variant-numeric: tabular-nums; opacity: .85; }
+.cw-conn-retry { margin-left: 2px; padding: 1px 8px; font: inherit; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; background: transparent; color: inherit; border: 1px solid currentColor; cursor: pointer; }
+.cw-conn-retry:hover { background: color-mix(in srgb, var(--contrast-ink) 14%, transparent); }
+/* A last-known position, not a live one: the socket is reconnecting. Dimmed
+   rather than dropped, so a network blip does not read as "everyone left". */
+.cw-chip-stale { opacity: .55; }
+.cw-ring-stale { opacity: .55; }
 .cw-join-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: var(--scrim); backdrop-filter: blur(2px); }
 .cw-join-card { display: flex; flex-direction: column; gap: 12px; max-width: 22rem; padding: 24px 28px; text-align: center; background: var(--bg-card); border: 1px solid var(--border-app); }
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }

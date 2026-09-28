@@ -366,6 +366,13 @@ a { color: inherit; text-decoration: none; }
      .square-pulse-cell guard above. */
   .session-skeleton { animation: none !important; opacity: .6 !important; }
 
+  /* The co-op socket's status pill (DEF-175 §5). A warning pill breathes at
+     2.4s. Under `reduce` it renders static — a status indicator that demands
+     attention through motion is wrong for the users who have asked for least
+     motion, and the text alone already carries the whole message. The stale
+     dimming is an opacity, not an animation, so it needs no guard. */
+  .cw-conn-pill { animation: none !important; opacity: 1 !important; }
+
   /* The Pro upsell spinner: freeze the rotation, keep the 3/4 ring so it
      still reads as a spinner rather than a static dot. */
   .pro-upgrade .spin-ring { animation: none !important; }

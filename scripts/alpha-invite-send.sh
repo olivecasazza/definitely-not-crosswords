@@ -115,6 +115,32 @@ else
   jq '.' "$ROSTER" > "$TMPD/roster.json"
 fi
 
+# The extracted rows must be a non-empty array. Both cases below used to fall
+# through as a green run, which is the one shape this script refuses to produce:
+#
+#   * An empty or truncated file. `jq 'length'` on an empty file prints nothing
+#     and still exits 0, so ROWS became "" and the walk below iterated zero
+#     times and exited 0. A wave that mailed nobody reported success.
+#   * `{"roster":[]}`, which parses cleanly and yields length 0. Same green run,
+#     same "nothing left to do" reading.
+#
+# A truncated roster is an ordinary way to lose a file (a partial write, a
+# heredoc that lost its stdin — which is how this was found). It must be a hard
+# stop, not an empty summary.
+if ! jq -e 'type == "array"' "$TMPD/roster.json" >/dev/null 2>&1; then
+  echo "ABORT: $ROSTER did not yield a JSON array of roster rows." >&2
+  echo "  The file is empty or truncated — a partial write, or a redirect" >&2
+  echo "  whose stdin went nowhere. Restore the real roster and re-run." >&2
+  exit 1
+fi
+ROWS="$(jq 'length' "$TMPD/roster.json")"
+if [[ "$ROWS" -eq 0 ]]; then
+  echo "ABORT: $ROSTER contains zero roster rows." >&2
+  echo "  A zero-row wave exits 0 and reads like a finished send. Nothing was" >&2
+  echo "  emailed and nothing is wrong with the host — the roster is the problem." >&2
+  exit 1
+fi
+
 # Wave-level consent, honoured only when all three provenance fields are present
 # — the same three the per-row gate demands. `all` covers the wave; `partial`
 # deliberately does not, because which subset agreed is per-person information
@@ -167,7 +193,6 @@ if [[ "$mode" != "smtp" ]]; then
 fi
 echo
 
-ROWS="$(jq 'length' "$TMPD/roster.json")"
 echo "  rows: $ROWS"
 
 # ── Consent gate (default-deny) ──────────────────────────────────────────────

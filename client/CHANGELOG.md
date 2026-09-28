@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.53](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.52...v0.1.53) - 2026-09-28
+
+### Fixed
+
+- *(web)* let the wrong-guess red compose with focus and selection (#155)
+
+### Other
+
+- changelog for v0.1.52 [skip ci]
+
+
 ## [0.1.52](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.51...v0.1.52) - 2026-09-28
 
 ### Fixed

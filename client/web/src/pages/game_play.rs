@@ -1631,17 +1631,42 @@ fn render_board(
                                         })
                                     });
                                     let (ring, ring_title, ring_stale) = match remote_hit {
-                                        Some(r) => (
-                                            format!("box-shadow: inset 0 0 0 2px {};", r.color),
-                                            format!("{} is working here", r.name),
+                                        Some(r) => {
                                             // Last-known, not live: the socket is
-                                            // reconnecting, so dim the cell rather
-                                            // than let the TTL prune the ring and
-                                            // read as "they left". DEF-175 §4.
-                                            r.stale,
-                                        ),
+                                            // reconnecting, so dim the ring rather
+                                            // than let the TTL prune it and read as
+                                            // "they left". DEF-175 §4.
+                                            //
+                                            // DEF-188 D1b: the dimming lives in the
+                                            // RING, never on the cell. `opacity`
+                                            // composites the whole element, so the
+                                            // old `.cw-ring-stale { opacity: .55 }`
+                                            // took the confirmed letter down with
+                                            // it — 3.94:1 on --bg-cell-letter in
+                                            // light mode, under AA. The position
+                                            // is last-known; the letter is not.
+                                            let ring_color = if r.stale {
+                                                format!(
+                                                    "color-mix(in srgb, {} 55%, transparent)",
+                                                    r.color
+                                                )
+                                            } else {
+                                                r.color.clone()
+                                            };
+                                            (
+                                                format!("box-shadow: inset 0 0 0 2px {ring_color};"),
+                                                format!(
+                                                    "{} is working here{}",
+                                                    r.name,
+                                                    if r.stale { " (last known — reconnecting)" } else { "" }
+                                                ),
+                                                r.stale,
+                                            )
+                                        }
                                         None => (String::new(), String::new(), false),
                                     };
+                                    // A state hook for the e2e suite, not a style: the
+                                    // visual treatment is the ring colour above.
                                     if ring_stale {
                                         classes.push_str(" cw-ring-stale");
                                     }
@@ -1934,13 +1959,31 @@ fn render_players_strip(
                 {
                     let color = player_color(&uid, my_id);
                     let is_you = Some(uid.as_str()) == my_id;
+                    // DEF-188 D1a: no `opacity` on the chip. The name is the one
+                    // thing a player needs during an outage, and at .55 it
+                    // composited to 3.89:1 on --bg-card in light mode — under AA,
+                    // on the surface that tells you who is in the game with you.
+                    // The underline (the 2px border-bottom that already correlates
+                    // the chip with that player's ring) carries the staleness
+                    // instead, and the title says it in words.
+                    let underline = if stale {
+                        format!("border-bottom: 2px solid color-mix(in srgb, {color} 55%, transparent);")
+                    } else {
+                        format!("border-bottom: 2px solid {color};")
+                    };
+                    let chip_title = if stale {
+                        "Last known position — reconnecting"
+                    } else {
+                        ""
+                    };
                     rsx! {
                         span {
                             class: if stale { "cw-chip cw-chip-stale" } else { "cw-chip" },
                             key: "{uid}",
                             // The underline correlates the chip with that
                             // player's focus ring on the board.
-                            style: "border-bottom: 2px solid {color};",
+                            style: "{underline}",
+                            title: "{chip_title}",
                             Identicon { seed: uid.clone(), size: 16 }
                             span { "{name}" }
                             if is_you {
@@ -1970,10 +2013,12 @@ fn render_players_strip(
 
 /// The co-op socket's status pill, rendered in the roster bar (DEF-175 §5).
 ///
-/// While the socket is live this renders NOTHING, and that is the assertion
-/// worth keeping: a permanent "connected" badge is chrome that is right 100% of
-/// the time, which is what makes it read as noise. The e2e spec asserts the
-/// absence rather than taking it on trust.
+/// While the socket is live — and while it is still making its very first
+/// attempt — this renders NOTHING, and that is the assertion worth keeping: a
+/// permanent "connected" badge is chrome that is right 100% of the time, which
+/// is what makes it read as noise, and a warning-coloured badge that appears on
+/// every cold load is the same noise in a louder key (DEF-188 D4). The e2e spec
+/// asserts the absence from first paint rather than taking it on trust.
 ///
 /// The copy is honest about the *direction* of the failure. During an outage the
 /// player's own letters are not reaching the other players, and that is the
@@ -1983,11 +2028,15 @@ fn render_conn_pill(
     mut retry_now: impl FnMut(Event<MouseData>) + Clone + 'static,
 ) -> Element {
     let (variant, label, attempt) = match state {
-        // No badge at all while healthy.
-        net::ConnectionState::Live => return rsx! {},
-        // "Connecting" is only ever the very first open, so say that rather
-        // than claiming a reconnect that has not happened yet.
-        net::ConnectionState::Connecting => ("warn", "Connecting…".to_string(), None),
+        // No badge while healthy, and none for the very first open either
+        // (DEF-188 D4). `Connecting` is only ever a subscription's first-ever
+        // open — net.rs sets `reported` on the first iteration and never resets
+        // it — so mapping it to `warn` put an amber badge on the roster bar of
+        // every single game load, and, because the pill is a live region, an
+        // announced "Connecting…" every single time. The play screen's own
+        // first-paint state already covers that window, and a genuine failure
+        // still reports `Reconnecting { attempt: 1 }` immediately.
+        net::ConnectionState::Live | net::ConnectionState::Connecting => return rsx! {},
         net::ConnectionState::Reconnecting { attempt } => {
             let label = "Reconnecting…".to_string();
             if attempt > 1 {
@@ -2002,17 +2051,21 @@ fn render_conn_pill(
             None,
         ),
     };
-    let key = match attempt {
-        Some(n) => format!("reconnecting-{n}"),
-        None => variant.to_string(),
-    };
     let cls = format!("cw-conn-pill cw-conn-{variant}");
     rsx! {
         span {
             // `data-conn-state` is the e2e hook: a test needs to tell
             // "reconnecting" from "offline" without matching on copy.
             class: "{cls}",
-            key: "{key}",
+            // CONSTANT, and load-bearing (DEF-188 D3). A key that churns with
+            // the attempt count (`reconnecting-2` → `reconnecting-3` → …) makes
+            // dioxus-core's keyed diff drop the old node and mount a fresh one,
+            // and re-creating an already-populated `role="status"` region is
+            // the case screen readers are least likely to announce — the
+            // counter ticks and the terminal jump to offline were both being
+            // lost. The pill sits in a fixed slot in the roster bar, so it is
+            // never reordered and the key buys nothing.
+            key: "cw-conn-pill",
             role: "status",
             "aria-live": "polite",
             "data-conn-state": "{variant}",
@@ -2091,12 +2144,14 @@ const GAME_CSS: &str = r#"
    is the co-op surface: always visible, already carrying per-player live state,
    and where a player looks to understand who is doing what.
 
-   Fill and ink come from the same theme-stable pair the selection fills use
-   (--fill-yellow/--fill-ink, --fill-green/--fill-ink): --color-warning and
-   --color-error are --pastel-yellow/--pastel-red, which light mode darkens and
-   flips the ink on. --contrast-ink is dark in both themes on the pastels and
-   white on the light-mode pastels, so it clears 4.5:1 against either fill in
-   either theme (measured: 14.9:1 and 8.0:1 dark, 6.7:1 and 6.6:1 light). */
+   The fill is --color-warning / --color-error, i.e. --pastel-yellow /
+   --pastel-red, which light mode darkens — so the INK is --contrast-ink and
+   nothing else. It is dark in both themes on the dark pastels and white on the
+   light-mode pastels, so it clears 4.5:1 against either fill in either theme
+   (measured: 14.9:1 and 8.0:1 dark, 6.7:1 and 6.6:1 light; DEF-188 D5). The
+   earlier version of this comment named the theme-stable --fill-*/--fill-ink
+   pair the selection fills use, and someone "correcting" the code to match it
+   would have shipped --fill-ink, which is 2.65:1 in light mode. */
 .cw-conn-pill { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; padding: 3px 10px; font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; line-height: 1.4; border: 1px solid; animation: cw-conn-breathe 2.4s ease-in-out infinite; }
 @keyframes cw-conn-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .72; } }
 .cw-conn-warn { background: var(--color-warning); color: var(--contrast-ink); border-color: var(--pastel-yellow); }
@@ -2105,9 +2160,15 @@ const GAME_CSS: &str = r#"
 .cw-conn-retry { margin-left: 2px; padding: 1px 8px; font: inherit; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; background: transparent; color: inherit; border: 1px solid currentColor; cursor: pointer; }
 .cw-conn-retry:hover { background: color-mix(in srgb, var(--contrast-ink) 14%, transparent); }
 /* A last-known position, not a live one: the socket is reconnecting. Dimmed
-   rather than dropped, so a network blip does not read as "everyone left". */
-.cw-chip-stale { opacity: .55; }
-.cw-ring-stale { opacity: .55; }
+   rather than dropped, so a network blip does not read as "everyone left".
+   DEF-188 D1: the dimming is a `color-mix` on the underline (chip) and on the
+   inset ring (cell), both emitted inline. It used to be `opacity: .55` on the
+   element, which composites the WHOLE element — the player's name on the chip
+   fell to 3.89:1 on --bg-card and the confirmed letter inside a stale ring fell
+   to 3.94:1 on --bg-cell-letter, both under AA in light mode. Only the
+   non-text decoration is dimmed now; the classes stay as state hooks for e2e. */
+.cw-chip-stale { border-bottom-style: dashed; }
+.cw-ring-stale { outline: none; }
 .cw-join-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: var(--scrim); backdrop-filter: blur(2px); }
 .cw-join-card { display: flex; flex-direction: column; gap: 12px; max-width: 22rem; padding: 24px 28px; text-align: center; background: var(--bg-card); border: 1px solid var(--border-app); }
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
@@ -2132,15 +2193,50 @@ const GAME_CSS: &str = r#"
    container-query sizing exists to prevent. */
 .cw-row { display: contents; }
 .cw-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; text-transform: uppercase; user-select: none; font-size: calc(var(--cw-cell) * 0.58); line-height: 1; min-width: 0; min-height: 0; }
-/* Keyboard focus ring. `.cw-focused` is the GAME cursor (a fill), which is not
-   a focus indicator — a player who arrow-keys across a solved word sees the
-   fill move without any indication of where the caret is. The ring is inset
-   (`outline-offset: -2px`) so it adds no layout and cannot change cell size, and
-   it is drawn in --fill-ink, which stays dark in BOTH themes, so it reads on the
-   yellow cursor fill and on a filled cell in dark and light mode alike. A ring
-   that only worked on dark would repeat the .cw-input-focused bloom below. */
-.cw-cell:focus-visible { outline: 2px solid var(--fill-ink); outline-offset: -2px; }
 .cw-block { background: var(--bg-cell-empty); border: 1px solid color-mix(in srgb, var(--border-app) 25%, transparent); opacity: 0.4; }
+/* Keyboard focus ring, two-tone on a ::after (DEF-188 D2).
+
+   `.cw-focused` is the GAME cursor (a --fill-yellow fill), which is not a focus
+   indicator — a player who arrow-keys across a solved word sees the fill move
+   without any indication of where the caret is. The ring is needed, and on
+   first Tab into the board the roving cell is a bare `.cw-letter`, so this is
+   the common case, not an edge case.
+
+   One colour cannot clear 3:1 against BOTH cell fills: --fill-ink is 14.8:1 on
+   the yellow cursor but 1.10:1 on a plain letter cell, and --text-primary is
+   the mirror image. So the ring is two tones, outer light and inner dark:
+
+     outer  --text-primary   14.8:1 dark / 17.7:1 light on a plain .cw-letter
+     inner  --fill-ink       14.8:1 dark / 13.7:1 light on the --fill-yellow cursor
+
+   Whichever fill the cell has, one of the two bands has 3:1 against it — which
+   is the WCAG 1.4.11 requirement for a focus indicator.
+
+   WHY ::after, NOT the cell's own box-shadow: the remote presence ring is an
+   inline `box-shadow: inset 0 0 0 2px …` on this same element, and an inline
+   style overwrites any stylesheet `box-shadow`, so a focus band placed there
+   would either be clobbered by the ring or clobber it. A pseudo-element is its
+   own box: the two cannot collide, the remote ring keeps the outer 0–2px band
+   to itself, and neither can change layout. `.cw-cell` is already
+   `position: relative`, which is what the ::after hangs off.
+
+   `outline: none` on the cell is safe in forced-colours mode: the palette
+   cannot repaint a box-shadow, but it does repaint the ::after's OWN outline,
+   so the indicator survives where the old inset ring would have vanished. The
+   z-index lifts the ring above `.cw-focused`'s `scale(1.05)` neighbour, so
+   arrow-keying onto a cell next to the cursor does not clip the ring. */
+.cw-cell:focus-visible { outline: none; z-index: 3; }
+.cw-cell:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 2px var(--text-primary),
+    inset 0 0 0 4px var(--fill-ink);
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
 .cw-letter { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--border-app); cursor: pointer; transition: all .12s ease; }
 .cw-letter:hover { border-color: var(--border-hover); }
 /* The cursor. --fill-yellow/--fill-ink rather than --pastel-yellow/

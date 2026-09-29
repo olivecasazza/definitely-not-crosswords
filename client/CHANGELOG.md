@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.62](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.61...v0.1.62) - 2026-09-29
+
+### Fixed
+
+- *(design)* move the body sans off Montserrat to Bricolage Grotesque
+
+### Other
+
+- changelog for v0.1.61 [skip ci]
+
+
 ## [0.1.61](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.60...v0.1.61) - 2026-09-29
 
 ### Other

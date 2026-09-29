@@ -240,6 +240,70 @@ if [[ -n "$WAVE_CONSENT_RAW" ]]; then
   WAVE_SOURCE="$(cut -d'|' -f3 <<< "$WAVE_CONSENT_RAW")"
 fi
 
+# When this wave is planned to go out. A separate field from the consent date
+# because "we agreed to this on the 1st" and "this sends on the 12th" are
+# different facts, and the wave is routinely the second while the card that
+# collects the first has not been answered yet. Optional; validated for shape
+# only, and a future value is the point of it, not an error.
+WAVE_SEND_ON="$(jq -r 'if type == "object" then (.wave.send_on // "") else "" end' "$ROSTER")"
+
+# ── Consent dates cannot be in the future (DEF-229) ───────────────────────────
+# A consent date is a claim about a human act: somebody agreed on that day. A
+# day that has not happened yet is not a claim, it is a planned wave wearing a
+# consent field's name — and the roster format cannot tell which one was meant,
+# so the only safe reading is the one that does not mail. Both the wave answer
+# and the per-row dates are checked, and either refuses the whole run rather
+# than skipping: a roster carrying a consent date that never happened has a data
+# error in it, and sending the other eleven rows would report a wave built on
+# that error as a finished send.
+#
+# The mirror image already exists on the withdrawal side (DEF-228), which
+# refuses to date a withdrawal before the consent it retracts. This closes the
+# other direction: a consent may not be dated after the mail that cites it.
+TODAY="$(date -u +%F)"
+TODAY_EPOCH="$(date_epoch "$TODAY")"
+
+abort_bad_consent_date() {
+  local field="$1" when="$2" who="$3"
+  if [[ -z "$(date_epoch "$when")" ]]; then
+    echo "ABORT: $who has $field '$when', which is not a real calendar date." >&2
+    echo "  jq normalises 2026-02-31 to 2026-03-02, so this is checked by" >&2
+    echo "  round trip and the value above is a string, not a day. Correct it" >&2
+    echo "  to the day the person actually agreed (YYYY-MM-DD) and re-run." >&2
+  else
+    echo "ABORT: $who has $field '$when', which is after today ($TODAY)." >&2
+    echo "  A consent date is the day somebody actually agreed. A day that has" >&2
+    echo "  not happened yet is a scheduled wave, not consent, and sending on" >&2
+    echo "  it would mail before the agreement it claims to rest on." >&2
+    echo "  Either correct $field to the day the person agreed, or move the" >&2
+    echo "  planned send to wave.send_on (YYYY-MM-DD, may be in the future)." >&2
+  fi
+  exit 1
+}
+
+if [[ -n "$WAVE_RECORDED" ]]; then
+  if [[ -z "$(date_epoch "$WAVE_RECORDED")" \
+     || "$TODAY_EPOCH" -lt "$(date_epoch "$WAVE_RECORDED")" ]]; then
+    abort_bad_consent_date "consent.recorded_at" "$WAVE_RECORDED" "the wave answer"
+  fi
+fi
+
+if [[ -n "$WAVE_SEND_ON" && -z "$(date_epoch "$WAVE_SEND_ON")" ]]; then
+  echo "ABORT: wave.send_on is '$WAVE_SEND_ON', which is not a real calendar date." >&2
+  echo "  Correct it to the day the wave is planned to go out (YYYY-MM-DD)." >&2
+  exit 1
+fi
+
+for i in $(seq 0 $((ROWS - 1))); do
+  row_when="$(jq -r --argjson i "$i" '.[$i].consent_recorded_at // ""' "$TMPD/roster.json")"
+  [[ -z "$row_when" ]] && continue
+  if [[ -z "$(date_epoch "$row_when")" \
+     || "$TODAY_EPOCH" -lt "$(date_epoch "$row_when")" ]]; then
+    row_who="$(jq -r --argjson i "$i" '(.[$i].email // ("row " + ($i | tostring)))' "$TMPD/roster.json")"
+    abort_bad_consent_date "consent_recorded_at" "$row_when" "row $i ($row_who)"
+  fi
+done
+
 # Loaded before the header so the ledger in force is printed on every run, and
 # before the gate so a withdrawn address cannot be emailed.
 load_withdrawals
@@ -251,6 +315,14 @@ if [[ -n "$WAVE_ANSWER" ]]; then
   echo "wave consent:      $WAVE_ANSWER (recorded $WAVE_RECORDED, source: $WAVE_SOURCE)"
 else
   echo "wave consent:      none recorded"
+fi
+if [[ -n "$WAVE_SEND_ON" ]]; then
+  if [[ "$(date_epoch "$WAVE_SEND_ON")" -gt "$TODAY_EPOCH" ]]; then
+    echo "wave scheduled:    $WAVE_SEND_ON (future — a plan, not a consent;"
+    echo "                   today's date is what gates sending)"
+  else
+    echo "wave scheduled:    $WAVE_SEND_ON"
+  fi
 fi
 if [[ -n "$WITHDRAW" ]]; then
   echo "withdrawals:       ${WITHDRAWALS:-(none configured)} — this run records $WITHDRAW"

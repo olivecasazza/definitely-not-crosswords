@@ -53,6 +53,13 @@ export PATH="$WORK/bin:$PATH"
 passed=0
 failed=0
 
+# Consent dates are relative to the system clock, never hardcoded: a fixture
+# pinned to a literal 2026-10-01 is a consent dated in the future on any day
+# before it, which DEF-229 now refuses, and a date in the past forever after.
+TODAY="$(date -u +%F)"
+FUTURE="$(date -u -d '+30 days' +%F)"
+PAST="$(date -u -d '-30 days' +%F)"
+
 # run <label> <expected-exit> <args...>
 run() {
   local label="$1" want="$2"
@@ -92,8 +99,10 @@ expect() {
 }
 
 # A roster that is consented and well-formed, so the happy path has a baseline.
-cat > "$WORK/good.json" <<'JSON'
-{"consent":{"answer":"all","recorded_at":"2026-10-01","source":"issue-card:cb560df2"},
+# The consent is dated in the past: DEF-229 refuses a consent dated after today,
+# so a baseline pinned to a future literal would abort the whole suite.
+cat > "$WORK/good.json" <<JSON
+{"consent":{"answer":"all","recorded_at":"$PAST","source":"issue-card:cb560df2"},
  "roster":[{"email":"a@example.com","name":"A"},
            {"email":"b@example.com","name":"B","consent":false}]}
 JSON
@@ -135,22 +144,22 @@ echo "consent is default-deny"
 echo '[{"email":"a@example.com","name":"A"}]' > "$WORK/noconsent.json"
 expect "no consent anywhere: row is skipped" 0 \
   'CONSENT GATE: 1 row(s) will NOT be emailed' --roster "$WORK/noconsent.json"
-echo '{"consent":{"answer":"none","recorded_at":"2026-10-01","source":"s"},"roster":[{"email":"a@example.com","name":"A"}]}' > "$WORK/none.json"
+echo '{"consent":{"answer":"none","recorded_at":"'$PAST'","source":"s"},"roster":[{"email":"a@example.com","name":"A"}]}' > "$WORK/none.json"
 expect "wave answer 'none' emails nobody" 0 \
   'CONSENT GATE: 1 row(s) will NOT be emailed' --roster "$WORK/none.json"
-echo '{"consent":{"answer":"partial","recorded_at":"2026-10-01","source":"s"},"roster":[{"email":"a@example.com","name":"A"}]}' > "$WORK/partial.json"
+echo '{"consent":{"answer":"partial","recorded_at":"'$PAST'","source":"s"},"roster":[{"email":"a@example.com","name":"A"}]}' > "$WORK/partial.json"
 expect "wave 'partial' grants nothing by itself" 0 \
   'CONSENT GATE: 1 row(s) will NOT be emailed' --roster "$WORK/partial.json"
-echo '{"consent":{"answer":"all","recorded_at":"2026-10-01"},"roster":[{"email":"a@example.com","name":"A"}]}' > "$WORK/nosource.json"
+echo '{"consent":{"answer":"all","recorded_at":"'$PAST'"},"roster":[{"email":"a@example.com","name":"A"}]}' > "$WORK/nosource.json"
 expect "wave consent missing its source is ignored" 0 \
   'CONSENT GATE: 1 row(s) will NOT be emailed' --roster "$WORK/nosource.json"
 
 echo
 echo "a row that cannot be sent stops the wave before anything is mailed"
-echo '{"consent":{"answer":"all","recorded_at":"2026-10-01","source":"s"},"roster":[{"email":"not-an-email","name":"A"}]}' > "$WORK/bademail.json"
+echo '{"consent":{"answer":"all","recorded_at":"'$PAST'","source":"s"},"roster":[{"email":"not-an-email","name":"A"}]}' > "$WORK/bademail.json"
 expect "unusable email aborts preflight" 1 \
   'no usable email address' --roster "$WORK/bademail.json"
-echo '{"consent":{"answer":"all","recorded_at":"2026-10-01","source":"s"},"roster":[{"email":"a@example.com","name":"A","password":"short"}]}' > "$WORK/shortpw.json"
+echo '{"consent":{"answer":"all","recorded_at":"'$PAST'","source":"s"},"roster":[{"email":"a@example.com","name":"A","password":"short"}]}' > "$WORK/shortpw.json"
 expect "a too-short supplied password aborts" 1 \
   'supplies a password under 8 characters' --roster "$WORK/shortpw.json"
 
@@ -164,7 +173,7 @@ echo "a withdrawal is recorded, not applied to the roster (DEF-228)"
 # dated before the consent it withdraws, so a roster whose consent is dated
 # ahead cannot be withdrawn until that date (or until the date is corrected).
 cat > "$WORK/withdraw.json" <<JSON
-{"consent":{"answer":"all","recorded_at":"$(date -u -d '-30 days' +%F)","source":"s"},
+{"consent":{"answer":"all","recorded_at":"$PAST","source":"s"},
  "roster":[{"email":"a@example.com","name":"A"},{"email":"b@example.com","name":"B"}]}
 JSON
 run "withdraw removes the row" 0 --roster "$WORK/withdraw.json" \
@@ -186,12 +195,18 @@ expect "withdrawn row is skipped on re-run" 0 \
 # ever recorded when it can be ordered against the consent it retracts.
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_GIT="$WORK/repo"
-TODAY="$(date -u +%F)"
-FUTURE="$(date -u -d '+30 days' +%F)"
-PAST="$(date -u -d '-30 days' +%F)"
 export GIT_AUTHOR_NAME="alpha-invite test" GIT_AUTHOR_EMAIL="test@localhost"
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 unset ALPHA_ROSTER ALPHA_WITHDRAWALS ALPHA_LOG XDG_STATE_HOME || true
+
+# Never let a case reach the real default ledger at
+# ~/.local/state/alpha-invite/withdrawals.jsonl. A test run that appends a
+# withdrawal there does not clean up after itself: the next real dry-run on the
+# same host then reports that address as withdrawn, and the person is silently
+# dropped from a wave the test never touched. Every case gets a throwaway HOME
+# and an explicit ledger instead.
+export HOME="$WORK/home"
+mkdir -p "$HOME"
 
 git -C "$WORK" init -q repo
 mkdir -p "$REPO_GIT/data/crossword"
@@ -310,20 +325,14 @@ else
   failed=$((failed + 1))
 fi
 
-# The exact command from DEF-228, against the committed example roster, whose
-# row consent is dated in the future relative to the system clock.
+# A consent dated after today is refused by the send-side gate (DEF-229) before
+# the withdrawal path is ever reached, so the older DEF-228 check has become
+# belt-and-braces behind an earlier, broader guard. It is left in place — a
+# guard that is only unreachable because a newer one runs first is one edit away
+# from being the only one.
 EXAMPLE="data/crossword/alpha-roster.example.json"
-before="$(snapshot "$REPO/$EXAMPLE")"
-check_in "$REPO" "the DEF-228 command now refuses" 1 \
-  'before the consent it withdraws was recorded on' \
-  --roster "$EXAMPLE" --withdraw partial@example.com
-check_in "$REPO" "…and names both fields" 1 \
-  'field consent_recorded_at' \
-  --roster "$EXAMPLE" --withdraw partial@example.com
-check_unchanged "example roster in the real repo" "$REPO/$EXAMPLE" "$before"
-
 echo
-echo "no input produces a withdrawal that predates the consent"
+echo "a consent may not be dated after the mail that cites it (DEF-229)"
 roster_with_row_date() {
   cat <<JSON
 {
@@ -337,17 +346,71 @@ roster_with_row_date() {
 JSON
 }
 roster_with_row_date "$FUTURE" > "$WORK/future.json"
-check_in "$REPO_GIT" "future consent_recorded_at refuses" 1 \
-  'consent_withdrawn_at' \
-  --roster "$WORK/future.json" --withdraw row@example.com \
-  --withdrawals "$WORK/future-ledger.jsonl"
-check_in "$REPO_GIT" "…naming the date it would have written" 1 "$TODAY" \
-  --roster "$WORK/future.json" --withdraw row@example.com \
-  --withdrawals "$WORK/future-ledger.jsonl"
-check_in "$REPO_GIT" "…and the date it precedes" 1 "$FUTURE" \
-  --roster "$WORK/future.json" --withdraw row@example.com \
-  --withdrawals "$WORK/future-ledger.jsonl"
+check_in "$REPO_GIT" "a future row consent refuses" 1 \
+  'after today' \
+  --roster "$WORK/future.json" --withdrawals "$WORK/future-ledger.jsonl"
+check_in "$REPO_GIT" "…naming the field it refused" 1 \
+  'consent_recorded_at' \
+  --roster "$WORK/future.json" --withdrawals "$WORK/future-ledger.jsonl"
+check_in "$REPO_GIT" "…naming the date it found" 1 "$FUTURE" \
+  --roster "$WORK/future.json" --withdrawals "$WORK/future-ledger.jsonl"
+check_in "$REPO_GIT" "…pointing at the field to correct" 1 \
+  'wave.send_on' \
+  --roster "$WORK/future.json" --withdrawals "$WORK/future-ledger.jsonl"
 check_absent "…and writes no ledger" "$WORK/future-ledger.jsonl"
+
+# A past-dated row is the ordinary case and must still send, so the guard above
+# cannot be satisfied by refusing everything.
+roster_with_row_date "$PAST" > "$WORK/past.json"
+check_in "$REPO_GIT" "a past row consent still sends" 0 \
+  '── row 1: row@example.com' \
+  --roster "$WORK/past.json" --withdrawals "$WORK/past-ledger.jsonl"
+
+# A date shaped like one but not a real day must refuse rather than be ordered
+# against — jq normalises 2026-02-31 to 2026-03-02, so only the round trip tells
+# them apart.
+roster_with_row_date "2026-02-31" > "$WORK/impossible.json"
+check_in "$REPO_GIT" "an impossible consent date refuses" 1 \
+  'not a real calendar date' \
+  --roster "$WORK/impossible.json" --withdrawals "$WORK/impossible-ledger.jsonl"
+check_absent "…and writes no ledger" "$WORK/impossible-ledger.jsonl"
+
+# The wave answer is the same kind of claim, and it is the one the DEF-120 card
+# produces, so it is checked the same way.
+cat > "$WORK/future-wave.json" <<JSON
+{"consent":{"answer":"all","recorded_at":"$FUTURE","source":"issue-card:cb560df2"},
+ "roster":[{"email":"a@example.com","name":"A"}]}
+JSON
+check_in "$REPO_GIT" "a future wave consent refuses" 1 \
+  'the wave answer has consent.recorded_at' \
+  --roster "$WORK/future-wave.json" --withdrawals "$WORK/fw-ledger.jsonl"
+check_absent "…and writes no ledger" "$WORK/fw-ledger.jsonl"
+
+# A wave that is merely SCHEDULED for later is the legitimate future date, and
+# separating it from a mis-dated consent is the whole point of wave.send_on: a
+# plan is not a permission, so the send goes out on the consent date, not the
+# scheduled one.
+cat > "$WORK/scheduled.json" <<JSON
+{"consent":{"answer":"all","recorded_at":"$PAST","source":"issue-card:cb560df2"},
+ "wave":{"send_on":"$FUTURE"},
+ "roster":[{"email":"a@example.com","name":"A"}]}
+JSON
+check_in "$REPO_GIT" "a future send_on is allowed" 0 \
+  'a plan, not a consent' \
+  --roster "$WORK/scheduled.json" --withdrawals "$WORK/sched-ledger.jsonl"
+check_in "$REPO_GIT" "…and still emails the row" 0 \
+  '── row 0: a@example.com' \
+  --roster "$WORK/scheduled.json" --withdrawals "$WORK/sched-ledger.jsonl"
+
+cat > "$WORK/bad-send-on.json" <<JSON
+{"consent":{"answer":"all","recorded_at":"$PAST","source":"s"},
+ "wave":{"send_on":"2026-13-45"},
+ "roster":[{"email":"a@example.com","name":"A"}]}
+JSON
+check_in "$REPO_GIT" "an impossible send_on refuses" 1 \
+  'wave.send_on is' \
+  --roster "$WORK/bad-send-on.json" --withdrawals "$WORK/bso-ledger.jsonl"
+check_absent "…and writes no ledger" "$WORK/bso-ledger.jsonl"
 
 roster_with_row_date "2026-02-31" > "$WORK/impossible.json"
 check_in "$REPO_GIT" "a date that is not a real day refuses" 1 \
@@ -494,6 +557,9 @@ check_tree_clean "a plain dry-run"
 before="$(snapshot "$REPO/$EXAMPLE")"
 check_in "$REPO" "the committed example roster dry-runs" 0 \
   'rows:               3' \
+  --roster "$EXAMPLE"
+check_in "$REPO" "…and its future send_on is a plan, not a consent" 0 \
+  'wave scheduled:    ' \
   --roster "$EXAMPLE"
 check_unchanged "…and the real repo roster is untouched" "$REPO/$EXAMPLE" "$before"
 

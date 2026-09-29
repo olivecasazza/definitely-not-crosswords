@@ -1,32 +1,45 @@
 {
   "_comment": [
-    "Two accepted shapes. The object form is the one the DEF-120 card produces:",
-    "a `Name <email>` roster plus ONE consent answer for the wave. Prefer it.",
-    "The bare-array form is still accepted for per-row consent.",
-    "",
-    "consent.answer:   'all'      -> every row is emailable unless it sets consent:false",
-    "                  'partial'  -> grants nothing by itself; mark the agreed rows",
-    "                  'none'     -> nothing is emailable",
-    "consent.recorded_at: the date the answer was given (YYYY-MM-DD).",
-    "consent.source:      where that answer came from, e.g. 'issue-card:cb560df2'.",
-    "All three are required for a wave-level answer to count, exactly as they are",
-    "per row. Omit any one and the wave consent is ignored — the gate is default-deny.",
-    "",
-    "Per row, only email and name are needed. username is derived from the address",
-    "and reported in the dry run. password is machine-generated at send time and",
-    "the recipient replaces it via the login page's forgot-password link. Supply",
-    "either if you want to pin it, but do not put real credentials in a file you",
-    "might commit.",
-    "",
-    "`--withdraw EMAIL` never edits this file. It appends a dated record to the",
-    "withdrawal ledger (--withdrawals PATH, default",
-    "~/.local/state/alpha-invite/withdrawals.jsonl — outside the repo, because a",
-    "consent change staged by a later `git commit -a` is a consent change nobody",
-    "reviewed) and the send gate refuses that address whatever this file says."
+    [
+      "Two accepted shapes. The object form is the one the DEF-120 card produces:",
+      "a `Name <email>` roster plus ONE consent answer for the wave. Prefer it.",
+      "The bare-array form is still accepted for per-row consent.",
+      "",
+      "consent.answer:   'all'      -> every row is emailable unless it sets consent:false",
+      "                  'partial'  -> grants nothing by itself; mark the agreed rows",
+      "                  'none'     -> nothing is emailable",
+      "consent.recorded_at: the date the answer was given (YYYY-MM-DD).",
+      "consent.source:      where that answer came from, e.g. 'issue-card:cb560df2'.",
+      "All three are required for a wave-level answer to count, exactly as they are",
+      "per row. Omit any one and the wave consent is ignored — the gate is default-deny.",
+      "",
+      "consent.recorded_at is the day somebody ACTUALLY agreed, so it can never be in",
+      "the future. A date that has not happened yet is not consent, and the send",
+      "refuses the whole roster rather than skipping the row (DEF-229). Use a past",
+      "date here.",
+      "",
+      "wave.send_on (optional) is the day the wave is PLANNED to go out. This is the",
+      "field that carries a future date, and it is a plan, not a permission — the send",
+      "is gated on consent.recorded_at and today's date, never on it. The Oct 12 wave",
+      "with consent given Oct 1 is 'recorded_at' 2026-10-01 and 'send_on' 2026-10-12,",
+      "which is what separates the two.",
+      "",
+      "Per row, only email and name are needed. username is derived from the address",
+      "and reported in the dry run. password is machine-generated at send time and",
+      "the recipient replaces it via the login page's forgot-password link. Supply",
+      "either if you want to pin it, but do not put real credentials in a file you",
+      "might commit.",
+      "",
+      "`--withdraw EMAIL` never edits this file. It appends a dated record to the",
+      "withdrawal ledger (--withdrawals PATH, default",
+      "~/.local/state/alpha-invite/withdrawals.jsonl — outside the repo, because a",
+      "consent change staged by a later `git commit -a` is a consent change nobody",
+      "reviewed) and the send gate refuses that address whatever this file says."
+    ]
   ],
   "consent": {
     "answer": "all",
-    "recorded_at": "2026-10-01",
+    "recorded_at": "2026-09-28",
     "source": "issue-card:cb560df2"
   },
   "roster": [
@@ -43,8 +56,11 @@
       "email": "partial@example.com",
       "name": "Marked Individually",
       "consent": true,
-      "consent_recorded_at": "2026-10-01",
+      "consent_recorded_at": "2026-09-28",
       "consent_source": "asked directly, agreed to a closed-alpha invite"
     }
-  ]
+  ],
+  "wave": {
+    "send_on": "2026-10-12"
+  }
 }

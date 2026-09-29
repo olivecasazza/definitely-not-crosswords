@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.59](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.58...v0.1.59) - 2026-09-29
+
+### Fixed
+
+- *(perf)* animate the progress bars on the compositor, not layout
+
+### Other
+
+- changelog for v0.1.58 [skip ci]
+
+
 ## [0.1.58](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.57...v0.1.58) - 2026-09-29
 
 ### Fixed

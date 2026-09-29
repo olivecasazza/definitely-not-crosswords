@@ -1,6 +1,6 @@
 //! `game_list` router — port of server/trpc/router/gameList.ts, plus the
 //! daily-puzzle proc `game.getDaily` (B14).
-use crate::ctx::Ctx;
+use crate::ctx::{sanitised_db_error, Ctx};
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::collections::{HashMap, HashSet};
@@ -43,7 +43,7 @@ async fn get_daily(ctx: &Ctx) -> Result<Value, String> {
         sqlx::query_scalar(r#"SELECT to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD')"#)
             .fetch_one(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("read the current utc date", &e))?;
 
     // Today's pick, with title + clue count in one row.
     let select_pick = r#"
@@ -58,7 +58,7 @@ async fn get_daily(ctx: &Ctx) -> Result<Value, String> {
         .bind(&today)
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("load today's daily pick", &e))?;
 
     if row.is_none() {
         // First request of the day: choose deterministically (pick rule above).
@@ -78,7 +78,7 @@ async fn get_daily(ctx: &Ctx) -> Result<Value, String> {
         )
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("find a daily pick candidate", &e))?;
 
         let Some(candidate) = candidate else {
             return Err("no published games available for the daily puzzle".to_string());
@@ -91,13 +91,13 @@ async fn get_daily(ctx: &Ctx) -> Result<Value, String> {
             .bind(&candidate)
             .execute(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("save today's daily pick", &e))?;
 
         row = sqlx::query(select_pick)
             .bind(&today)
             .fetch_optional(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("reload today's daily pick", &e))?;
     }
 
     let row = row.ok_or_else(|| "daily pick vanished after insert".to_string())?;
@@ -121,7 +121,7 @@ async fn get_daily(ctx: &Ctx) -> Result<Value, String> {
             .bind(&user.id)
             .fetch_one(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("check the completed game", &e))?;
 
             // Most recently played active session on this game, if any.
             let active: Option<String> = sqlx::query_scalar(
@@ -137,7 +137,7 @@ async fn get_daily(ctx: &Ctx) -> Result<Value, String> {
             .bind(&user.id)
             .fetch_optional(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("load the active game", &e))?;
 
             (completed, active)
         }
@@ -188,7 +188,7 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(email)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the active games", &e))?;
 
     // Completed games the user is a member of, plus the caller's own score.
     let completed_rows = sqlx::query(
@@ -214,7 +214,7 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(email)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the completed games", &e))?;
 
     // Game IDs already started or completed — exclude these from the available list.
     // Matches TS: filterIds = [...completedGames.map(c => c.game.id), ...activeGames.map(a => a.game.id)]
@@ -241,7 +241,7 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(exclude_ids.as_slice())
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the published games", &e))?;
 
     // Grid dimensions for every listed game, in one query. Fetch the raw
     // Question geometry for all relevant gameIds and fold in Rust, mirroring
@@ -272,7 +272,7 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(all_game_ids.as_slice())
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the questions", &e))?;
 
     let grid_info: HashMap<String, GridInfo> = {
         // gameId -> set of occupied (x, y) cells.
@@ -341,7 +341,7 @@ async fn get(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(active_ids.as_slice())
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the game actions", &e))?;
 
     // activeGameId -> (filledCount, correctCount); games with no actions yet
     // simply have no row here and fall back to 0/0.

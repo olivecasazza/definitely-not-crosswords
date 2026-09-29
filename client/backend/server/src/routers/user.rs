@@ -4,7 +4,7 @@
 //! N=16384 (log_n=14), r=8, p=1, keylen=64, 16-byte random salt.
 //! This is byte-for-byte compatible with lib/auth/password.ts.
 
-use crate::ctx::Ctx;
+use crate::ctx::{sanitised_db_error, Ctx};
 use crossword_db::Capability;
 use rand::RngCore;
 use serde_json::{json, Value};
@@ -44,7 +44,7 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
 async fn hash_password(plain: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || hash_password_sync(&plain))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e: tokio::task::JoinError| e.to_string())?
 }
 
 fn hash_password_sync(plain: &str) -> Result<String, String> {
@@ -106,7 +106,7 @@ async fn signup(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(&email)
             .fetch_one(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("check the email address", &e))?;
     if email_exists {
         return Err("User with this email already exists.".to_string());
     }
@@ -116,7 +116,7 @@ async fn signup(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(username)
             .fetch_one(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("check the username", &e))?;
     if username_exists {
         return Err("User with this username already exists.".to_string());
     }
@@ -135,7 +135,7 @@ async fn signup(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&hashed)
     .execute(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("create the account", &e))?;
 
     create_and_send_verification(ctx, &email).await?;
 
@@ -170,7 +170,7 @@ async fn create_and_send_verification(ctx: &Ctx, email: &str) -> Result<(), Stri
     .bind(&token_str)
     .execute(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("create the verification token", &e))?;
 
     ctx.mailer.send_verification(email, &token_str).await;
     Ok(())
@@ -194,7 +194,7 @@ async fn resend_verification(input: &Value, ctx: &Ctx) -> Result<Value, String> 
     .bind(&email)
     .fetch_one(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("check the pending verification", &e))?;
 
     if unverified {
         // One live verification link per address: a resend invalidates the old
@@ -205,7 +205,7 @@ async fn resend_verification(input: &Value, ctx: &Ctx) -> Result<Value, String> 
         .bind(&email)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("clear the verification tokens", &e))?;
 
         create_and_send_verification(ctx, &email).await?;
     }
@@ -230,7 +230,7 @@ async fn request_password_reset(input: &Value, ctx: &Ctx) -> Result<Value, Strin
             .bind(&email)
             .fetch_one(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("check the email address", &e))?;
 
     if exists {
         // One live reset link per account: a re-request invalidates the old one.
@@ -240,7 +240,7 @@ async fn request_password_reset(input: &Value, ctx: &Ctx) -> Result<Value, Strin
         .bind(&email)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("clear the reset tokens", &e))?;
 
         // `reset_` prefix namespaces these away from signup's `token_` rows, so
         // a (24h) verification token can never be replayed as a password reset.
@@ -256,7 +256,7 @@ async fn request_password_reset(input: &Value, ctx: &Ctx) -> Result<Value, Strin
         .bind(&token_str)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("create the reset token", &e))?;
 
         ctx.mailer.send_password_reset(&email, &token_str).await;
     }
@@ -285,7 +285,7 @@ async fn reset_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(token)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the verification token", &e))?;
 
     let Some(row) = row else {
         return Err("Invalid or expired reset link.".to_string());
@@ -310,13 +310,13 @@ async fn reset_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&email)
     .execute(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("reset the password", &e))?;
 
     sqlx::query(r#"DELETE FROM "VerificationToken" WHERE token = $1"#)
         .bind(token)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("clear the verification token", &e))?;
 
     Ok(json!({ "success": true }))
 }
@@ -339,7 +339,7 @@ async fn change_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(&user.id)
             .fetch_optional(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("load the stored password", &e))?;
 
     let Some(stored) = stored else {
         return Err("User not found.".to_string());
@@ -352,7 +352,7 @@ async fn change_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     let ok = tokio::task::spawn_blocking(move || verify_password_sync(&current, &stored))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: tokio::task::JoinError| e.to_string())?;
     if !ok {
         return Err("Current password is incorrect.".to_string());
     }
@@ -363,7 +363,7 @@ async fn change_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&user.id)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("update the password", &e))?;
 
     Ok(json!({ "success": true }))
 }
@@ -379,7 +379,7 @@ async fn is_username_unique(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(username)
             .fetch_one(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("check the username", &e))?;
 
     Ok(json!({ "unique": !exists }))
 }
@@ -398,7 +398,7 @@ async fn is_email_unique(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(&email)
             .fetch_one(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("check the email address", &e))?;
 
     Ok(json!({ "unique": !exists }))
 }
@@ -413,7 +413,7 @@ async fn verify_email(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(token)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the reset token", &e))?;
 
     let row = match row {
         Some(r) => r,
@@ -428,7 +428,7 @@ async fn verify_email(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(token)
             .execute(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("clear the reset token", &e))?;
         return Err("Verification token has expired.".to_string());
     }
 
@@ -436,13 +436,13 @@ async fn verify_email(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&identifier)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("verify the email", &e))?;
 
     sqlx::query(r#"DELETE FROM "VerificationToken" WHERE token = $1"#)
         .bind(token)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("clear the reset token", &e))?;
 
     Ok(json!({ "success": true }))
 }
@@ -460,7 +460,7 @@ async fn get_profile(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the account", &e))?;
 
     let row = match row {
         Some(r) => r,
@@ -487,7 +487,7 @@ async fn update_profile(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&user.id)
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("update the display name", &e))?;
 
     match row {
         Some(r) => Ok(json!({
@@ -509,7 +509,7 @@ async fn delete_account(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&user.id)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("delete the account", &e))?;
 
     Ok(json!({ "success": true }))
 }
@@ -532,7 +532,7 @@ async fn list_for_admin(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     ))
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the accounts", &e))?;
 
     let users: Vec<Value> = rows
         .iter()
@@ -591,7 +591,7 @@ async fn upsert_from_admin(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(&email)
             .fetch_one(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("check the email address", &e))?;
 
     if exists {
         // Update: role always set; name and password only if provided;
@@ -610,7 +610,7 @@ async fn upsert_from_admin(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&email)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("update the account", &e))?;
     } else {
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
@@ -624,7 +624,7 @@ async fn upsert_from_admin(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(hashed_opt.as_deref())
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("create the account", &e))?;
     }
 
     let row = sqlx::query(&format!(
@@ -636,7 +636,7 @@ async fn upsert_from_admin(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&email)
     .fetch_one(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the account", &e))?;
 
     Ok(json!({
         "success": true,
@@ -665,7 +665,7 @@ async fn set_role(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(user_id)
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("load the account role", &e))?;
 
     let row = match row {
         Some(r) => r,
@@ -686,7 +686,7 @@ async fn set_role(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             sqlx::query_scalar(r#"SELECT COUNT(*) FROM "User" WHERE role = 'ADMIN'"#)
                 .fetch_one(&ctx.pool)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| sanitised_db_error("count the admin accounts", &e))?;
         if admin_count <= 1 {
             return Err("At least one admin must remain.".to_string());
         }
@@ -702,7 +702,7 @@ async fn set_role(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(user_id)
     .fetch_one(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("update the account role", &e))?;
 
     Ok(json!({
         "success": true,
@@ -729,7 +729,7 @@ async fn set_vip_pass(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(user_id)
         .fetch_one(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("check the account", &e))?;
     if !exists {
         return Err("User not found.".to_string());
     }
@@ -744,7 +744,7 @@ async fn set_vip_pass(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(user_id)
     .fetch_one(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("update the vip pass", &e))?;
 
     Ok(json!({
         "success": true,
@@ -778,7 +778,7 @@ async fn set_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(user_id)
         .fetch_one(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("check the account", &e))?;
     if !exists {
         return Err("User not found.".to_string());
     }
@@ -790,7 +790,7 @@ async fn set_password(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(user_id)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("update the password", &e))?;
 
     Ok(json!({ "success": true }))
 }

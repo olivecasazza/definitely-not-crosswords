@@ -6,6 +6,7 @@
 //!
 //! Needs LEMONSQUEEZY_API_KEY, LEMONSQUEEZY_STORE_ID, LEMONSQUEEZY_VARIANT_ID.
 
+use crate::ctx::sanitised_db_error;
 use crate::state::AppState;
 use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 use serde_json::{json, Value};
@@ -119,7 +120,7 @@ async fn validate_discount_code(pool: &sqlx::PgPool, code: &str) -> Result<(), S
     .bind(code)
     .fetch_optional(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("redeem the discount code", &e))?;
 
     let Some(row) = row else {
         return Err("This code is not valid.".to_string());

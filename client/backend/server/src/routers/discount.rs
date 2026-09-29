@@ -1,5 +1,5 @@
 //! `discount` router — port of server/trpc/router/discount.ts
-use crate::ctx::Ctx;
+use crate::ctx::{sanitised_db_error, Ctx};
 use crossword_db::Capability;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -78,7 +78,7 @@ async fn list_for_admin(ctx: &Ctx) -> Result<Value, String> {
     ))
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the discounts", &e))?;
 
     Ok(json!(rows.iter().map(row_to_json).collect::<Vec<_>>()))
 }
@@ -139,7 +139,7 @@ async fn create(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&code)
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("check the discount code", &e))?;
     if existing.is_some() {
         return Err("A discount with this code already exists.".to_string());
     }
@@ -251,7 +251,7 @@ async fn create(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(test_mode)
     .execute(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("create the discount", &e))?;
 
     let discount = json!({
         "id": id,
@@ -292,7 +292,7 @@ async fn set_active(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| sanitised_db_error("update the discount", &e))?
     .ok_or_else(|| "Discount not found.".to_string())?;
 
     Ok(json!({ "success": true, "discount": row_to_json(&row) }))
@@ -311,7 +311,7 @@ async fn remove(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&id)
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| sanitised_db_error("load the discount", &e))?
         .ok_or_else(|| "Discount not found.".to_string())?;
 
     let ls_id: Option<String> = row.get("lemonSqueezyId");
@@ -345,7 +345,7 @@ async fn remove(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&id)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("delete the discount", &e))?;
 
     Ok(json!({ "success": true }))
 }
@@ -377,7 +377,7 @@ async fn validate(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&code)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("redeem the discount code", &e))?;
 
     let Some(row) = row else {
         return Ok(json!({ "valid": false, "reason": "This code is not valid." }));

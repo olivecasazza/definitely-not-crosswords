@@ -1,5 +1,5 @@
 //! `stats` router — port of server/trpc/router/stats.ts
-use crate::ctx::Ctx;
+use crate::ctx::{sanitised_db_error, Ctx};
 use crossword_db::Role;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -85,7 +85,7 @@ async fn global_leaderboard(ctx: &Ctx) -> Result<Value, String> {
     )
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the leaderboard", &e))?;
 
     let entries: Vec<Value> = rows
         .iter()
@@ -147,7 +147,7 @@ async fn user_stats(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(email)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| sanitised_db_error("load the user stats", &e))?
     .ok_or_else(|| "User not found".to_string())?;
 
     let user_id: String = career_row.get("id");
@@ -206,7 +206,7 @@ async fn user_stats(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user_id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the completed games", &e))?;
 
     let recent_games: Vec<Value> = recent_rows
         .iter()
@@ -248,7 +248,7 @@ async fn user_stats(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user_id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the global rank", &e))?;
 
     let (global_rank, total_players) = match rank_row {
         Some(rr) => (
@@ -334,7 +334,7 @@ async fn user_history(ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the recent completions", &e))?;
 
     // Grid dimensions for every game in the history, in one batched query —
     // same cell-walk as game_list.rs: each answer occupies rootX+i (ACROSS) or
@@ -358,7 +358,7 @@ async fn user_history(ctx: &Ctx) -> Result<Value, String> {
     .bind(game_ids.as_slice())
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the questions", &e))?;
 
     let grid_size: HashMap<String, (i32, i32)> = {
         // gameId -> set of occupied (x, y) cells.
@@ -434,7 +434,7 @@ async fn all_players(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(exclude_email)
         .fetch_all(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| sanitised_db_error("list the users", &e))?
     } else {
         // Teammates only: users sharing at least one team with the caller.
         sqlx::query(
@@ -451,7 +451,7 @@ async fn all_players(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(exclude_email)
         .fetch_all(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| sanitised_db_error("list the users", &e))?
     };
 
     let players: Vec<Value> = rows
@@ -489,7 +489,7 @@ async fn can_compare(
     .bind(opponent_id)
     .fetch_one(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| sanitised_db_error("check the shared team", &e))
 }
 
 /// Head-to-head comparison between the logged-in user and an opponent.
@@ -512,7 +512,7 @@ async fn head_to_head(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(opponent_id)
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| sanitised_db_error("load the opponent", &e))?
         .ok_or_else(|| "Opponent not found".to_string())?;
 
     let opp_name: Option<String> = opp_row.get("name");
@@ -597,7 +597,7 @@ async fn head_to_head(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(opponent_id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the head-to-head history", &e))?;
 
     let games_played = rows.len() as i64;
     let mut user_wins = 0i64;
@@ -730,7 +730,7 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the game stats", &e))?;
 
     let cg_row = match cg_opt {
         None => return Ok(json!(null)),
@@ -767,7 +767,7 @@ async fn completed_game(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the member scores", &e))?;
 
     let member_scores: Vec<Value> = score_rows
         .iter()

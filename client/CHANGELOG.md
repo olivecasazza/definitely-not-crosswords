@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.70](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.69...v0.1.70) - 2026-09-29
+
+### Fixed
+
+- *(server)* sanitise active game db errors (#183)
+
+### Other
+
+- changelog for v0.1.69 [skip ci]
+
+
 ## [0.1.69](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.68...v0.1.69) - 2026-09-29
 
 ### Fixed

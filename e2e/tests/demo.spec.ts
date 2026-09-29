@@ -3,7 +3,9 @@ import path from "node:path";
 import { dwell, humanClick, humanType, humanTypeLetters, wander, rand } from "./helpers";
 
 // Authenticated product tour — the source of the demo video and a feature-
-// completeness smoke test of the premium surface. Needs staging test accounts:
+// completeness smoke test of the premium surface. It gets the public board
+// silhouette from activeGame.get and the generated answer key from /api/grids.
+// Needs staging test accounts:
 //   E2E_EMAIL / E2E_PASSWORD     — the primary (recorded) player
 //   E2E_EMAIL_2 / E2E_PASSWORD_2 — optional second player for the co-op chapter;
 //     falls back to the primary account (still exercises the live transport,
@@ -31,12 +33,15 @@ const COMPLETION_MAX_CLUES = 12;
 
 type Clue = {
   number: number;
-  answer: string;
+  len: number;
+  answer?: string;
   questionText: string;
   direction: "ACROSS" | "DOWN";
   rootX: number;
   rootY: number;
 };
+
+type AnswerClue = Clue & { answer: string };
 
 type ClueAction = {
   cordX: number;
@@ -45,21 +50,18 @@ type ClueAction = {
   state: string;
 };
 
-/** A clue is solved when every cell's latest action is its correct letter. */
+/** A clue is solved when every cell's latest action is server-marked correct. */
 const solvedClues = (clues: Clue[], actions: ClueAction[]) => {
   const latest = new Map<string, ClueAction>();
   for (const a of actions) latest.set(`${a.cordX},${a.cordY}`, a); // ASC → last wins
   return new Set(
     clues
       .filter((c) =>
-        Array.from({ length: c.answer.length }, (_, i) => i).every((i) => {
+        Array.from({ length: c.len }, (_, i) => i).every((i) => {
           const x = c.direction === "ACROSS" ? c.rootX + i : c.rootX;
           const y = c.direction === "ACROSS" ? c.rootY : c.rootY + i;
           const a = latest.get(`${x},${y}`);
-          return (
-            a?.actionType === "correctGuess" &&
-            a.state.toUpperCase() === c.answer[i].toUpperCase()
-          );
+          return a?.actionType === "correctGuess";
         }),
       )
       .map((c) => `${c.number}${c.direction}`),
@@ -112,11 +114,35 @@ async function focusBoard(page: Page) {
   if (await board.count()) await board.scrollIntoViewIfNeeded();
 }
 
+async function answersFor(page: Page, gameId: string) {
+  const res = await page.request.get(`/api/grids/${gameId}`);
+  expect(res.ok()).toBeTruthy();
+  const data = await res.json();
+  const answers = new Map<string, string>();
+  for (const q of data?.questions ?? []) {
+    answers.set(`${q.number}${q.direction}`, q.answer);
+  }
+  return answers;
+}
+
+async function loadPlayableClues(
+  page: Page,
+  activeGame: { gameId?: string; game?: { questions?: Clue[] }; actions?: ClueAction[] },
+) {
+  expect(activeGame.gameId).toBeTruthy();
+  const answers = await answersFor(page, activeGame.gameId!);
+  const all = (activeGame.game?.questions ?? [])
+    .map((c) => ({ ...c, answer: answers.get(`${c.number}${c.direction}`) }))
+    .filter((c): c is AnswerClue => Boolean(c.answer));
+  const solved = solvedClues(all, activeGame.actions ?? []);
+  return all.filter((c) => !solved.has(`${c.number}${c.direction}`));
+}
+
 /**
  * Select a clue from the list: flip to its direction tab if needed, click its
  * row, and wait for the letter boxes. Shared by solveClue and the guess beats.
  */
-async function selectClue(page: Page, clue: Clue) {
+async function selectClue(page: Page, clue: AnswerClue) {
   const tab = page.getByRole("button", {
     name: clue.direction === "ACROSS" ? /^across$/i : /^down$/i,
   });
@@ -155,7 +181,7 @@ async function submitGuess(page: Page) {
 }
 
 /** Select a clue from the list and guess it correctly, at reading speed. */
-async function solveClue(page: Page, clue: Clue) {
+async function solveClue(page: Page, clue: AnswerClue) {
   await selectClue(page, clue);
   const inputs = page.locator(".cw-letter-input");
   await humanTypeLetters(page, clue.answer);
@@ -209,7 +235,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     });
 
   // ── Chapter 2: the lobby ─────────────────────────────────────────────────
-  let clues: Clue[] = [];
+  let clues: AnswerClue[] = [];
   await test.step("Games lobby", async () => {
     await humanClick(page, page.locator('header a.navlink[href="/games"]'));
     await expect(page).toHaveURL(/\/games/, { timeout: 15_000 });
@@ -263,9 +289,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     // clues already solved — play only what's still open.
     const activeId = page.url().split("/game/")[1];
     const data = await trpcGet(page, "activeGame.get", { id: activeId });
-    const all = (data?.game?.questions ?? []) as Clue[];
-    const solved = solvedClues(all, (data?.actions ?? []) as ClueAction[]);
-    clues = all.filter((c) => !solved.has(`${c.number}${c.direction}`));
+    clues = await loadPlayableClues(page, data);
 
     // Phone loads the game in parallel with chapter 3 AND auto-joins, so the
     // PiP shows the joined board while the PC plays solo — not a "join game"

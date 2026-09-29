@@ -16,6 +16,16 @@ const PASSWORD = process.env.E2E_PASSWORD;
 
 type Rect = { x: number; y: number; width: number; height: number };
 
+type Clue = {
+  number: number;
+  len: number;
+  answer: string;
+  questionText: string;
+  direction: "ACROSS" | "DOWN";
+  rootX: number;
+  rootY: number;
+};
+
 async function bbox(page: Page, selector: string): Promise<Rect | null> {
   const loc = page.locator(selector).first();
   if (!(await loc.count())) return null;
@@ -93,6 +103,17 @@ async function signIn(page: Page, email: string, password: string) {
 }
 
 /** Land on a playable board: resume ACTIVE, else start an UNSTARTED game. */
+async function answersFor(page: Page, gameId: string) {
+  const res = await page.request.get(`/api/grids/${gameId}`);
+  expect(res.ok()).toBeTruthy();
+  const data = await res.json();
+  const answers = new Map<string, string>();
+  for (const q of data?.questions ?? []) {
+    answers.set(`${q.number}${q.direction}`, q.answer);
+  }
+  return answers;
+}
+
 async function openGame(page: Page): Promise<string | null> {
   await page.goto("/games");
   await expect(page.getByText("Library").first()).toBeVisible();
@@ -277,14 +298,11 @@ test.describe("game board (needs e2e account)", () => {
           )}`,
         );
         const data = (await res.json())[0]?.result?.data;
-        const clues = (data?.game?.questions ?? []) as {
-          number: number;
-          answer: string;
-          questionText: string;
-          direction: "ACROSS" | "DOWN";
-          rootX: number;
-          rootY: number;
-        }[];
+        expect(data?.gameId).toBeTruthy();
+        const answers = await answersFor(a, data.gameId);
+        const clues = ((data?.game?.questions ?? []) as Omit<Clue, "answer">[])
+          .map((c) => ({ ...c, answer: answers.get(`${c.number}${c.direction}`) }))
+          .filter((c): c is Clue => Boolean(c.answer));
         const actions = (data?.actions ?? []) as {
           cordX: number;
           cordY: number;

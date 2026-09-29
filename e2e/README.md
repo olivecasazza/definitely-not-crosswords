@@ -32,7 +32,7 @@ page you.
 1. **Sign-in** through the UI with natural typing.
 2. **Lobby** — Available/Active/Completed panels render.
 3. **Gameplay** — opens a game (continue first, else start), solves a clue for
-   real (answers pulled via the tRPC API with the session cookie).
+   real (public board state from tRPC; generated answers from `/api/grids/:id`).
 4. **Co-op** — copies the invite link, then a second player joins the same
    game from an emulated iPhone (its own recording; CI composites it
    picture-in-picture into the published demo.mp4): roster chips, per-player

@@ -136,12 +136,19 @@ pub fn GenerationProgress(
         .unwrap_or(0);
 
     let indeterminate = running && progress.is_none();
-    let bar_width = if status == "succeeded" {
-        "100%".to_string()
+    // Scale rather than width: the fill's extent carries the progress value,
+    // and transitioning `width` relayouts the track every frame. `scaleX` is a
+    // compositor-only transform, so the sweep costs no layout. The CSS pairs
+    // it with `transform-origin: left center` so the fill stays anchored to
+    // the track's start exactly as the width animation did.
+    let bar_scale = if status == "succeeded" {
+        "1".to_string()
     } else if indeterminate {
-        "100%".to_string()
+        // Indeterminate extent is unknown by definition; the pulse animation
+        // below carries the motion, so sit at a static partial scale.
+        "0.3".to_string()
     } else {
-        format!("{pct}%")
+        format!("{:.4}", pct.min(100) as f64 / 100.0)
     };
     let bar_color = if status == "failed" {
         "background:var(--color-error)"
@@ -156,10 +163,10 @@ pub fn GenerationProgress(
         ""
     };
     // Marks the bar as indeterminate so the reduced-motion guard in
-    // styles.rs can drop it to a static partial width. Without it the bar
-    // would sit at its inline `width:100%` and claim completion for a run
-    // whose extent is by definition unknown. Only ever set on indeterminate
-    // bars, which is what makes the `!important` width there safe.
+    // styles.rs can drop it to a static partial scale. Without it the bar
+    // would sit at a full scale and claim completion for a run whose extent
+    // is by definition unknown. Only ever set on indeterminate bars, which is
+    // what makes the `!important` scale there safe.
     let indet_class = if indeterminate {
         "gp-indeterminate"
     } else {
@@ -220,7 +227,7 @@ pub fn GenerationProgress(
                 div { class: "gp-bar-track",
                     div {
                         class: "gp-bar-fill {indet_class}",
-                        style: "{bar_color};{bar_anim};width:{bar_width}",
+                        style: "{bar_color};{bar_anim};transform:scaleX({bar_scale})",
                     }
                 }
                 if let Some(msg) = progress_msg {
@@ -294,9 +301,15 @@ const PROGRESS_CSS: &str = r#"
     overflow: hidden;
     background: var(--bg-cell-empty);
 }
+/* Scale, not width. The fill's width carries the progress value, and
+   transitioning `width` relayouts the track every frame; `scaleX` is a
+   compositor-only transform, so a 0.2s sweep costs no layout at all.
+   `transform-origin: left` keeps the fill anchored to the track's start as
+   the scale moves, matching what the width animation used to do. */
 .gp-bar-fill {
     height: 100%;
-    transition: width 0.2s ease-out;
+    transform-origin: left center;
+    transition: transform 0.2s ease-out;
 }
 .gp-prog-msg {
     font-size: 0.625rem;

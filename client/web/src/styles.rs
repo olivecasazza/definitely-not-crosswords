@@ -415,13 +415,13 @@ a { color: inherit; text-decoration: none; }
      still reads as a spinner rather than a static dot. */
   .pro-upgrade .spin-ring { animation: none !important; }
 
-  /* Indeterminate progress: a static partial-width sliver. Full width would
-     claim completion; 0% would claim nothing is happening. 40% matches
+  /* Indeterminate progress: a static partial sliver. Full scale would
+     claim completion; 0 would claim nothing is happening. 0.4 matches
      panel-kit's own .pk-progress-fill.indeterminate precedent. `!important`
-     is required because width is an inline style (generation_progress.rs:213)
-     and is safe because .gp-indeterminate is only ever set on indeterminate
-     bars. */
-  .gp-bar-fill.gp-indeterminate { animation: none !important; width: 40% !important; }
+     is required because the transform is an inline style
+     (generation_progress.rs) and is safe because .gp-indeterminate is only
+     ever set on indeterminate bars. */
+  .gp-bar-fill.gp-indeterminate { animation: none !important; transform: scaleX(0.4) !important; }
 }
 
 /* ── Modal + drawer (components/ui.rs) ──────────────────────────────────── */

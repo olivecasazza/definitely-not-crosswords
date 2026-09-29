@@ -741,8 +741,8 @@ pub fn Stats() -> Element {
                                                     {
                                                         let pct = bar_pct(h2h.scores.user_total, h2h.scores.opponent_total);
                                                         rsx! {
-                                                            div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-yellow);" }
-                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: var(--text-secondary);" }
+                                                            div { class: "st-bar-segment", style: "transform: scaleX({pct:.2}); background: var(--pastel-yellow);" }
+                                                            div { class: "st-bar-segment", style: "transform: scaleX({100.0 - pct:.2}); background: var(--text-secondary);" }
                                                         }
                                                     }
                                                 }
@@ -764,8 +764,8 @@ pub fn Stats() -> Element {
                                                     {
                                                         let pct = bar_pct(h2h.scores.user_avg, h2h.scores.opponent_avg);
                                                         rsx! {
-                                                            div { class: "st-bar-segment", style: "width: {pct:.0}%; background: var(--pastel-yellow);" }
-                                                            div { class: "st-bar-segment", style: "width: {100.0 - pct:.0}%; background: var(--text-secondary);" }
+                                                            div { class: "st-bar-segment", style: "transform: scaleX({pct:.2}); background: var(--pastel-yellow);" }
+                                                            div { class: "st-bar-segment", style: "transform: scaleX({100.0 - pct:.2}); background: var(--text-secondary);" }
                                                         }
                                                     }
                                                 }
@@ -1696,17 +1696,29 @@ const STATS_CSS: &str = r#"
     letter-spacing: .05em;
 }
 .st-bar-track {
+    position: relative;
     height: .75rem;
     width: 100%;
     background: var(--bg-cell-empty);
     border: 1px solid var(--border-app);
     overflow: hidden;
-    display: flex;
+    /* the segments are absolutely positioned layers, not flex children */
+    display: block;
 }
 .st-bar-segment {
-    height: 100%;
-    transition: width .3s ease;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    /* The pair sums to 100%, so neither can be a flex child: scaling a
+       flex child would change the row's footprint and the two would stop
+       filling the track. Absolute layers anchored to opposite edges let each
+       scale outward from its own side, which moves the split on the
+       compositor instead of relaying out the bar on every frame. */
+    width: 100%;
+    transition: transform .3s ease;
 }
+.st-bar-segment:first-child { left: 0; transform-origin: left center; }
+.st-bar-segment:last-child { right: 0; transform-origin: right center; }
 .st-stat-row {
     display: flex;
     flex-direction: column;

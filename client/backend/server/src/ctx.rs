@@ -25,3 +25,17 @@ impl Ctx {
             .ok_or_else(|| "UNAUTHORIZED".to_string())
     }
 }
+
+/// Turn a database failure into a client-safe error, keeping the detail in the
+/// server log.
+///
+/// `.map_err(|e| e.to_string())` handed callers raw Postgres text — table and
+/// column names, constraint names, sometimes the values that collided. That is
+/// schema the client has no business reading, so the detail goes to
+/// `tracing::error!` and the client gets a stable message naming only what it
+/// was trying to do. `what` is a fixed, caller-chosen phrase; never interpolate
+/// user input into it.
+pub fn sanitised_db_error(what: &str, e: &sqlx::Error) -> String {
+    tracing::error!(error = %e, operation = what, "database operation failed");
+    format!("{what} failed")
+}

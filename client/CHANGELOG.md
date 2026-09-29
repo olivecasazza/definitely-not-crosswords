@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.58](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.57...v0.1.58) - 2026-09-29
+
+### Fixed
+
+- *(design)* drop the toast's 3px side-tab accent
+
+### Other
+
+- changelog for v0.1.57 [skip ci]
+
+
 ## [0.1.57](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.56...v0.1.57) - 2026-09-28
 
 ### Other

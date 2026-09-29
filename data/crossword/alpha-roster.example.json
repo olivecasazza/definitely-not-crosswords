@@ -7,9 +7,10 @@
     "consent.answer:   'all'      -> every row is emailable unless it sets consent:false",
     "                  'partial'  -> grants nothing by itself; mark the agreed rows",
     "                  'none'     -> nothing is emailable",
-    "consent.recorded_at: the date the answer was given (YYYY-MM-DD).",
+    "consent.recorded_at: the date the answer was given (YYYY-MM-DD); it must not be in the future.",
     "consent.source:      where that answer came from, e.g. 'issue-card:cb560df2'.",
-    "All three are required for a wave-level answer to count, exactly as they are",
+    "send_not_before:     optional wave schedule date; it is not a consent date.",
+    "All three consent fields are required for a wave-level answer to count, exactly as they are",
     "per row. Omit any one and the wave consent is ignored — the gate is default-deny.",
     "",
     "Per row, only email and name are needed. username is derived from the address",
@@ -26,9 +27,10 @@
   ],
   "consent": {
     "answer": "all",
-    "recorded_at": "2026-10-01",
+    "recorded_at": "2026-09-29",
     "source": "issue-card:cb560df2"
   },
+  "send_not_before": "2026-10-12",
   "roster": [
     {
       "email": "tester@example.com",
@@ -43,7 +45,7 @@
       "email": "partial@example.com",
       "name": "Marked Individually",
       "consent": true,
-      "consent_recorded_at": "2026-10-01",
+      "consent_recorded_at": "2026-09-29",
       "consent_source": "asked directly, agreed to a closed-alpha invite"
     }
   ]

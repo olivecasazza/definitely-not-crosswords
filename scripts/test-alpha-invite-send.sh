@@ -91,9 +91,12 @@ expect() {
   passed=$((passed + 1))
 }
 
+TODAY_CONSENT="$(date -u +%F)"
+
 # A roster that is consented and well-formed, so the happy path has a baseline.
-cat > "$WORK/good.json" <<'JSON'
-{"consent":{"answer":"all","recorded_at":"2026-10-01","source":"issue-card:cb560df2"},
+cat > "$WORK/good.json" <<JSON
+{"consent":{"answer":"all","recorded_at":"$TODAY_CONSENT","source":"issue-card:cb560df2"},
+ "send_not_before":"2026-10-12",
  "roster":[{"email":"a@example.com","name":"A"},
            {"email":"b@example.com","name":"B","consent":false}]}
 JSON
@@ -135,22 +138,33 @@ echo "consent is default-deny"
 echo '[{"email":"a@example.com","name":"A"}]' > "$WORK/noconsent.json"
 expect "no consent anywhere: row is skipped" 0 \
   'CONSENT GATE: 1 row(s) will NOT be emailed' --roster "$WORK/noconsent.json"
-echo '{"consent":{"answer":"none","recorded_at":"2026-10-01","source":"s"},"roster":[{"email":"a@example.com","name":"A"}]}' > "$WORK/none.json"
+echo "{\"consent\":{\"answer\":\"none\",\"recorded_at\":\"$TODAY_CONSENT\",\"source\":\"s\"},\"roster\":[{\"email\":\"a@example.com\",\"name\":\"A\"}]}" > "$WORK/none.json"
 expect "wave answer 'none' emails nobody" 0 \
   'CONSENT GATE: 1 row(s) will NOT be emailed' --roster "$WORK/none.json"
-echo '{"consent":{"answer":"partial","recorded_at":"2026-10-01","source":"s"},"roster":[{"email":"a@example.com","name":"A"}]}' > "$WORK/partial.json"
+echo "{\"consent\":{\"answer\":\"partial\",\"recorded_at\":\"$TODAY_CONSENT\",\"source\":\"s\"},\"roster\":[{\"email\":\"a@example.com\",\"name\":\"A\"}]}" > "$WORK/partial.json"
 expect "wave 'partial' grants nothing by itself" 0 \
   'CONSENT GATE: 1 row(s) will NOT be emailed' --roster "$WORK/partial.json"
-echo '{"consent":{"answer":"all","recorded_at":"2026-10-01"},"roster":[{"email":"a@example.com","name":"A"}]}' > "$WORK/nosource.json"
+echo "{\"consent\":{\"answer\":\"all\",\"recorded_at\":\"$TODAY_CONSENT\"},\"roster\":[{\"email\":\"a@example.com\",\"name\":\"A\"}]}" > "$WORK/nosource.json"
 expect "wave consent missing its source is ignored" 0 \
   'CONSENT GATE: 1 row(s) will NOT be emailed' --roster "$WORK/nosource.json"
+FUTURE_CONSENT="$(date -u -d '+30 days' +%F)"
+echo "{\"consent\":{\"answer\":\"all\",\"recorded_at\":\"$FUTURE_CONSENT\",\"source\":\"s\"},\"roster\":[{\"email\":\"a@example.com\",\"name\":\"A\"}]}" > "$WORK/future-wave-consent.json"
+expect "future wave consent_recorded_at aborts" 1 \
+  "consent.recorded_at '$FUTURE_CONSENT' is in the future" --roster "$WORK/future-wave-consent.json"
+echo "{\"consent\":{\"answer\":\"all\",\"recorded_at\":\"$TODAY_CONSENT\",\"source\":\"s\"},\"send_not_before\":\"$FUTURE_CONSENT\",\"roster\":[{\"email\":\"a@example.com\",\"name\":\"A\"}]}" > "$WORK/scheduled-wave.json"
+run "future send_not_before is only scheduling" 0 --roster "$WORK/scheduled-wave.json"
+echo "{\"consent\":{\"answer\":\"all\",\"recorded_at\":\"$TODAY_CONSENT\",\"source\":\"s\"},\"roster\":[{\"email\":\"a@example.com\",\"name\":\"A\",\"consent\":true,\"consent_recorded_at\":\"$FUTURE_CONSENT\",\"consent_source\":\"asked directly\"}]}" > "$WORK/future-row-consent.json"
+expect "future row consent_recorded_at aborts" 1 \
+  "consent_recorded_at '$FUTURE_CONSENT'" --roster "$WORK/future-row-consent.json"
+expect "future row consent names the field" 1 \
+  'keep scheduled wave dates in send_not_before' --roster "$WORK/future-row-consent.json"
 
 echo
 echo "a row that cannot be sent stops the wave before anything is mailed"
-echo '{"consent":{"answer":"all","recorded_at":"2026-10-01","source":"s"},"roster":[{"email":"not-an-email","name":"A"}]}' > "$WORK/bademail.json"
+echo "{\"consent\":{\"answer\":\"all\",\"recorded_at\":\"$TODAY_CONSENT\",\"source\":\"s\"},\"roster\":[{\"email\":\"not-an-email\",\"name\":\"A\"}]}" > "$WORK/bademail.json"
 expect "unusable email aborts preflight" 1 \
   'no usable email address' --roster "$WORK/bademail.json"
-echo '{"consent":{"answer":"all","recorded_at":"2026-10-01","source":"s"},"roster":[{"email":"a@example.com","name":"A","password":"short"}]}' > "$WORK/shortpw.json"
+echo "{\"consent\":{\"answer\":\"all\",\"recorded_at\":\"$TODAY_CONSENT\",\"source\":\"s\"},\"roster\":[{\"email\":\"a@example.com\",\"name\":\"A\",\"password\":\"short\"}]}" > "$WORK/shortpw.json"
 expect "a too-short supplied password aborts" 1 \
   'supplies a password under 8 characters' --roster "$WORK/shortpw.json"
 
@@ -310,16 +324,11 @@ else
   failed=$((failed + 1))
 fi
 
-# The exact command from DEF-228, against the committed example roster, whose
-# row consent is dated in the future relative to the system clock.
 EXAMPLE="data/crossword/alpha-roster.example.json"
 before="$(snapshot "$REPO/$EXAMPLE")"
-check_in "$REPO" "the DEF-228 command now refuses" 1 \
-  'before the consent it withdraws was recorded on' \
-  --roster "$EXAMPLE" --withdraw partial@example.com
-check_in "$REPO" "…and names both fields" 1 \
-  'field consent_recorded_at' \
-  --roster "$EXAMPLE" --withdraw partial@example.com
+check_in "$REPO" "example roster documents scheduling" 0 \
+  'mode:              DRY-RUN (nothing is sent)' \
+  --roster "$EXAMPLE"
 check_unchanged "example roster in the real repo" "$REPO/$EXAMPLE" "$before"
 
 echo
@@ -366,6 +375,60 @@ if [ "$(ledger_field '.consent_withdrawn_at' "$WORK/today-ledger.jsonl")" = "$TO
   passed=$((passed + 1))
 else
   printf '  FAIL  %-46s %s\n' "…and never earlier" "$(cat "$WORK/today-ledger.jsonl" 2>&1)"
+  failed=$((failed + 1))
+fi
+
+# ── DEF-229: a consent dated in the future is not a consent ───────────────────
+# The gate refuses the wave, but the refusal must not become a way to strand
+# someone on the list: a mis-dated row elsewhere in the roster is a reason to
+# stop the send, not a reason to make it impossible to take a person off it.
+cat > "$WORK/misdated.json" <<JSON
+{
+  "consent": { "answer": "all", "recorded_at": "$PAST", "source": "issue-card:cb560df2" },
+  "roster": [
+    { "email": "misdated@example.com", "name": "Misdated", "consent": true,
+      "consent_recorded_at": "$FUTURE", "consent_source": "asked directly" },
+    { "email": "fine@example.com", "name": "Fine", "consent": true,
+      "consent_recorded_at": "$PAST", "consent_source": "asked directly" }
+  ]
+}
+JSON
+check_in "$REPO_GIT" "a future-dated row refuses the send" 1 \
+  'consent_recorded_at' \
+  --roster "$WORK/misdated.json"
+check_in "$REPO_GIT" "…and says the date is in the future" 1 \
+  'is in the future' \
+  --roster "$WORK/misdated.json"
+check_in "$REPO_GIT" "…and names the bad date" 1 "$FUTURE" \
+  --roster "$WORK/misdated.json"
+cat > "$WORK/future-wave.json" <<JSON
+{
+  "consent": { "answer": "all", "recorded_at": "$FUTURE", "source": "issue-card:cb560df2" },
+  "send_not_before": "$FUTURE",
+  "roster": [ { "email": "wave@example.com", "name": "Wave Consent" } ]
+}
+JSON
+check_in "$REPO_GIT" "a future-dated wave refuses the send" 1 \
+  'consent.recorded_at' \
+  --roster "$WORK/future-wave.json"
+check_in "$REPO_GIT" "…and points at send_not_before" 1 \
+  'send_not_before' \
+  --roster "$WORK/future-wave.json"
+check_in "$REPO_GIT" "a date that is not a real day refuses the send" 1 \
+  'is not a real calendar date' \
+  --roster "$WORK/impossible.json"
+
+echo
+echo "a mis-dated row must not make it impossible to take someone off"
+check_in "$REPO_GIT" "withdrawing a well-dated row still works" 0 \
+  'withdrew fine@example.com' \
+  --roster "$WORK/misdated.json" --withdraw fine@example.com \
+  --withdrawals "$WORK/misdated-ledger.jsonl"
+if [ "$(ledger_field '.email' "$WORK/misdated-ledger.jsonl")" = "fine@example.com" ]; then
+  printf '  ok    %-46s %s\n' "…and only that row is recorded" "fine@example.com"
+  passed=$((passed + 1))
+else
+  printf '  FAIL  %-46s %s\n' "…and only that row is recorded" "$(cat "$WORK/misdated-ledger.jsonl" 2>&1)"
   failed=$((failed + 1))
 fi
 

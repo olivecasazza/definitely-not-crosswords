@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.68](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.67...v0.1.68) - 2026-09-29
+
+### Other
+
+- changelog for v0.1.67 [skip ci]
+- *(web)* assert the noscript boot state DEF-171 could not [DEF-255] (#179)
+
+
 ## [0.1.67](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.66...v0.1.67) - 2026-09-29
 
 ### Fixed

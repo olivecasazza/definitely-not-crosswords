@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.66](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.65...v0.1.66) - 2026-09-29
+
+### Fixed
+
+- *(ci)* give the deploy readiness probe a budget that outlasts a real rollout (#175)
+
+### Other
+
+- changelog for v0.1.65 [skip ci]
+
+
 ## [0.1.65](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.64...v0.1.65) - 2026-09-29
 
 ### Fixed

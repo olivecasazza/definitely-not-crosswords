@@ -27,6 +27,7 @@ use axum::{
     Router,
 };
 use crossword_server::{seo, spa};
+use futures_util::future::join_all;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -234,6 +235,34 @@ async fn a_missing_bundle_file_is_404_and_never_immutable() {
     let cc = res.cache_control.as_deref().unwrap_or_default();
     assert!(!cc.contains("immutable"), "{cc:?}");
     assert!(!cc.contains("31536000"), "{cc:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_bundle_requests_get_one_answer() {
+    let dist = web_dist();
+    let requests = (0..16).map(|_| {
+        fetch(
+            "production",
+            true,
+            dist,
+            "/_assets/deadbeefdeadbeef/crossword-web.js",
+        )
+    });
+    let responses = join_all(requests).await;
+    let first = responses.first().expect("there are responses");
+
+    assert_eq!(first.status, StatusCode::OK);
+    assert_eq!(
+        first.cache_control.as_deref(),
+        Some("public, max-age=31536000, immutable")
+    );
+    assert!(first.body.contains("/* glue */"), "got {}", first.body);
+
+    for res in &responses[1..] {
+        assert_eq!(res.status, first.status);
+        assert_eq!(res.cache_control, first.cache_control);
+        assert_eq!(res.body, first.body);
+    }
 }
 
 /// The bundle itself is untouched: the assets service still answers 200 for the

@@ -15,7 +15,7 @@
 // changes here, change it there too, or grep `BOOT CSS`.
 
 pub const DESIGN: &str = r#"
-@import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,200..800&display=swap');
 
 :root {
   --bg-app: #121212;
@@ -74,7 +74,7 @@ pub const DESIGN: &str = r#"
   --presence-4: #f0b8d0;
 
   /* App fonts. --mono is defined in the panel-kit remap block below. */
-  --font-sans: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-sans: 'Bricolage Grotesque', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 
   /* Type scale (rem) + weights are numeric. Inline font-sizes scattered across
      components should adopt these vars over time; shared classes use them now. */
@@ -209,7 +209,7 @@ body {
   margin: 0;
   background-color: var(--bg-app);
   color: var(--text-primary);
-  font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   transition: background-color .15s ease, color .15s ease, border-color .15s ease;
 }
 a { color: inherit; text-decoration: none; }

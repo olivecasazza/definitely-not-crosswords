@@ -37,11 +37,17 @@ pub struct GameAction {
     pub submitted_at: String,
 }
 
+/// A clue as the backend serves it. DEF-243: the answer *text* is no longer on
+/// the wire — the server scores the grid and is the only party that reads
+/// `Question.answer`. `len` is the grid silhouette (how many cells this clue
+/// covers), which is all a client needs to lay the board out, and is what
+/// `activeGame.getStartDetails` already returned.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Question {
     pub number: i32,
-    pub answer: String,
+    /// Answer length in cells. Never the answer itself.
+    pub len: i32,
     pub question_text: String,
     pub root_x: i32,
     pub root_y: i32,
@@ -59,14 +65,17 @@ pub struct Coord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
     pub modifications: Vec<GameAction>,
-    pub correct_state: String,
     pub cord_x: i32,
     pub cord_y: i32,
 }
 
 impl Cell {
+    /// A block square carries the `(-1, -1)` sentinel and so is not a cell.
+    /// DEF-243: this used to read `correct_state.is_empty()`, i.e. "the answer
+    /// has no letter here". The answer is not on the client any more, so
+    /// membership of the grid is the only thing the client can and should know.
     pub fn is_block(&self) -> bool {
-        self.correct_state.is_empty()
+        self.cord_x < 0
     }
 }
 
@@ -86,13 +95,25 @@ pub fn current_cell_state(cell: &Cell) -> &str {
         .unwrap_or("")
 }
 
-/// TS `IsCellCorrect`: filled, latest edit matches the answer letter.
+/// TS `IsCellCorrect`: filled, and the server says this cell is right.
+///
+/// DEF-243: correctness used to be `latest == correct_state`, a comparison
+/// against the answer text the server used to send. The server now classifies
+/// every submitted letter against the key itself and stores the verdict in
+/// `actionType`, so that verdict — not a client-side comparison — is the single
+/// source of truth for "is this cell right". This is the same rule the
+/// leaderboard read path in `routers/game_list.rs` applies in SQL.
 pub fn is_cell_correct(cell: &Cell) -> bool {
-    if cell.correct_state.is_empty() {
+    if cell.is_block() {
         return false;
     }
     let latest = current_cell_state(cell);
-    !latest.is_empty() && latest == cell.correct_state
+    if latest.is_empty() {
+        return false;
+    }
+    cell.modifications
+        .first()
+        .is_some_and(|m| m.action_type == ActionType::CorrectGuess)
 }
 
 /// Newest-first by `submitted_at`. TS sorted descending by `Date`; ISO strings
@@ -116,19 +137,18 @@ pub fn cord_at_answer_index(q: &Question, index: i32) -> Coord {
     }
 }
 
-/// Lay a clue's answer onto the grid and attach the matching actions to each
+/// Lay a clue's cells onto the grid and attach the matching actions to each
 /// cell, newest first. TS `computeQuestionAnswerMap`.
+///
+/// The cells come from `q.len` (DEF-243), not from the answer text: the
+/// silhouette is enough to place a clue, and the answer never leaves the server.
 pub fn compute_answer_map(q: &Question, actions: &[GameAction]) -> QuestionWithAnswerMap {
-    let mut answer_map: Vec<Cell> = q
-        .answer
-        .chars()
-        .enumerate()
-        .map(|(i, ch)| {
-            let c = cord_at_answer_index(q, i as i32);
+    let mut answer_map: Vec<Cell> = (0..q.len.max(0))
+        .map(|i| {
+            let c = cord_at_answer_index(q, i);
             Cell {
                 cord_x: c.x,
                 cord_y: c.y,
-                correct_state: ch.to_string(),
                 modifications: Vec::new(),
             }
         })
@@ -192,7 +212,6 @@ pub fn board_state_from_actions(
                         None => Cell {
                             cord_x: -1,
                             cord_y: -1,
-                            correct_state: String::new(),
                             modifications: Vec::new(),
                         },
                         Some(answer_cell) => {
@@ -205,7 +224,6 @@ pub fn board_state_from_actions(
                             Cell {
                                 cord_x: answer_cell.cord_x,
                                 cord_y: answer_cell.cord_y,
-                                correct_state: answer_cell.correct_state.clone(),
                                 modifications: mods,
                             }
                         }
@@ -240,10 +258,10 @@ mod tests {
         }
     }
 
-    fn q(answer: &str, x: i32, y: i32, dir: Direction) -> Question {
+    fn q(answer_len: usize, x: i32, y: i32, dir: Direction) -> Question {
         Question {
             number: 1,
-            answer: answer.to_string(),
+            len: answer_len as i32,
             question_text: "clue".into(),
             root_x: x,
             root_y: y,
@@ -253,7 +271,7 @@ mod tests {
 
     #[test]
     fn answer_map_lays_letters_across_and_down() {
-        let across = compute_answer_map(&q("CAT", 2, 3, Direction::Across), &[]);
+        let across = compute_answer_map(&q(3, 2, 3, Direction::Across), &[]);
         let coords: Vec<_> = across
             .answer_map
             .iter()
@@ -261,7 +279,7 @@ mod tests {
             .collect();
         assert_eq!(coords, vec![(2, 3), (3, 3), (4, 3)]);
 
-        let down = compute_answer_map(&q("CAT", 2, 3, Direction::Down), &[]);
+        let down = compute_answer_map(&q(3, 2, 3, Direction::Down), &[]);
         let coords: Vec<_> = down
             .answer_map
             .iter()
@@ -277,14 +295,16 @@ mod tests {
             act(2, 3, "X", "2026-01-01T00:00:00Z", ActionType::Placeholder),
             act(2, 3, "C", "2026-01-02T00:00:00Z", ActionType::CorrectGuess),
         ];
-        let m = compute_answer_map(&q("CAT", 2, 3, Direction::Across), &actions);
+        let m = compute_answer_map(&q(3, 2, 3, Direction::Across), &actions);
         assert_eq!(current_cell_state(&m.answer_map[0]), "C");
     }
 
     #[test]
-    fn cell_correctness() {
-        let mut m = compute_answer_map(
-            &q("CAT", 0, 0, Direction::Across),
+    fn cell_correctness_comes_from_the_servers_verdict() {
+        // DEF-243: the client no longer holds the answer, so a cell is right
+        // when the server said so — not when a local string comparison passes.
+        let m = compute_answer_map(
+            &q(3, 0, 0, Direction::Across),
             &[act(
                 0,
                 0,
@@ -293,19 +313,65 @@ mod tests {
                 ActionType::CorrectGuess,
             )],
         );
-        assert!(is_cell_correct(&m.answer_map[0])); // "C" == "C"
+        assert!(is_cell_correct(&m.answer_map[0]));
         assert!(!is_cell_correct(&m.answer_map[1])); // unfilled
-                                                     // a block (empty correct_state) is never "correct"
-        m.answer_map[0].correct_state = String::new();
+    }
+
+    #[test]
+    fn a_server_verified_wrong_letter_is_not_correct() {
+        // The client cannot tell "C" from "X" any more. If the server says
+        // incorrectGuess, the cell must render and score as wrong.
+        let m = compute_answer_map(
+            &q(3, 0, 0, Direction::Across),
+            &[act(
+                0,
+                0,
+                "X",
+                "2026-01-01T00:00:00Z",
+                ActionType::IncorrectGuess,
+            )],
+        );
         assert!(!is_cell_correct(&m.answer_map[0]));
+    }
+
+    #[test]
+    fn a_placeholder_letter_is_not_correct() {
+        let m = compute_answer_map(
+            &q(3, 0, 0, Direction::Across),
+            &[act(
+                0,
+                0,
+                "C",
+                "2026-01-01T00:00:00Z",
+                ActionType::Placeholder,
+            )],
+        );
+        assert!(!is_cell_correct(&m.answer_map[0]));
+    }
+
+    #[test]
+    fn a_block_square_is_never_correct() {
+        let block = Cell {
+            modifications: vec![act(
+                0,
+                0,
+                "C",
+                "2026-01-01T00:00:00Z",
+                ActionType::CorrectGuess,
+            )],
+            cord_x: -1,
+            cord_y: -1,
+        };
+        assert!(block.is_block());
+        assert!(!is_cell_correct(&block));
     }
 
     #[test]
     fn board_size_and_sentinels() {
         // CAT across at (0,0) and CAR down at (0,0) share the C.
         let qs = vec![
-            compute_answer_map(&q("CAT", 0, 0, Direction::Across), &[]),
-            compute_answer_map(&q("CAR", 0, 0, Direction::Down), &[]),
+            compute_answer_map(&q(3, 0, 0, Direction::Across), &[]),
+            compute_answer_map(&q(3, 0, 0, Direction::Down), &[]),
         ];
         let size = board_size(&qs);
         assert_eq!((size.x, size.y), (3, 3)); // max coord 2 +1
@@ -321,7 +387,7 @@ mod tests {
     #[test]
     fn solved_detection() {
         let qs = vec![compute_answer_map(
-            &q("HI", 0, 0, Direction::Across),
+            &q(2, 0, 0, Direction::Across),
             &[
                 act(0, 0, "H", "2026-01-01T00:00:00Z", ActionType::CorrectGuess),
                 act(1, 0, "I", "2026-01-01T00:00:00Z", ActionType::CorrectGuess),
@@ -349,12 +415,21 @@ mod tests {
         assert_eq!(action.action_type, ActionType::CorrectGuess);
         assert_eq!((action.cord_x, action.cord_y), (2, 3));
 
+        // DEF-243: the wire carries `len`, never the answer text. A payload
+        // still carrying `answer` must not be readable into a `Question`.
         let question: Question = serde_json::from_str(
-            r#"{"id":"q1","number":1,"answer":"CAT","questionText":"feline",
+            r#"{"id":"q1","number":1,"len":3,"questionText":"feline",
                 "rootX":2,"rootY":3,"direction":"ACROSS","gameId":"g1"}"#,
         )
         .unwrap();
         assert_eq!(question.direction, Direction::Across);
-        assert_eq!(question.answer, "CAT");
+        assert_eq!(question.len, 3);
+
+        let leaked: Question = serde_json::from_str(
+            r#"{"id":"q1","number":1,"len":3,"answer":"CAT","questionText":"feline",
+                "rootX":2,"rootY":3,"direction":"ACROSS","gameId":"g1"}"#,
+        )
+        .expect("an extra field is ignored");
+        assert_eq!(leaked.len, 3);
     }
 }

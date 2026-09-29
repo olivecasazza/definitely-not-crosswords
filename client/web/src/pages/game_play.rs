@@ -13,8 +13,8 @@
 //! Selection snapshots a mutable `game_action_data` (the in-progress word).
 
 use crossword_core::game::{
-    board_size as compute_board_size, board_state_from_actions, compute_answer_map, is_solved,
-    ActionType, Cell, Direction, GameAction, Question, QuestionWithAnswerMap,
+    board_size as compute_board_size, board_state_from_actions, compute_answer_map, ActionType,
+    Cell, Direction, GameAction, Question, QuestionWithAnswerMap,
 };
 use dioxus::prelude::*;
 use futures::StreamExt;
@@ -1228,71 +1228,66 @@ pub fn GamePlay(id: String) -> Element {
 
     // --- guess submission ----------------------------------------------------
     let id_for_guess = id.clone();
-    let mut clear_for_guess = clear_selection.clone();
     let submit_guess = move || {
         let slots = game_action_data.peek().clone();
         if slots.is_empty() {
             return;
         }
-        // word-level correctness: whole answer must match.
-        let key = match *selected.peek() {
-            Some(k) => k,
-            None => return,
-        };
-        let maps = answer_maps.peek();
-        let m = match maps.iter().find(|m| qkey(&m.question) == key) {
-            Some(m) => m.clone(),
-            None => return,
-        };
-        drop(maps);
-        let is_correct = m.answer_map.iter().enumerate().all(|(i, cell)| {
-            slots
-                .get(i)
-                .map(|s| s.state.eq_ignore_ascii_case(&cell.correct_state))
-                .unwrap_or(false)
-        });
-        let at = if is_correct {
-            ActionType::CorrectGuess
-        } else {
-            ActionType::IncorrectGuess
-        };
-        let (add_input, new_local) = build_action_batch(&slots, &id_for_guess, at);
+        // DEF-243: the client no longer holds the answer, so it cannot decide
+        // whether this word is right or whether the grid is finished. It sends
+        // the letters and lets the server say: `addActions` returns each
+        // action with the verdict *it* derived, plus the grid's real
+        // `solved`/`correct`/`total`. The optimistic local batch is therefore
+        // stamped `placeholder` — a guess in flight — and is replaced by the
+        // server's copy on the way back.
+        let (add_input, new_local) =
+            build_action_batch(&slots, &id_for_guess, ActionType::Placeholder);
 
-        // Build the new action set locally for an inline solved-check.
         let mut next_actions = actions.peek().clone();
         next_actions.extend(new_local);
-
-        // recompute board inline (memo would be stale until next tick)
-        let maps2: Vec<QuestionWithAnswerMap> = questions
-            .peek()
-            .iter()
-            .map(|q| compute_answer_map(q, &next_actions))
-            .collect();
-        let size = compute_board_size(&maps2);
-        let grid = board_state_from_actions(size, &next_actions, &maps2);
-        let solved = is_solved(&grid);
-
         actions.set(next_actions);
 
-        if is_correct {
-            clear_for_guess(false);
-        }
-
         let id_complete = id_for_guess.clone();
+        let mut actions_for_reply = actions;
+        let mut clear_for_guess = clear_selection.clone();
         let nav = navigator();
         // Dioxus `spawn`: `nav.push` below needs the runtime scope (raw
         // spawn_local panics resolving the history context).
         spawn(async move {
-            let _ = net::mutation("activeGame.addActions", Some(add_input)).await;
-            if is_correct && solved {
-                if let Ok(res) =
-                    net::mutation("activeGame.complete", Some(json!({ "id": id_complete }))).await
-                {
-                    if let Some(cid) = res.get("id").and_then(|x| x.as_str()) {
-                        nav.push(Route::GameCompleted {
-                            id: cid.to_string(),
-                        });
-                    }
+            let Ok(res) = net::mutation("activeGame.addActions", Some(add_input)).await else {
+                return;
+            };
+            // Adopt the server's verdicts in place of the optimistic guess, so
+            // the grid colours from what the server actually decided.
+            if let Some(returned) = res.get("actions").and_then(|v| v.as_array()) {
+                let reconciled: Vec<GameAction> = returned
+                    .iter()
+                    .filter_map(|a| serde_json::from_value::<GameAction>(a.clone()).ok())
+                    .collect();
+                if !reconciled.is_empty() {
+                    let mut merged = actions_for_reply.peek().clone();
+                    merged.retain(|a| {
+                        !reconciled
+                            .iter()
+                            .any(|r| (r.cord_x, r.cord_y) == (a.cord_x, a.cord_y))
+                    });
+                    merged.extend(reconciled);
+                    actions_for_reply.set(merged);
+                }
+            }
+            if !res.get("solved").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return;
+            }
+            // The grid is genuinely finished. The server has already refused an
+            // unsolved `complete`, so this is the only path that navigates.
+            if let Ok(done) =
+                net::mutation("activeGame.complete", Some(json!({ "id": id_complete }))).await
+            {
+                if let Some(cid) = done.get("id").and_then(|x| x.as_str()) {
+                    clear_for_guess(false);
+                    nav.push(Route::GameCompleted {
+                        id: cid.to_string(),
+                    });
                 }
             }
         });

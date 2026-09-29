@@ -9,6 +9,7 @@ pub mod ctx;
 pub mod mailer;
 pub mod origin;
 pub mod routers;
+pub mod scoring;
 pub mod seo;
 pub mod spa;
 pub mod state;

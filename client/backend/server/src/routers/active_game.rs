@@ -95,7 +95,7 @@ async fn get(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the active game", &e))?;
 
     let ag_row = match ag_row {
         None => return Ok(Value::Null),
@@ -126,7 +126,7 @@ async fn get(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&game_id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the questions", &e))?;
 
     let questions: Vec<Value> = q_rows
         .iter()
@@ -151,7 +151,7 @@ async fn get(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&ag_id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the action log", &e))?;
 
     let actions: Vec<Value> = action_rows
         .iter()
@@ -188,7 +188,7 @@ async fn get(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&ag_id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the members", &e))?;
 
     let game_members: Vec<Value> = member_rows
         .iter()
@@ -243,7 +243,7 @@ async fn get_start_details(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(game_id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the game", &e))?;
 
     let game_row = match game_row {
         None => return Err("Game not found".to_string()),
@@ -260,7 +260,7 @@ async fn get_start_details(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(game_id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the questions", &e))?;
 
     let question_count = q_rows.len() as i64;
 
@@ -293,7 +293,7 @@ async fn get_start_details(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the active game", &e))?;
 
     let active_game_id: Option<String> = active_row.map(|r| r.get("id"));
 
@@ -311,7 +311,7 @@ async fn get_start_details(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the completed game", &e))?;
 
     let completed_game_id: Option<String> = completed_row.map(|r| r.get("id"));
 
@@ -370,7 +370,7 @@ async fn start(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the active game", &e))?;
 
     if let Some(row) = existing {
         let id: String = row.get("id");
@@ -382,7 +382,7 @@ async fn start(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(game_id)
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("load the game", &e))?;
 
     let game_row = match game_row {
         None => return Err("Game not found".to_string()),
@@ -402,7 +402,7 @@ async fn start(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(game_id)
     .execute(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("start the active game", &e))?;
 
     sqlx::query(
         r#"
@@ -415,7 +415,7 @@ async fn start(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&ag_id)
     .execute(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("start the active game", &e))?;
 
     Ok(json!({ "id": ag_id }))
 }
@@ -447,7 +447,7 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the active game", &e))?;
 
     if ag.is_none() {
         return Err("Active game not found".to_string());
@@ -461,7 +461,7 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("check membership", &e))?;
 
     if existing.is_some() {
         return Ok(json!({ "id": id, "joined": true }));
@@ -479,7 +479,7 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(id)
     .execute(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("join the active game", &e))?;
 
     Ok(json!({ "id": id, "joined": true }))
 }
@@ -505,7 +505,7 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| sanitised_db_error("check membership", &e))?
     .is_some();
     if !is_member {
         return Err("FORBIDDEN".to_string());
@@ -534,7 +534,7 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_one(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the user", &e))?;
     let name: String = name_row.get("name");
 
     ctx.events.publish(crossword_db::AppEvent::GamePresence {

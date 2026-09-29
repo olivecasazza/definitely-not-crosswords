@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.65](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.64...v0.1.65) - 2026-09-29
+
+### Fixed
+
+- *(server)* score the grid from the answer key, not client-declared rows (#173)
+
+### Other
+
+- changelog for v0.1.64 [skip ci]
+
+
 ## [0.1.64](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.63...v0.1.64) - 2026-09-29
 
 ### Other

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.63](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.62...v0.1.63) - 2026-09-29
+
+### Other
+
+- changelog for v0.1.62 [skip ci]
+- *(tooling)* add scripts/runner-toolchain for containers with no nix dev shell (#170)
+
+
 ## [0.1.62](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.61...v0.1.62) - 2026-09-29
 
 ### Fixed

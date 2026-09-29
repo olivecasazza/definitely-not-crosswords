@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn a_database_failure_reaches_the_client_as_a_stable_message() {
-        // The old code was `.map_err(|e| e.to_string())` throughout, which
+        // The old code stringified the raw driver error throughout, which
         // handed callers raw Postgres text: table and column names, constraint
         // names, sometimes the values that collided.
         let err = sqlx::Error::RowNotFound;

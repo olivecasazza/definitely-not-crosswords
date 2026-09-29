@@ -29,7 +29,7 @@ impl Ctx {
 /// Turn a database failure into a client-safe error, keeping the detail in the
 /// server log.
 ///
-/// `.map_err(|e| e.to_string())` handed callers raw Postgres text — table and
+/// Stringifying the driver error handed callers raw Postgres text — table and
 /// column names, constraint names, sometimes the values that collided. That is
 /// schema the client has no business reading, so the detail goes to
 /// `tracing::error!` and the client gets a stable message naming only what it

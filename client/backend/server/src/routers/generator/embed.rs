@@ -6,7 +6,7 @@
 //! as the TS `cosineSimilarity` assumed. Candidates run through the model in
 //! padded batches (`BATCH_SIZE` texts per `Session::run`), not one at a time.
 
-use ort::session::{builder::GraphOptimizationLevel, Session};
+use ort::session::{builder::GraphOptimizationLevel, builder::SessionBuilder, Session};
 use ort::value::Value as OrtValue;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -54,9 +54,9 @@ fn load_model(
         )
     })?;
     let session = Session::builder()
-        .map_err(|e| e.to_string())?
+        .map_err(|e: ort::Error<()>| e.to_string())?
         .with_optimization_level(GraphOptimizationLevel::Level3)
-        .map_err(|e| e.to_string())?
+        .map_err(|e: ort::Error<SessionBuilder>| e.to_string())?
         .commit_from_file(model_path.as_ref())
         .map_err(|e| {
             format!(
@@ -111,30 +111,37 @@ fn pool_normalize(data: &[f32], mask: &[i64], dim: usize) -> Vec<f32> {
 /// Used for the topic (and kept as the reference path for the equivalence
 /// test); candidates go through `embed_batch`.
 fn embed_one(m: &EmbedModel, text: &str) -> Result<Vec<f32>, String> {
-    let enc = m.tokenizer.encode(text, true).map_err(|e| e.to_string())?;
+    let enc = m
+        .tokenizer
+        .encode(text, true)
+        .map_err(|e: tokenizers::Error| e.to_string())?;
     let ids: Vec<i64> = enc.get_ids().iter().map(|&x| x as i64).collect();
     let mask: Vec<i64> = enc.get_attention_mask().iter().map(|&x| x as i64).collect();
     let types: Vec<i64> = enc.get_type_ids().iter().map(|&x| x as i64).collect();
     let n = ids.len();
     let shape = [1_i64, n as i64];
 
-    let ids_v = OrtValue::from_array((shape, ids)).map_err(|e| e.to_string())?;
-    let mask_v = OrtValue::from_array((shape, mask.clone())).map_err(|e| e.to_string())?;
-    let types_v = OrtValue::from_array((shape, types)).map_err(|e| e.to_string())?;
+    let ids_v = OrtValue::from_array((shape, ids)).map_err(|e: ort::Error| e.to_string())?;
+    let mask_v =
+        OrtValue::from_array((shape, mask.clone())).map_err(|e: ort::Error| e.to_string())?;
+    let types_v = OrtValue::from_array((shape, types)).map_err(|e: ort::Error| e.to_string())?;
 
-    let mut session = m.session.lock().map_err(|e| e.to_string())?;
+    let mut session = m
+        .session
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let outputs = session
         .run(ort::inputs![
             "input_ids" => ids_v,
             "attention_mask" => mask_v,
             "token_type_ids" => types_v,
         ])
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: ort::Error| e.to_string())?;
 
     // last_hidden_state: [1, n, dim]
     let (_shape, data) = outputs[0]
         .try_extract_tensor::<f32>()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: ort::Error| e.to_string())?;
     let dim = data.len() / n;
     Ok(pool_normalize(data, &mask, dim))
 }
@@ -162,7 +169,7 @@ fn embed_batch(m: &EmbedModel, texts: &[&str]) -> Result<Vec<Vec<f32>>, String> 
     let encs = m
         .tokenizer
         .encode_batch(texts.to_vec(), true)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: tokenizers::Error| e.to_string())?;
     let b = encs.len();
     let max_len = encs.iter().map(|e| e.get_ids().len()).max().unwrap_or(1);
 
@@ -184,25 +191,29 @@ fn embed_batch(m: &EmbedModel, texts: &[&str]) -> Result<Vec<Vec<f32>>, String> 
     }
     let shape = [b as i64, max_len as i64];
 
-    let ids_v = OrtValue::from_array((shape, ids)).map_err(|e| e.to_string())?;
-    let mask_v = OrtValue::from_array((shape, mask.clone())).map_err(|e| e.to_string())?;
-    let types_v = OrtValue::from_array((shape, types)).map_err(|e| e.to_string())?;
+    let ids_v = OrtValue::from_array((shape, ids)).map_err(|e: ort::Error| e.to_string())?;
+    let mask_v =
+        OrtValue::from_array((shape, mask.clone())).map_err(|e: ort::Error| e.to_string())?;
+    let types_v = OrtValue::from_array((shape, types)).map_err(|e: ort::Error| e.to_string())?;
 
-    let mut session = m.session.lock().map_err(|e| e.to_string())?;
+    let mut session = m
+        .session
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let outputs = session
         .run(ort::inputs![
             "input_ids" => ids_v,
             "attention_mask" => mask_v,
             "token_type_ids" => types_v,
         ])
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: ort::Error| e.to_string())?;
 
     // `outputs` borrows the session, so the lock is held through the pooling
     // below — fine, pooling is microseconds next to the model run.
     // last_hidden_state: [B, max_len, dim]
     let (_shape, data) = outputs[0]
         .try_extract_tensor::<f32>()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: ort::Error| e.to_string())?;
     let dim = data.len() / (b * max_len);
 
     let mut out = Vec::with_capacity(b);

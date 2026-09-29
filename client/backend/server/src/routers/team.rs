@@ -1,5 +1,5 @@
 //! `team` router — port of server/trpc/router/team.ts
-use crate::ctx::Ctx;
+use crate::ctx::{sanitised_db_error, Ctx};
 use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
@@ -29,14 +29,14 @@ async fn user_is_pro(user_id: &str, pool: &sqlx::PgPool) -> Result<bool, String>
         .bind(user_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("check the vip pass", &e))?;
 
     let sub_status: Option<String> =
         sqlx::query_scalar(r#"SELECT status::text FROM "Subscription" WHERE "userId" = $1"#)
             .bind(user_id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("load the subscription status", &e))?;
 
     Ok(matches!(sub_status.as_deref(), Some("ACTIVE") | Some("CANCELLED")) || vip.unwrap_or(false))
 }
@@ -50,7 +50,7 @@ async fn is_member(team_id: &str, user_id: &str, pool: &sqlx::PgPool) -> Result<
     .bind(user_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("count the team members", &e))?;
     Ok(count > 0)
 }
 
@@ -80,7 +80,7 @@ async fn create(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&name)
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("check the team name", &e))?;
     if existing.is_some() {
         return Err("A team with that name already exists.".into());
     }
@@ -94,7 +94,11 @@ async fn create(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     let team_id = Uuid::new_v4().to_string();
     let member_id = Uuid::new_v4().to_string();
 
-    let mut tx = ctx.pool.begin().await.map_err(|e| e.to_string())?;
+    let mut tx = ctx
+        .pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
 
     sqlx::query(
         r#"INSERT INTO "Team" (id, name, "ownerId", visibility, "maxSize", "createdAt")
@@ -107,7 +111,7 @@ async fn create(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(max_size)
     .execute(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("create the team", &e))?;
 
     sqlx::query(
         r#"INSERT INTO "TeamMember" (id, "teamId", "userId", "joinedAt")
@@ -118,9 +122,11 @@ async fn create(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .execute(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("add the team member", &e))?;
 
-    tx.commit().await.map_err(|e| e.to_string())?;
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("commit the transaction", &e))?;
 
     Ok(json!({
         "id": team_id,
@@ -150,7 +156,7 @@ async fn set_visibility(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(team_id)
         .fetch_optional(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| sanitised_db_error("load the team", &e))?
         .ok_or_else(|| "Team not found.".to_string())?;
 
     let owner_id: String = row.get("ownerId");
@@ -163,7 +169,7 @@ async fn set_visibility(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(team_id)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("update the team visibility", &e))?;
 
     Ok(json!({ "ok": true }))
 }
@@ -190,7 +196,7 @@ async fn list(ctx: &Ctx) -> Result<Value, String> {
     )
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the teams", &e))?;
 
     let teams: Vec<Value> = rows
         .iter()
@@ -234,7 +240,7 @@ async fn my_teams(ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the team invites", &e))?;
 
     let teams: Vec<Value> = rows
         .iter()
@@ -265,7 +271,11 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     // Lock the team row for the duration of the tx so concurrent joins can't each
     // observe count < maxSize and all insert past capacity (TOCTOU).
-    let mut tx = ctx.pool.begin().await.map_err(|e| e.to_string())?;
+    let mut tx = ctx
+        .pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
 
     let row = sqlx::query(
         r#"SELECT visibility::text AS visibility, "maxSize" FROM "Team" WHERE id = $1 FOR UPDATE"#,
@@ -273,7 +283,7 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(team_id)
     .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| sanitised_db_error("lock the team", &e))?
     .ok_or_else(|| "Team not found.".to_string())?;
 
     let visibility: String = row.get("visibility");
@@ -289,7 +299,7 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(team_id)
             .fetch_one(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("count the team members", &e))?;
 
     let already_member: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*) FROM "TeamMember" WHERE "teamId" = $1 AND "userId" = $2"#,
@@ -298,7 +308,7 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("count the team members", &e))?;
     if already_member > 0 {
         return Ok(json!({ "joined": true }));
     }
@@ -316,9 +326,11 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .execute(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("add the team member", &e))?;
 
-    tx.commit().await.map_err(|e| e.to_string())?;
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("commit the transaction", &e))?;
 
     Ok(json!({ "joined": true }))
 }
@@ -340,7 +352,7 @@ async fn leave(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(team_id)
             .fetch_optional(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("load the team owner", &e))?;
     if owner_id.as_deref() == Some(user.id.as_str()) {
         return Err(
             "The team owner can't leave. Transfer ownership or delete the team first.".into(),
@@ -352,7 +364,7 @@ async fn leave(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(&user.id)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("remove the team member", &e))?;
 
     Ok(json!({ "left": true }))
 }
@@ -388,7 +400,7 @@ async fn invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(team_id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| sanitised_db_error("load the team roster", &e))?
     .ok_or_else(|| "Team not found.".to_string())?;
 
     let max_size: i32 = row.get("maxSize");
@@ -405,7 +417,7 @@ async fn invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(&id_lower)
             .fetch_optional(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(|e| sanitised_db_error("find the invitee", &e))?
             .ok_or_else(|| "No user found with that username or email.".to_string())?;
 
     let invitee_id: String = invitee_row.get("id");
@@ -432,7 +444,7 @@ async fn invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .execute(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("send the team invite", &e))?;
 
     Ok(json!({ "invited": true }))
 }
@@ -461,7 +473,7 @@ async fn my_invites(ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the team invites", &e))?;
 
     let invites: Vec<Value> = rows
         .iter()
@@ -498,7 +510,7 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(invite_id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the team invite", &e))?;
 
     let row = match row {
         Some(r) => r,
@@ -518,11 +530,15 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(invite_id)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("decline the team invite", &e))?;
         return Ok(json!({ "accepted": false }));
     }
 
-    let mut tx = ctx.pool.begin().await.map_err(|e| e.to_string())?;
+    let mut tx = ctx
+        .pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
 
     // Lock the team row, then recount under the lock so concurrent accepts/joins
     // can't push membership past maxSize (TOCTOU).
@@ -531,7 +547,7 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(&team_id)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(|e| sanitised_db_error("lock the team", &e))?
             .ok_or_else(|| "Team not found.".to_string())?;
 
     let member_count: i64 =
@@ -539,7 +555,7 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
             .bind(&team_id)
             .fetch_one(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("count the team members", &e))?;
 
     // Already a member? Accept idempotently without a capacity check.
     let already_member: i64 = sqlx::query_scalar(
@@ -549,7 +565,7 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("count the team members", &e))?;
 
     if already_member == 0 && member_count >= max_size as i64 {
         return Err("This team is now full.".into());
@@ -569,15 +585,17 @@ async fn respond_to_invite(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .execute(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("add the team member", &e))?;
 
     sqlx::query(r#"UPDATE "TeamInvite" SET status = 'ACCEPTED'::"TeamInviteStatus" WHERE id = $1"#)
         .bind(invite_id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("accept the team invite", &e))?;
 
-    tx.commit().await.map_err(|e| e.to_string())?;
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("commit the transaction", &e))?;
 
     Ok(json!({ "accepted": true }))
 }
@@ -608,7 +626,7 @@ async fn get_team_leaderboard(ctx: &Ctx) -> Result<Value, String> {
     )
     .fetch_all(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the teams", &e))?;
 
     let board: Vec<Value> = rows
         .iter()

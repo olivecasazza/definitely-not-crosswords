@@ -12,7 +12,7 @@ mod dict;
 mod embed;
 mod solver;
 
-use crate::ctx::Ctx;
+use crate::ctx::{sanitised_db_error, Ctx};
 use crossword_auth::AuthContext;
 use crossword_db::{AuthUser, Capability};
 use serde_json::{json, Value};
@@ -48,7 +48,7 @@ async fn list_jobs(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     let user = ctx.require_user()?;
     ctx.auth
         .require_capability(Capability::AdminAccess)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: crossword_db::AppError| e.to_string())?;
     let take = input
         .get("take")
         .and_then(|v| v.as_i64())
@@ -92,7 +92,7 @@ async fn list_jobs(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .fetch_all(&ctx.pool)
         .await
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("list the generation jobs", &e))?;
 
     let jobs: Vec<Value> = rows
         .iter()
@@ -132,7 +132,7 @@ async fn publish_generated_game(input: &Value, ctx: &Ctx) -> Result<Value, Strin
             .bind(game_id)
             .fetch_optional(&ctx.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("load the game source", &e))?;
 
     let Some(row) = row else {
         return Err("Game was not found.".to_string());
@@ -153,7 +153,7 @@ async fn publish_generated_game(input: &Value, ctx: &Ctx) -> Result<Value, Strin
         .bind(game_id)
         .execute(&ctx.pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("publish the game", &e))?;
     Ok(json!({ "id": game_id, "published": true }))
 }
 
@@ -526,7 +526,7 @@ async fn check_quota(pool: &PgPool, user: &AuthUser) -> Result<bool, String> {
     .bind(&user.id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the subscription status", &e))?;
     let (vip, status, period_active) = match &row {
         Some(r) => (
             r.get::<bool, _>("vipPass"),
@@ -557,7 +557,7 @@ async fn check_quota(pool: &PgPool, user: &AuthUser) -> Result<bool, String> {
         .bind(&user.id)
         .fetch_one(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("record the generation quota", &e))?;
 
         let mut used: i32 = row.get("usedThisMonth");
         let is_current: bool = row.get("is_current");
@@ -568,7 +568,7 @@ async fn check_quota(pool: &PgPool, user: &AuthUser) -> Result<bool, String> {
             .bind(&user.id)
             .execute(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| sanitised_db_error("reset the generation quota", &e))?;
             used = 0;
         }
         if used >= FREE_LIMIT {
@@ -809,7 +809,7 @@ async fn create_job(
     .bind(creator_id)
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("create the generation job", &e))?;
 
     write_audit_log(
         pool,
@@ -857,7 +857,10 @@ async fn finalize_success(
         "questionCount": gen.questions.len(), "resultGameId": game_id,
     });
 
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
     sqlx::query(
         r#"INSERT INTO "Game" (id, type, "createdAt", "updatedAt", title, published, source, "createdById")
            VALUES ($1, 'Game', now(), now(), $2, false, 'GENERATED'::"GameSource", $3)"#,
@@ -867,7 +870,7 @@ async fn finalize_success(
     .bind(created_by)
     .execute(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("insert the generated game", &e))?;
 
     for q in &gen.questions {
         sqlx::query(
@@ -885,7 +888,7 @@ async fn finalize_success(
         .bind(&game_id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| sanitised_db_error("insert the generated questions", &e))?;
     }
 
     sqlx::query(
@@ -904,9 +907,11 @@ async fn finalize_success(
     .bind(&game_id)
     .execute(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("finish the generation job", &e))?;
 
-    tx.commit().await.map_err(|e| e.to_string())?;
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("commit the transaction", &e))?;
 
     write_audit_log(
         pool,
@@ -972,7 +977,9 @@ async fn finalize_failed(
 /// `JobCreate` capability; free/Pro quota is enforced downstream by
 /// `check_quota`.
 pub fn authorize(auth: &AuthContext) -> Result<AuthUser, String> {
-    let user = auth.require_user().map_err(|e| e.to_string())?;
+    let user = auth
+        .require_user()
+        .map_err(|e: crossword_db::AppError| e.to_string())?;
     if !user.role.has(Capability::JobCreate) {
         return Err(format!("{} required", Capability::JobCreate));
     }

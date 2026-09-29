@@ -6,6 +6,7 @@
 
 use super::embed::{self, Candidate};
 use super::solver::Params;
+use crate::ctx::sanitised_db_error;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 use std::collections::{HashMap, HashSet};
@@ -58,7 +59,7 @@ pub async fn fetch_rows(pool: &PgPool, p: &Params) -> Result<Vec<RawRow>, String
     .bind(p.max_len)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the dictionary words", &e))?;
 
     Ok(rows
         .into_iter()

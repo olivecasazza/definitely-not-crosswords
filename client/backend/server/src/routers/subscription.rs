@@ -1,5 +1,5 @@
 //! `subscription` router — port of server/trpc/router/subscription.ts
-use crate::ctx::Ctx;
+use crate::ctx::{sanitised_db_error, Ctx};
 use serde_json::{json, Value};
 use sqlx::Row;
 
@@ -63,7 +63,7 @@ async fn get_status(ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| sanitised_db_error("load the account", &e))?
     .ok_or_else(|| "user not found".to_string())?;
 
     let vip_pass: bool = row.get("vipPass");
@@ -111,7 +111,7 @@ async fn stop(ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .fetch_optional(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("load the subscription", &e))?;
 
     let Some(row) = row else {
         return Err("No active subscription to cancel.".to_string());
@@ -168,7 +168,7 @@ async fn stop(ctx: &Ctx) -> Result<Value, String> {
     .bind(&user.id)
     .execute(&ctx.pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| sanitised_db_error("update the subscription", &e))?;
 
     Ok(json!({ "stopped": true }))
 }

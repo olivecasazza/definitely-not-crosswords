@@ -1,0 +1,42 @@
+#!/bin/bash
+# `zig cc` with the glibc/libstdc++ link flags appended ONLY when actually linking.
+#
+# The container's /paperclip/bin/cc is a symlink to /paperclip/bin/zigcc, which
+# appends `-l:libstdc++.so.6 -lm -ldl -lpthread` unconditionally. That makes zig
+# attempt a link even for `-c`, so every C dependency in the workspace fails:
+#
+#   ld.lld: error: undefined symbol: main
+#   ld.lld: error: attempted static link of dynamic object .../libstdc++.so.6
+#
+# Compiling (`-c`), assembling (`-S`) and preprocessing (`-E`) get no link flags.
+set -euo pipefail
+
+ZIG="${ZIG:-}"
+if [ -z "$ZIG" ]; then
+  for candidate in /paperclip/zig/zig-linux-x86_64-*/zig "$(command -v zig 2>/dev/null || true)"; do
+    if [ -x "$candidate" ]; then
+      ZIG="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$ZIG" ]; then
+  echo "runner-toolchain/cc: no zig found; set ZIG=/path/to/zig" >&2
+  exit 127
+fi
+
+args=()
+link=1
+for a in "$@"; do
+  case "$a" in
+    --target=x86_64-unknown-linux-gnu) a="--target=x86_64-linux-gnu" ;;
+    -c|-S|-E) link=0 ;;
+  esac
+  args+=("$a")
+done
+
+if [ "$link" = 1 ]; then
+  exec "$ZIG" cc "${args[@]}" -L/usr/lib/x86_64-linux-gnu -l:libstdc++.so.6 -lm -ldl -lpthread
+else
+  exec "$ZIG" cc "${args[@]}"
+fi

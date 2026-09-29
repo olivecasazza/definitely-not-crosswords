@@ -240,6 +240,61 @@ if [[ -n "$WAVE_CONSENT_RAW" ]]; then
   WAVE_SOURCE="$(cut -d'|' -f3 <<< "$WAVE_CONSENT_RAW")"
 fi
 
+TODAY_UTC="$(date -u +%F)"
+
+# DEF-229. A wave may be scheduled for a future day, but a consent that has not
+# been given yet is not a consent. `send_not_before` carries the schedule;
+# `consent.recorded_at` carries the day the answer was actually given, and the
+# gate below used to shape-check that date only — never compare it to today — so
+# a wave could be mailed on the strength of a consent dated next month.
+#
+# Skipped on the --withdraw path on purpose. A withdrawal is a local ledger
+# write, and the ability to take someone off the list must not depend on the
+# rest of the roster being well-formed — the same argument that puts this block
+# ahead of the network preflight below. The withdraw block does its own date
+# check, and it refuses a withdrawal that predates the consent it retracts.
+if [[ -z "$WITHDRAW" ]]; then
+  TODAY_EPOCH="$(date_epoch "$TODAY_UTC")"
+  if [[ -n "$WAVE_RECORDED" ]]; then
+    WAVE_RECORDED_EPOCH="$(date_epoch "$WAVE_RECORDED")"
+    if [[ -z "$WAVE_RECORDED_EPOCH" ]]; then
+      echo "ABORT: wave consent.recorded_at '$WAVE_RECORDED' is not a real calendar date." >&2
+      echo "  Correct consent.recorded_at to the day the answer was actually given" >&2
+      echo "  (YYYY-MM-DD) and keep scheduled send dates in send_not_before." >&2
+      exit 1
+    fi
+    if [[ "$WAVE_RECORDED_EPOCH" -gt "$TODAY_EPOCH" ]]; then
+      echo "ABORT: wave consent.recorded_at '$WAVE_RECORDED' is in the future." >&2
+      echo "  consent.recorded_at must be the day the answer was actually given," >&2
+      echo "  not the scheduled wave date. Use send_not_before for scheduling." >&2
+      exit 1
+    fi
+  fi
+  future_row_consent="$(jq -r --argjson today "$TODAY_EPOCH" '
+    to_entries[]
+    | .key as $idx
+    | .value as $r
+    | ($r.consent_recorded_at // "") as $d
+    | select($d | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
+    | ($d | try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) as $back
+    | if $back != $d then "invalid|\($idx)|\($r.email // "row " + ($idx | tostring))|\($d)"
+      elif ($d | strptime("%Y-%m-%d") | mktime) > $today then "future|\($idx)|\($r.email // "row " + ($idx | tostring))|\($d)"
+      else empty end' "$TMPD/roster.json" | head -1)"
+  if [[ -n "$future_row_consent" ]]; then
+    IFS='|' read -r kind row_idx row_who row_date <<< "$future_row_consent"
+    if [[ "$kind" == invalid ]]; then
+      echo "ABORT: row $row_idx ($row_who) has consent_recorded_at '$row_date'," >&2
+      echo "  which is not a real calendar date. Correct consent_recorded_at to" >&2
+      echo "  the day the person actually agreed (YYYY-MM-DD)." >&2
+    else
+      echo "ABORT: row $row_idx ($row_who) has consent_recorded_at '$row_date'," >&2
+      echo "  which is in the future. consent_recorded_at must be the day the" >&2
+      echo "  person actually agreed; keep scheduled wave dates in send_not_before." >&2
+    fi
+    exit 1
+  fi
+fi
+
 # Loaded before the header so the ledger in force is printed on every run, and
 # before the gate so a withdrawn address cannot be emailed.
 load_withdrawals
@@ -309,7 +364,7 @@ if [[ -n "$WITHDRAW" ]]; then
          then $wr
          else "" end)' "$TMPD/roster.json")"
 
-  today="$(date -u +%F)"
+  today="$TODAY_UTC"
   if [[ -n "$recorded" ]]; then
     recorded_epoch="$(date_epoch "$recorded")"
     if [[ -z "$recorded_epoch" ]]; then

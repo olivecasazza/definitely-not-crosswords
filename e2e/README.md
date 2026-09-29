@@ -7,6 +7,11 @@ change to the user-facing flow does — which is exactly when the canary should
 page you.
 
 - `tests/smoke.spec.ts` — unauthenticated canary (no creds; safe nightly).
+- `tests/boot-failure.spec.ts` — boot-shell canary, all unauthenticated. A
+  blocked bundle load must be a recoverable card, never a blank page, with
+  exactly one automatic retry; and with scripting **disabled** the `<noscript>`
+  card must be the only card on screen rather than a permanent false "Loading"
+  (the `javaScriptEnabled: false` branch, DEF-171).
 - `tests/pro-checkout.spec.ts` — billing canary: signs in, asserts the priced
   `Upgrade to Pro — $10/year` CTA is **visible**, clicks it, and asserts the
   browser lands on a real `lemonsqueezy.com` checkout. This is the only thing

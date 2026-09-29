@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.67](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.66...v0.1.67) - 2026-09-29
+
+### Fixed
+
+- *(tools)* refuse a consent that has not been given yet [DEF-229] (#177)
+
+### Other
+
+- changelog for v0.1.66 [skip ci]
+
+
 ## [0.1.66](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.65...v0.1.66) - 2026-09-29
 
 ### Fixed

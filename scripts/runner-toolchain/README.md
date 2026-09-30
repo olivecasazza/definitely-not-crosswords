@@ -45,7 +45,7 @@ Set `ZIG=/path/to/zig` if zig is not at one of the probed locations.
 `./test-cc.sh` guards this: it asserts `-c` does not link, and that a real link
 still works.
 
-### 2. `panel-kit-shim/` — the workspace manifest
+### 2. `panel-kit` — the workspace manifest
 
 `client/web/Cargo.toml` depends on `panel-kit` and `panel-kit-core` by absolute
 path:
@@ -63,11 +63,35 @@ failed to read /home/olive/Repositories/panel-kit/Cargo.toml: No such file or di
 ```
 
 `client/flake.nix` solves this for nix builds by vendoring the pinned
-`panel-kit` input into the workspace source and rewriting the paths. This shim is
-the same idea for a bare container: a manifest-only `panel-kit` 1.0.0 +
-`panel-kit-core` 1.0.0 pair matching `client/Cargo.lock`, with empty `lib.rs`
-files. It exists to let the manifest load. **It is not panel-kit** — never build
-`crossword-web` or `crossword-desktop` against it.
+`panel-kit` input into the workspace source and rewriting the paths.
+`fetch-panel-kit.sh` is the same idea for a bare container: it checks out
+panel-kit at **the revision `client/flake.nix` pins** — read out of the flake,
+never hardcoded here, so the runner and the nix build cannot drift — and
+`with-cargo.sh` repoints both path deps at that checkout.
+
+This is what makes `crossword-web` type-checkable here at all:
+
+```console
+$ scripts/runner-toolchain/with-cargo.sh check -p crossword-web
+panel-kit: ~/.cache/runner-toolchain/panel-kit-4aad83c86285c83706e380c054a2b317ff8c6f69
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 32.09s
+```
+
+The checkout is cached per revision under `~/.cache/runner-toolchain` (~11M) and
+reused. Set `PANEL_KIT_CACHE_DIR` to move it; the first run fetches, later runs
+cost nothing.
+
+`panel-kit-shim/` remains as an **offline fallback**: when the fetch fails,
+`with-cargo.sh` falls back to it so the native server crates still build, and
+says so on stderr. It is a manifest-only `panel-kit` 1.0.0 + `panel-kit-core`
+1.0.0 pair with empty `lib.rs` files. **It is not panel-kit** — `crossword-web`
+and `crossword-desktop` do not compile against it, and the fallback prints that
+warning precisely so a shim build is never mistaken for a real frontend
+verification.
+
+`./test-panel-kit.sh` guards all of this: the resolved rev equals the flake's
+pin, the checkout is panel-kit and not the shim, the repoint happens while
+cargo runs and the host path does not survive it, and the tree is clean after.
 
 `[patch]` in `.cargo/config.toml` is not an alternative here: cargo fails while
 loading the manifest, before patch resolution runs.
@@ -89,6 +113,15 @@ error: builder for '.../mescc-tools-1.9.1.drv' failed with exit code 1;
        > error: executing '.../kaem-unwrapped-1.9.1': No such file or directory
 ```
 
-So the full dev shell is unavailable: GTK/WebKit for `crossword-desktop` and `dx`
-for `crossword-web` remain unbuildable here. This shim only unblocks the native
-server crates.
+So the full dev shell is unavailable, and two things stay unbuildable here:
+
+- **`crossword-desktop`** — needs GTK/WebKit (`glib-sys`, `gio-sys` … fail at
+  `pkg-config`; the dev headers are not in the container). It gets past
+  panel-kit and stops at GTK.
+- **`dx`** — the Dioxus CLI is in the dev shell only, so there is no local
+  `dx serve` / bundle build. `cargo check`/`cargo test -p crossword-web` do run
+  and cover the frontend's Rust.
+
+`crossword-server`, `-core`, `-db`, `-auth`, `-events`, `-tools` and
+`crossword-web` all check and test through this toolchain — 166 tests pass with
+it.

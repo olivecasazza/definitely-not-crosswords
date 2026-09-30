@@ -13,7 +13,7 @@ pub fn AppFooter() -> Element {
     rsx! {
         footer { class: "site-footer",
             span { class: "muted",
-                "© definitely-not-crosswords "
+                "\u{00A9} definitely-not-crosswords"
                 span { class: "app-version", "data-build": build_sha, "v{version}" }
             }
             nav { class: "site-footer-nav",
@@ -50,6 +50,20 @@ const FOOTER_CSS: &str = "
 }
 .site-footer-nav a { text-decoration: none; pointer-events: auto; }
 .site-footer-nav a:hover { color: var(--text-primary); }
+/* The version used to sit directly after the title with nothing between them:
+   a bare space, an inline child one step smaller in font-size inside the
+   title's taller line box. That read as smushed/overlapping even though the
+   boxes never intersected. Give it a real gap plus a middle-dot separator, and
+   size it one step down the token ladder (--fs-2xs) so it stays legible but
+   clearly secondary. */
+.app-version {
+  margin-left: .5rem;
+  font-size: var(--fs-2xs);
+  line-height: 1;
+  font-family: var(--mono, ui-monospace, monospace);
+  white-space: nowrap;
+}
+.app-version::before { content: '·'; margin-right: .5rem; }
 /* Mobile: the TabBar owns the bottom edge; hide the footer strip entirely. */
 @media (max-width: 760px) { .site-footer { display: none; } }
 ";

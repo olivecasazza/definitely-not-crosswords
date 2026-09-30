@@ -171,7 +171,13 @@ const HEADER_CSS: &str = "
 .site-header .brand:hover span { color: var(--fg); }
 .site-header nav.row { gap: .25rem; }
 .site-header .navlink {
-  color: var(--dim); padding: .25rem .5rem;
+  color: var(--dim); padding: .5rem .5rem; min-height: 44px;
+  display: inline-flex; align-items: center;
+  /* 2px, not 1px: the reserved active underline (see .navlink-active below) is
+     2px, and it is transparent-but-present on EVERY navlink so toggling the
+     active route cannot reflow the row. Reserving it on all links is the point
+     — only the colour differs — so this is NOT the source of the uneven box;
+     the box itself is normalised to .app-btn's 44px here instead. */
   border-bottom: 2px solid transparent;
   transition: color .15s ease;
 }

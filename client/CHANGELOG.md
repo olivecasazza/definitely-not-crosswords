@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.72](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.71...v0.1.72) - 2026-09-30
+
+### Fixed
+
+- *(web)* skip DEF-243 sentinel blocks when stepping the cursor (#187)
+
+### Other
+
+- changelog for v0.1.71 [skip ci]
+
+
 ## [0.1.71](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.70...v0.1.71) - 2026-09-29
 
 ### Fixed

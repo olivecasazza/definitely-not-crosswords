@@ -1543,10 +1543,20 @@ fn step_to_playable(grid: &[Vec<Cell>], from: (i32, i32), dx: i32, dy: i32) -> O
     let (mut x, mut y) = from;
     loop {
         let (nx, ny) = (x + dx, y + dy);
-        let cell = grid
-            .iter()
-            .flatten()
-            .find(|c| c.cord_x == nx && c.cord_y == ny)?;
+        // DEF-243 made a block square the `(-1, -1)` sentinel instead of a cell
+        // at its own coordinate with an empty answer, so a block is no longer
+        // findable by coordinate — the old `find(..cord_x == nx && cord_y == ny)?`
+        // missed on the first block and one press stopped dead there, instead of
+        // walking the run this function exists to skip.
+        //
+        // The grid is dense: `board_state_from_actions`, the only thing that
+        // builds it, emits one entry per square. So index by position, and let
+        // `is_block` — the sentinel — decide what to skip. Leaving the grid ends
+        // the ray, which is the `None` this documents.
+        let cell = match (usize::try_from(ny), usize::try_from(nx)) {
+            (Ok(row), Ok(col)) => grid.get(row).and_then(|r| r.get(col))?,
+            _ => return None,
+        };
         if !cell.is_block() {
             return Some((nx, ny));
         }
@@ -2493,23 +2503,23 @@ const GAME_CSS: &str = r#"
 mod tests {
     use super::*;
 
-    /// `correct_state` is what makes a cell playable (see `Cell::is_block`),
-    /// so an empty one is a block.
+    /// DEF-243 moved board membership onto the coordinate: a cell is a block
+    /// square when it carries the `(-1, -1)` sentinel (see `Cell::is_block`).
+    /// The answer is not on the client any more, so there is nothing to mark a
+    /// cell playable with — the coordinate is the whole signal.
     fn cell(x: i32, y: i32) -> Cell {
         Cell {
             modifications: vec![],
-            correct_state: "A".to_string(),
             cord_x: x,
             cord_y: y,
         }
     }
 
-    fn block(x: i32, y: i32) -> Cell {
+    fn block() -> Cell {
         Cell {
             modifications: vec![],
-            correct_state: String::new(),
-            cord_x: x,
-            cord_y: y,
+            cord_x: -1,
+            cord_y: -1,
         }
     }
 
@@ -2518,9 +2528,9 @@ mod tests {
     fn fixture() -> Vec<Vec<Cell>> {
         vec![
             vec![cell(0, 0), cell(1, 0), cell(2, 0), cell(3, 0), cell(4, 0)],
-            vec![cell(0, 1), cell(1, 1), cell(2, 1), block(3, 1), cell(4, 1)],
+            vec![cell(0, 1), cell(1, 1), cell(2, 1), block(), cell(4, 1)],
             vec![cell(0, 2), cell(1, 2), cell(2, 2), cell(3, 2), cell(4, 2)],
-            vec![block(0, 3), block(1, 3), cell(2, 3), cell(3, 3), cell(4, 3)],
+            vec![block(), block(), cell(2, 3), cell(3, 3), cell(4, 3)],
             vec![cell(0, 4), cell(1, 4), cell(2, 4), cell(3, 4), cell(4, 4)],
         ]
     }
@@ -2529,10 +2539,10 @@ mod tests {
     fn first_playable_is_the_first_non_block_in_row_major_order() {
         assert_eq!(first_playable(&fixture()), Some((0, 0)));
         let mut g = fixture();
-        g[0][0] = block(0, 0);
-        g[0][1] = block(1, 0);
+        g[0][0] = block();
+        g[0][1] = block();
         assert_eq!(first_playable(&g), Some((2, 0)));
-        assert_eq!(first_playable(&[vec![block(0, 0), block(1, 0)]]), None);
+        assert_eq!(first_playable(&[vec![block(), block()]]), None);
     }
 
     #[test]
@@ -2550,6 +2560,50 @@ mod tests {
         assert_eq!(step_to_playable(&g, (2, 1), 1, 0), Some((4, 1)));
         // (1,2) -> down crosses the block at (1,3) and lands on (1,4).
         assert_eq!(step_to_playable(&g, (1, 2), 0, 1), Some((1, 4)));
+    }
+
+    /// The same skip, on a grid built by `board_state_from_actions` — the only
+    /// thing that builds the grid in production (`game_play.rs`), and the one
+    /// that emits the `(-1, -1)` sentinel for a block. The hand-built `fixture()`
+    /// above would pass even if the ray looked blocks up by coordinate, because
+    /// a coordinate lookup cannot find a sentinel cell; this one cannot.
+    #[test]
+    fn step_to_playable_skips_sentinel_blocks_on_a_real_board() {
+        // 5x1: "AB" across at (0,0) and "C" across at (4,0). (2,0) and (3,0) are
+        // covered by no answer, so they come back as block sentinels.
+        let qs = vec![
+            compute_answer_map(
+                &Question {
+                    number: 1,
+                    len: 2,
+                    question_text: "Pair".to_string(),
+                    root_x: 0,
+                    root_y: 0,
+                    direction: Direction::Across,
+                },
+                &[],
+            ),
+            compute_answer_map(
+                &Question {
+                    number: 2,
+                    len: 1,
+                    question_text: "Solo".to_string(),
+                    root_x: 4,
+                    root_y: 0,
+                    direction: Direction::Across,
+                },
+                &[],
+            ),
+        ];
+        let size = compute_board_size(&qs);
+        let g = board_state_from_actions(size, &[], &qs);
+
+        assert!(g[0][2].is_block() && g[0][3].is_block(), "fixture premise");
+        // (1,0) -> right walks both sentinels and lands on (4,0).
+        assert_eq!(step_to_playable(&g, (1, 0), 1, 0), Some((4, 0)));
+        // ...and off the far edge is still None, so the sentinel did not turn
+        // "left the board" into "keep going forever".
+        assert_eq!(step_to_playable(&g, (4, 0), 1, 0), None);
     }
 
     #[test]
@@ -2588,7 +2642,7 @@ mod tests {
     fn crossing_maps() -> Vec<QuestionWithAnswerMap> {
         let across = Question {
             number: 1,
-            answer: "CAT".to_string(),
+            len: 3,
             question_text: "A pet".to_string(),
             root_x: 0,
             root_y: 1,
@@ -2596,7 +2650,7 @@ mod tests {
         };
         let down = Question {
             number: 2,
-            answer: "TEN".to_string(),
+            len: 3,
             question_text: "Nickel tally".to_string(),
             root_x: 2,
             root_y: 0,

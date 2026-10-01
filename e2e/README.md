@@ -80,9 +80,50 @@ optionally `E2E_EMAIL_2` / `E2E_PASSWORD_2` (a second account for the co-op
 chapter). The billing canary and the demo both need that account to be a
 **Free** subscriber — a Pro account has no upgrade control to click.
 
-## Follow-up: AI self-heal (lower maintenance still)
+## Multiplayer soak and load (four players)
 
-Semantic locators already survive most UI change. A future phase can add a cheap
-LLM fallback that, when a locator genuinely breaks, recovers the step and posts a
-"test needs updating" suggestion — cutting maintenance further without making the
-canary non-deterministic (AI only runs on a real break, never on the happy path).
+- `tests/multiplayer-soak.spec.ts` — four authenticated contexts in ONE spec
+  (not four workers: separate processes cannot observe each other's screens),
+  sharing one `activeGameId`. Needs four DISTINCT accounts
+  (`E2E_EMAIL`…`E2E_PASSWORD_4`): `publishPresence` deliberately hides
+  same-user echoes, so reusing one account yields four boards with no presence
+  and a green run that proves nothing. Self-skips if a pair is unset.
+- `scripts/multiplayer-bot-admin.sh` (repo root) provisions the four accounts via
+  `user.signup` — no admin credential — picks the in-progress game with the MOST
+  open cells, and joins players 2–4. Read-only by default; `--apply` to mutate;
+  refuses production without `--allow-production`.
+- `tests/` runs nightly; the protocol-level k6 load test is
+  `nix run ./client#crossword-load -- run multiplayer.js`.
+
+### DEF-274 (fixed upstream — this suite now guards it)
+
+Broadcast fan-out was pod-local: `EventBus` was an in-process
+`tokio::broadcast` under `replicaCount: 2`, so an event reached only sockets
+co-located with the publishing pod. That broke `demo.spec.ts` chapter 4 for 23
+consecutive canary runs. It is fixed — events now relay through a Postgres
+outbox (`fix(server): fan app events out across pods via a Postgres outbox`,
+#204), and measured on staging 0.1.83 a single `addActions` reaches 4/4 sockets
+(24/24 over six publishes).
+
+This suite asserts **all four** contexts receive every solve, precisely so that
+regression is caught here. An earlier version asserted "at least one peer" to
+route around the defect while it was live; that form would now pass even if the
+outbox broke again, so it was reverted after the fix landed. If you ever see
+this spec fail on a `did NOT reach` line, that is DEF-274 returning.
+
+### Still open: crossing-cell writes race
+
+`add_actions` reads its pre-write cell snapshot before inserting, with no lock.
+`crossing_conflict_rate` measures 0.42–0.66 against a `rate<0.05` threshold, so
+the k6 load job stays red until the write path serialises. The soak observes
+and reports it (last-write-wins, stale `previousState`) rather than asserting on
+it, since the outcome is the documented behaviour today.
+
+## Self-heal bundles (`HEAL.md`)
+
+`heal-reporter.ts` is wired into `playwright.config.ts` behind `E2E_HEAL=1`. On
+a failure it writes a redacted `heal-bundle.{json,md}` next to the test's own
+output; on a green run it writes nothing, which is what keeps the canary
+deterministic. See `HEAL.md`. The remaining future phase is the cheap LLM pass
+that consumes a bundle and posts a "test needs updating" suggestion — the
+deterministic half, which produces the input, is done.

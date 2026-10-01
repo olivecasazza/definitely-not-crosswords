@@ -140,6 +140,196 @@ jobs:
             -d "{\"content\":\"🚨 crosswords staging e2e canary FAILED — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
             "$DISCORD" || true
 
+  multiplayer-soak:
+    name: Four-player multiplayer soak
+    runs-on: ubuntu-latest
+    # Separate from `canary` for the same reason `production-artifact` is: the
+    # soak needs four seeded accounts and a playable game, so it fails for
+    # reasons that have nothing to do with whether the canary's login page
+    # renders. Coupling them would mean a missing e2e secret suppresses the demo
+    # recording AND the front-door canary.
+    #
+    # Runs on a schedule and on demand only — never on `release`. A release
+    # fires minutes before Flux has rolled the new image out (see the version
+    # gate in the `canary` job), so a four-client soak would race the rollout
+    # and report contention against a half-rolled deployment.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+    env:
+      E2E_BASE_URL: https://crosswords-staging.casazza.io
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      E2E_EMAIL_2: ${{ secrets.E2E_EMAIL_2 }}
+      E2E_PASSWORD_2: ${{ secrets.E2E_PASSWORD_2 }}
+      E2E_EMAIL_3: ${{ secrets.E2E_EMAIL_3 }}
+      E2E_PASSWORD_3: ${{ secrets.E2E_PASSWORD_3 }}
+      E2E_EMAIL_4: ${{ secrets.E2E_EMAIL_4 }}
+      E2E_PASSWORD_4: ${{ secrets.E2E_PASSWORD_4 }}
+    steps:
+      # main's specs, same reasoning as the canary job: a `schedule` event can
+      # land on any ref, and the specs describe the deployed site.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      # Unblock before the browsers start. This reconciles the four accounts
+      # (signup is idempotent and needs no admin credential), picks the
+      # in-progress game with the MOST open cells, and joins players 2-4. It
+      # exits non-zero on a partial state on purpose: a soak that ran against
+      # three accounts is not a four-player result.
+      - name: Reconcile accounts and provision a playable game
+        run: |
+          set -uo pipefail
+          for pair in "E2E_EMAIL E2E_PASSWORD" "E2E_EMAIL_2 E2E_PASSWORD_2" \
+                      "E2E_EMAIL_3 E2E_PASSWORD_3" "E2E_EMAIL_4 E2E_PASSWORD_4"; do
+            set -- $pair
+            if [ -z "${!1:-}" ] || [ -z "${!2:-}" ]; then
+              echo "::error::$1/$2 not set as repo secrets — a four-player soak needs four distinct accounts."
+              echo "Add them (see secrets.yaml.example) or this job cannot run. Not self-skipping:"
+              echo "a green job that tested one player would read as a passing soak."
+              exit 1
+            fi
+          done
+          ./scripts/multiplayer-bot-admin.sh --apply | tee -a "$GITHUB_ENV"
+      - name: Install deps
+        working-directory: e2e
+        run: npm ci
+      - name: Run four-player soak
+        id: soak
+        working-directory: e2e
+        # `if: always()` on the NEXT step, not here: this step must genuinely
+        # fail the job on a red suite. The metrics step records the outcome
+        # either way, so a failing soak still reaches the dashboard.
+        run: |
+          set +e
+          started=$(date +%s)
+          npx playwright test multiplayer-soak.spec.ts --reporter=list,html
+          code=$?
+          elapsed=$(( $(date +%s) - started ))
+          case $code in
+            0) status=pass ;;
+            2) status=skip ;;
+            *) status=fail ;;
+          esac
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "duration=$elapsed" >> "$GITHUB_OUTPUT"
+          exit $code
+      # The multiplayer dashboard queries
+      # definitely_not_crosswords_ci_test_state{suite="multiplayer-soak"}. Nothing
+      # in this repo emitted that series before this step, which is why the
+      # dashboards were permanently empty. Runs on failure too: a red soak that
+      # never records its own outcome is exactly the run you need to see.
+      - name: Emit soak metrics
+        if: always()
+        run: |
+          ./scripts/emit-test-metrics.sh \
+            --suite multiplayer-soak \
+            --status "${{ steps.soak.outputs.status || 'fail' }}" \
+            --cases 1 \
+            --duration "${{ steps.soak.outputs.duration || 0 }}" \
+            -o soak-metrics.prom
+          # Push only when a pushgateway exists; a missing scrape target must
+          # not turn a metrics step into a red job.
+          if [ -n "${PUSHGATEWAY_URL:-}" ]; then
+            PUSHGATEWAY_URL="$PUSHGATEWAY_URL" \
+              ./scripts/publish-test-metrics.sh soak-metrics.prom || \
+              echo "::warning::pushgateway publish failed; metrics are in the artifact"
+          fi
+      - name: Upload soak artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multiplayer-soak-results
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+            soak-metrics.prom
+          retention-days: 14
+      - name: Alert Discord on failure
+        if: failure()
+        env:
+          DISCORD: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          [ -z "$DISCORD" ] && { echo "DISCORD_WEBHOOK unset; skipping alert"; exit 0; }
+          curl -sf -H 'Content-Type: application/json' \
+            -d "{\"content\":\"🚨 crosswords 4-player multiplayer soak FAILED — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
+            "$DISCORD" || true
+
+  protocol-load:
+    name: Multiplayer protocol load (k6)
+    runs-on: ubuntu-latest
+    # Deliberately NOT `needs: multiplayer-soak`. The load test is what
+    # quantifies the crossing-cell contention the soak can only observe once,
+    # and gating one on the other means the number that matters is unavailable
+    # exactly when the soak is already red. Both jobs reconcile their own state.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+    env:
+      E2E_BASE_URL: https://crosswords-staging.casazza.io
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      E2E_EMAIL_2: ${{ secrets.E2E_EMAIL_2 }}
+      E2E_PASSWORD_2: ${{ secrets.E2E_PASSWORD_2 }}
+      E2E_EMAIL_3: ${{ secrets.E2E_EMAIL_3 }}
+      E2E_PASSWORD_3: ${{ secrets.E2E_PASSWORD_3 }}
+      E2E_EMAIL_4: ${{ secrets.E2E_EMAIL_4 }}
+      E2E_PASSWORD_4: ${{ secrets.E2E_PASSWORD_4 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+      - name: Cache Nix store
+        uses: cachix/cachix-action@v17
+        with:
+          name: nix-community
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      # `nix run` rather than `nix build`: the load scenario needs a LIVE host,
+      # so it can never be a `checks` derivation (the repo rule is that Nix
+      # verification lives in checks and GHA keeps only non-Nix gates). The flake
+      # supplies the pinned k6 + the scenario; the scenario needs the network.
+      - name: Run k6 multiplayer load
+        run: |
+          # stdout carries the Prometheus exposition format (handleSummary
+          # returns it as `stdout`), so tee it to a file for the push step.
+          # `set -o pipefail` so a threshold breach still fails the job: the
+          # crossing-conflict threshold is the whole point of this gate.
+          set -o pipefail
+          nix run --accept-flake-config --impure \
+            --option allow-import-from-derivation true \
+            ./client#crossword-load -- run multiplayer.js \
+            --env SOAK_DURATION="${SOAK_DURATION:-60s}" \
+            2>&1 | tee k6-metrics.prom
+      # The summary is also uploaded below. Push to the pushgateway only when
+      # one is configured: this repo has no PUSHGATEWAY_URL today, and a
+      # missing scrape target must not fail the job that produced the numbers.
+      - name: Publish metrics to pushgateway
+        if: env.PUSHGATEWAY_URL != ''
+        run: |
+          nix run --accept-flake-config --impure ./client#crossword-load -- version >/dev/null
+          ./scripts/publish-test-metrics.sh k6-metrics.prom || \
+            echo "::warning::pushgateway publish failed; metrics are still in the artifact"
+      - name: Upload load summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multiplayer-load-summary
+          path: |
+            load-summary.json
+            k6-metrics.prom
+          retention-days: 14
+      - name: Alert Discord on failure
+        if: failure()
+        env:
+          DISCORD: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          [ -z "$DISCORD" ] && { echo "DISCORD_WEBHOOK unset; skipping alert"; exit 0; }
+          curl -sf -H 'Content-Type: application/json' \
+            -d "{\"content\":\"🚨 crosswords multiplayer load FAILED (crossing-cell contention?) — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
+            "$DISCORD" || true
+
   production-artifact:
     name: Production served-artifact canary
     runs-on: ubuntu-latest

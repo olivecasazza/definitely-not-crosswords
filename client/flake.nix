@@ -667,6 +667,31 @@
               doInstallCargoArtifacts = false;
             }
           );
+        # Protocol-level load test for the multiplayer API. Needs a LIVE host,
+        # so it lives in `packages` and is run manually / from a scheduled GHA
+        # job — never in `checks` (see load/README.md).
+        loadScripts = pkgs.runCommand "crossword-load-scripts" { } ''
+          mkdir -p "$out"
+          cp -r ${../load} "$out/load"
+        '';
+        crossword-load = pkgs.writeShellScriptBin "crossword-load" ''
+          set -euo pipefail
+          # `nix run ./client#crossword-load -- run multiplayer.js` and
+          # `... -- version` both work: bare k6 args pass through, and any
+          # `*.js` argument is resolved against the packaged load/ directory.
+          script_dir="${loadScripts}/load"
+          if [ "$#" -gt 0 ]; then
+            args=()
+            for arg in "$@"; do
+              case "$arg" in
+                *.js) args+=("$script_dir/$arg") ;;
+                *) args+=("$arg") ;;
+              esac
+            done
+            exec ${pkgs.k6}/bin/k6 "''${args[@]}"
+          fi
+          exec ${pkgs.k6}/bin/k6 version
+        '';
         in
         {
           packages = {
@@ -676,6 +701,7 @@
               crossword-desktop
               crossword-server
               crossword-tools
+              crossword-load
               ;
           };
 

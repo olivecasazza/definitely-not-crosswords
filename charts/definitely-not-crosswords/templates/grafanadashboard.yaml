@@ -39,6 +39,12 @@
     "file" "testing-regressions.json"
   )
   (dict
+    "name" "multiplayer"
+    "title" "Crosswords Multiplayer Soak & Load"
+    "uid" "crosswords-multiplayer"
+    "file" "multiplayer.json"
+  )
+  (dict
     "name" "platform-health"
     "title" "Crosswords Platform Health"
     "uid" "crosswords-platform-health"

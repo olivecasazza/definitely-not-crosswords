@@ -5,6 +5,7 @@
 //! This is byte-for-byte compatible with lib/auth/password.ts.
 
 use crate::ctx::{sanitised_db_error, Ctx};
+use crate::routers::subscription;
 use crossword_db::Capability;
 use rand::RngCore;
 use serde_json::{json, Value};
@@ -523,12 +524,27 @@ async fn list_for_admin(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     // `createdAt` is nullable: pre-migration rows have no signup stamp and the
     // admin UI renders them as "—".
+    //
+    // `isPro` is additive (DEF-154): the alpha readout needs to count how many
+    // alpha accounts actually converted, and `subscription.getStatus` cannot
+    // answer that — it is a protectedProcedure that returns the *caller's* own
+    // status, so an admin session yields exactly one row and only their own.
+    // The rule itself is not restated here; `subscription::is_pro` owns it, so
+    // this endpoint cannot drift from what the app grants.
+    //
+    // LEFT JOIN is 1:1 — migration 20260528143036 created the UNIQUE index
+    // "Subscription_userId_key" on "Subscription"("userId") — so the join
+    // cannot duplicate a user row and inflate the count. The `u`/`s` aliases
+    // are required by `subscription::PRO_PREDICATE_COLUMNS`.
     let rows = sqlx::query(&format!(
-        r#"SELECT id, email, username, name, role::text AS role, "vipPass",
-                  to_char("emailVerified", '{TS_FMT}') AS "emailVerified",
-                  to_char("createdAt", '{TS_FMT}') AS "createdAt"
-           FROM "User"
-           ORDER BY role ASC, email ASC"#
+        r#"SELECT u.id, u.email, u.username, u.name, u.role::text AS role, u."vipPass",
+                  to_char(u."emailVerified", '{TS_FMT}') AS "emailVerified",
+                  to_char(u."createdAt", '{TS_FMT}') AS "createdAt",
+                  {}
+           FROM "User" u
+           LEFT JOIN "Subscription" s ON s."userId" = u.id
+           ORDER BY u.role ASC, u.email ASC"#,
+        subscription::PRO_PREDICATE_COLUMNS
     ))
     .fetch_all(&ctx.pool)
     .await
@@ -537,15 +553,20 @@ async fn list_for_admin(_input: &Value, ctx: &Ctx) -> Result<Value, String> {
     let users: Vec<Value> = rows
         .iter()
         .map(|r| {
+            // NULL when the user has no subscription row (LEFT JOIN).
+            let sub_status: Option<String> = r.get("subscription_status");
+            let period_active: bool = r.try_get("period_active").unwrap_or(false);
+            let vip_pass: bool = r.get("vipPass");
             json!({
                 "id": r.get::<String, _>("id"),
                 "email": r.get::<Option<String>, _>("email"),
                 "username": r.get::<Option<String>, _>("username"),
                 "name": r.get::<Option<String>, _>("name"),
                 "role": r.get::<String, _>("role"),
-                "vipPass": r.get::<bool, _>("vipPass"),
+                "vipPass": vip_pass,
                 "emailVerified": r.get::<Option<String>, _>("emailVerified"),
                 "createdAt": r.get::<Option<String>, _>("createdAt"),
+                "isPro": subscription::is_pro(sub_status.as_deref(), period_active, vip_pass),
             })
         })
         .collect();

@@ -8,6 +8,7 @@ pub mod checkout;
 pub mod ctx;
 pub mod mailer;
 pub mod origin;
+pub mod pg_events;
 pub mod routers;
 pub mod scoring;
 pub mod seo;

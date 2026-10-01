@@ -21,11 +21,11 @@ use axum::{
 };
 use crossword_auth::{AuthContext, AuthService};
 use crossword_db::AppEvent;
-use crossword_events::EventBus;
 use crossword_server::{
     auth_routes, checkout,
     ctx::Ctx,
     mailer::Mailer,
+    pg_events,
     routers::{self},
     seo, spa,
     state::{req_auth, AppState},
@@ -101,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let events = EventBus::default();
+    let events = pg_events::event_bus(pool.clone());
 
     // Reap orphaned generation jobs: one pass now (catches whatever the previous
     // pod generation left behind), then every REAP_INTERVAL.
@@ -242,6 +242,9 @@ async fn reap_stale_jobs(pool: &PgPool) {
         Ok(_) => {}
         Err(e) => tracing::error!("generation job reaper failed: {e}"),
     }
+    // Outbox rows only exist to carry an id across pods; once every reader has
+    // had OUTBOX_RETENTION to collect one, the row is dead weight.
+    pg_events::prune_outbox(pool).await;
 }
 
 /// Batch-generate `count` published platform games under the Platform system

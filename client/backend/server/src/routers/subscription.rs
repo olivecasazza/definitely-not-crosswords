@@ -9,6 +9,44 @@ const FREE_LIMIT: i64 = 5;
 /// Prisma stores DateTime as TIMESTAMP(3) (UTC-naive, 3 fractional digits).
 const TS_FMT: &str = r#"YYYY-MM-DD"T"HH24:MI:SS.MS"Z""#;
 
+/// Columns to SELECT to feed [`is_pro`], for a query that has `u` aliased to
+/// "User" and `s` to "Subscription". Both use the `u`/`s` aliases because
+/// `s."currentPeriodEnd"` and the `u`/`s` join are the only subscription inputs
+/// the rule has; `period_active` is computed in SQL so neither caller needs the
+/// sqlx chrono feature to compare a timestamp.
+pub const PRO_PREDICATE_COLUMNS: &str = r#"
+        -- Cast to text: Prisma generates a native PG enum for SubscriptionStatus;
+        -- reading a native enum OID into String without ::text panics at runtime.
+        s.status::text AS subscription_status,
+        -- Whether the paid period is still active. currentPeriodEnd is stored
+        -- UTC-naive, so compare against NOW() AT TIME ZONE 'UTC' to keep both
+        -- sides in UTC.
+        (s."currentPeriodEnd" IS NOT NULL
+            AND s."currentPeriodEnd" > (NOW() AT TIME ZONE 'UTC')) AS period_active
+"#;
+
+/// The one definition of "this account is Pro". Callers LEFT JOIN "Subscription"
+/// as `s` and select [`PRO_PREDICATE_COLUMNS`], then pass the three values here
+/// rather than restating the rule — the rule has three inputs and one gate, and
+/// restating it is how the cancelled-but-expired case silently starts counting
+/// as active Pro.
+///
+/// `subscription_status` is the `Subscription.status` as text, or None when the
+/// user has no subscription row. `period_active` is whether
+/// `currentPeriodEnd` is still in the future.
+///
+/// CANCELLED preserves Pro only until the already-paid period ends. Without the
+/// period_active gate a CANCELLED subscription would grant Pro indefinitely,
+/// relying on a later subscription_expired webhook that may be dropped or
+/// delayed. `vipPass` is a manual admin override, not a purchase: it grants Pro
+/// here, but a caller reporting on *purchases* must report it separately.
+pub fn is_pro(subscription_status: Option<&str>, period_active: bool, vip_pass: bool) -> bool {
+    subscription_status
+        .map(|s| s == "ACTIVE" || (s == "CANCELLED" && period_active))
+        .unwrap_or(false)
+        || vip_pass
+}
+
 pub async fn try_handle(proc: &str, _input: &Value, ctx: &Ctx) -> Option<Result<Value, String>> {
     match proc {
         "subscription.getStatus" => Some(get_status(ctx).await),
@@ -20,7 +58,8 @@ pub async fn try_handle(proc: &str, _input: &Value, ctx: &Ctx) -> Option<Result<
 /// subscription.getStatus — protectedProcedure.
 /// Returns { isPro, quotaUsed, quotaLimit, currentPeriodEnd } matching
 /// client/web/src/store.rs SubStatus.
-/// isPro = subscription status ACTIVE or CANCELLED, OR User.vipPass is true.
+/// isPro comes from [`is_pro`], the one definition of the rule, which
+/// `user.listForAdmin` also calls (DEF-154).
 /// quotaLimit is null (unlimited) for Pro users, FREE_LIMIT for free users.
 /// currentPeriodEnd is an ISO 8601 string, or null when there is no
 /// subscription row / no period end recorded.
@@ -34,17 +73,10 @@ async fn get_status(ctx: &Ctx) -> Result<Value, String> {
         r#"
         SELECT
             u."vipPass",
-            -- Cast to text: Prisma generates a native PG enum for SubscriptionStatus;
-            -- reading a native enum OID into String without ::text panics at runtime.
-            s.status::text AS subscription_status,
             -- currentPeriodEnd is stored UTC-naive, so to_char + the literal Z
             -- suffix yields a correct ISO-8601 UTC instant.
             to_char(s."currentPeriodEnd", '{TS_FMT}') AS current_period_end,
-            -- Whether the paid period is still active. Computed in SQL to avoid needing
-            -- the sqlx chrono feature. currentPeriodEnd is stored UTC-naive by the webhook,
-            -- so compare against NOW() AT TIME ZONE 'UTC' to keep both sides in UTC.
-            (s."currentPeriodEnd" IS NOT NULL
-                AND s."currentPeriodEnd" > (NOW() AT TIME ZONE 'UTC')) AS period_active,
+            {PRO_PREDICATE_COLUMNS}
             -- Month comparison done in SQL to avoid needing the sqlx chrono feature.
             -- Mirrors TS: resetDate.getUTCFullYear/Month === now.getUTCFullYear/Month
             CASE
@@ -67,18 +99,11 @@ async fn get_status(ctx: &Ctx) -> Result<Value, String> {
     .ok_or_else(|| "user not found".to_string())?;
 
     let vip_pass: bool = row.get("vipPass");
-    let sub_status: Option<String> = row.get("subscription_status");
     // NULL when there is no subscription row (LEFT JOIN); treat as not-active.
+    let sub_status: Option<String> = row.get("subscription_status");
     let period_active: bool = row.try_get("period_active").unwrap_or(false);
 
-    // CANCELLED preserves Pro only until the already-paid period ends. Without the
-    // period_active gate a CANCELLED subscription would grant Pro indefinitely,
-    // relying on a later subscription_expired webhook that may be dropped or delayed.
-    let is_pro = sub_status
-        .as_deref()
-        .map(|s| s == "ACTIVE" || (s == "CANCELLED" && period_active))
-        .unwrap_or(false)
-        || vip_pass;
+    let is_pro = is_pro(sub_status.as_deref(), period_active, vip_pass);
 
     // quota_used is always non-null (CASE ELSE 0), but use try_get to be safe.
     let quota_used: i64 = row.try_get::<i32, _>("quota_used").unwrap_or(0) as i64;
@@ -171,4 +196,99 @@ async fn stop(ctx: &Ctx) -> Result<Value, String> {
     .map_err(|e| sanitised_db_error("update the subscription", &e))?;
 
     Ok(json!({ "stopped": true }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_pro;
+
+    /// The full truth table for the Pro rule, so the gate that `user.listForAdmin`
+    /// now depends on is pinned by something other than a prose comment.
+    ///
+    /// The two rows DEF-154 calls out are `cancelled_period_expired_is_not_pro`
+    /// and `cancelled_period_live_is_pro`: a bare `status == 'CANCELLED'` check
+    /// reads as equivalent to the real rule and is not, because it grants Pro
+    /// forever to someone who churned. Over-reporting churned accounts as active
+    /// Pro is the credibility failure the readout exists to avoid, and nothing
+    /// downstream of this function would notice.
+    #[test]
+    fn pro_predicate_truth_table() {
+        // (status, period_active, vip_pass, expected, why)
+        let cases: &[(Option<&str>, bool, bool, bool, &str)] = &[
+            (None, false, false, false, "no subscription row, no vipPass"),
+            (
+                None,
+                false,
+                true,
+                true,
+                "vipPass alone is a manual override",
+            ),
+            (Some("ACTIVE"), true, false, true, "active subscription"),
+            (
+                Some("ACTIVE"),
+                false,
+                false,
+                true,
+                "ACTIVE ignores the period gate",
+            ),
+            (
+                Some("CANCELLED"),
+                true,
+                false,
+                true,
+                "cancelled but the paid period has not ended yet",
+            ),
+            (
+                Some("CANCELLED"),
+                false,
+                false,
+                false,
+                "cancelled and the period ended: not Pro, this is the drift case",
+            ),
+            (
+                Some("CANCELLED"),
+                true,
+                true,
+                true,
+                "cancelled, period live, and vipPass",
+            ),
+            (
+                Some("CANCELLED"),
+                false,
+                true,
+                true,
+                "vipPass overrides an expired cancelled period",
+            ),
+            (Some("PAST_DUE"), true, false, false, "unpaid is not Pro"),
+            (Some("EXPIRED"), true, false, false, "expired is not Pro"),
+            (
+                Some("INCOMPLETE"),
+                true,
+                false,
+                false,
+                "never finished checkout, so nothing to count",
+            ),
+        ];
+
+        for &(status, period_active, vip_pass, expected, why) in cases {
+            assert_eq!(
+                is_pro(status, period_active, vip_pass),
+                expected,
+                "status={status:?} period_active={period_active} vip_pass={vip_pass} \
+                 should be Pro={expected} ({why})"
+            );
+        }
+    }
+
+    /// The regression DEF-154's acceptance names explicitly, stated as its own
+    /// test so the intent survives the table above being refactored away.
+    #[test]
+    fn cancelled_period_expired_is_not_pro() {
+        assert!(!is_pro(Some("CANCELLED"), false, false));
+    }
+
+    #[test]
+    fn cancelled_period_live_is_pro() {
+        assert!(is_pro(Some("CANCELLED"), true, false));
+    }
 }

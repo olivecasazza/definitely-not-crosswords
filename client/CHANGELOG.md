@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.81](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.80...v0.1.81) - 2026-10-01
+
+### Fixed
+
+- *(web)* close the clue editor when the server confirms the word [DEF-103] (#200)
+
+### Other
+
+- changelog for v0.1.80 [skip ci]
+
+
 ## [0.1.80](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.79...v0.1.80) - 2026-10-01
 
 ### Fixed

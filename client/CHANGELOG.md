@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.82](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.81...v0.1.82) - 2026-10-01
+
+### Fixed
+
+- *(server)* a lagging event bus must not disconnect a live subscription (#202)
+
+### Other
+
+- changelog for v0.1.81 [skip ci]
+
+
 ## [0.1.81](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.80...v0.1.81) - 2026-10-01
 
 ### Fixed

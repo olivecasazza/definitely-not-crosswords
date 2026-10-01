@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.84](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.83...v0.1.84) - 2026-10-01
+
+### Other
+
+- changelog for v0.1.83 [skip ci]
+- *(e2e)* four-player multiplayer soak, k6 load, and self-heal bundles
+
+
 ## [0.1.83](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.82...v0.1.83) - 2026-10-01
 
 ### Fixed

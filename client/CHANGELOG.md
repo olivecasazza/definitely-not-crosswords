@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.80](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.79...v0.1.80) - 2026-10-01
+
+### Fixed
+
+- *(e2e)* pick a placeholder clue the resumed board can actually change (#198)
+
+### Other
+
+- changelog for v0.1.79 [skip ci]
+
+
 ## [0.1.79](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.78...v0.1.79) - 2026-10-01
 
 ### Other

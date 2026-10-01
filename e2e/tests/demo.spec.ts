@@ -50,6 +50,35 @@ type ClueAction = {
   state: string;
 };
 
+/** The letter currently standing on each cell of a clue, from the action log. */
+function boardLetters(clue: Clue, actions: ClueAction[]): string[] {
+  const latest = new Map<string, ClueAction>();
+  for (const a of actions) latest.set(`${a.cordX},${a.cordY}`, a); // ASC → last wins
+  return Array.from({ length: clue.len }, (_, i) => {
+    const x = clue.direction === "ACROSS" ? clue.rootX + i : clue.rootX;
+    const y = clue.direction === "ACROSS" ? clue.rootY : clue.rootY + i;
+    return latest.get(`${x},${y}`)?.state ?? "";
+  });
+}
+
+/**
+ * How many letters at the head of `clue` still need typing before the board
+ * would change.
+ *
+ * The app persists a placeholder save ONLY for cells whose typed letter differs
+ * from what is already standing there (`submit_placeholder` filters
+ * `s.state != s.previous_state`, game_play.rs). A resumed board often has the
+ * head of an unsolved word already filled in by the crossing words around it,
+ * so retyping those letters is a no-op — no `addActions` call, no
+ * `.cw-placeholder` cell, and the beat's assertion times out.
+ */
+function unfilledPrefix(clue: AnswerClue, actions: ClueAction[]): number {
+  const current = boardLetters(clue, actions);
+  let n = 0;
+  while (n < clue.len && current[n] === clue.answer[n]) n++;
+  return n;
+}
+
 /** A clue is solved when every cell's latest action is server-marked correct. */
 const solvedClues = (clues: Clue[], actions: ClueAction[]) => {
   const latest = new Map<string, ClueAction>();
@@ -236,6 +265,9 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
 
   // ── Chapter 2: the lobby ─────────────────────────────────────────────────
   let clues: AnswerClue[] = [];
+  // The pre-tour board snapshot: chapter 3 reads it to learn which letters are
+  // already standing on the resumed game.
+  let boardActions: ClueAction[] = [];
   await test.step("Games lobby", async () => {
     await humanClick(page, page.locator('header a.navlink[href="/games"]'));
     await expect(page).toHaveURL(/\/games/, { timeout: 15_000 });
@@ -289,6 +321,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     // clues already solved — play only what's still open.
     const activeId = page.url().split("/game/")[1];
     const data = await trpcGet(page, "activeGame.get", { id: activeId });
+    boardActions = data.actions ?? [];
     clues = await loadPlayableClues(page, data);
 
     // Phone loads the game in parallel with chapter 3 AND auto-joins, so the
@@ -324,18 +357,35 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
   //    the finale, so a tiny puzzle doesn't complete mid-chapter. ───────────
   if (soloClues.length >= 2) {
     await test.step("Guess beats: placeholder, miss, hit", async () => {
-      const [placeholderClue, hitClue] = soloClues;
+      // Beat 1 needs a clue whose head is not already standing on the board.
+      // The app persists a placeholder save only for cells whose typed letter
+      // differs from the current one (`submit_placeholder` filters
+      // `s.state != s.previous_state`, game_play.rs), so retyping a prefilled
+      // head is a no-op — no `addActions` call, no `.cw-placeholder` cell, and
+      // the beat's assertion times out. A resumed board often has the head of
+      // an unsolved word filled in by the crossing words around it, so pick the
+      // first clue that still has a letter to type before its final one.
+      const placeholderClue =
+        soloClues.find((c) => unfilledPrefix(c, boardActions) < c.answer.length - 1) ??
+        soloClues.find((c) => unfilledPrefix(c, boardActions) < c.answer.length);
+      const hitClue = soloClues.find((c) => c !== placeholderClue);
+      test.skip(
+        !placeholderClue || !hitClue,
+        "no playable clue has an unfilled letter to save as a placeholder",
+      );
 
       // Beat 1 — placeholder: type a partial word, then clear the selection.
       // The letters persist on the board with the yellow placeholder border.
-      await selectClue(page, placeholderClue);
-      await humanTypeLetters(
-        page,
-        placeholderClue.answer.slice(
-          0,
-          Math.min(2, placeholderClue.answer.length - 1),
-        ),
+      const skip = unfilledPrefix(placeholderClue, boardActions);
+      const partial = placeholderClue.answer.slice(
+        skip,
+        skip + Math.min(2, placeholderClue.answer.length - 1 - skip),
       );
+      await selectClue(page, placeholderClue);
+      if (skip > 0) {
+        await humanClick(page, page.locator(".cw-letter-input").nth(skip));
+      }
+      if (partial.length) await humanTypeLetters(page, partial);
       await dwell(page, 500, 900);
       await humanClick(page, page.locator(".cw-link-btn")); // "ESC to clear"
       await expect(page.locator(".cw-placeholder").first()).toBeVisible();

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.74](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.73...v0.1.74) - 2026-10-01
+
+### Fixed
+
+- *(tooling)* add an impeccable-detect wrapper that reads the findings stream
+- *(web)* centre .app-btn content instead of letting it pool at the bottom
+
+### Other
+
+- changelog for v0.1.73 [skip ci]
+
+
 ## [0.1.73](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.72...v0.1.73) - 2026-09-30
 
 ### Fixed

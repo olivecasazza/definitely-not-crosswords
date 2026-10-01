@@ -531,18 +531,17 @@ async fn handle_ws(socket: WebSocket, st: AppState, auth: AuthContext) {
                     continue;
                 }
 
-                let mut bus_rx = st.events.subscribe();
+                let bus_rx = st.events.subscribe();
                 let txc = tx.clone();
-                let handle = tokio::spawn(async move {
-                    while let Ok(ev) = bus_rx.recv().await {
-                        if let Some(data) = event_data_for(&path, &ev) {
-                            let _ = txc.send(
-                                json!({ "id": id, "result": { "type": "data", "data": data } })
-                                    .to_string(),
-                            );
-                        }
-                    }
-                });
+                // `forward_event_bus` — not an inline `while let Ok(..)`, which
+                // silently ended the subscription on `RecvError::Lagged` even
+                // though the receiver stays usable. See its doc comment.
+                let handle = tokio::spawn(crossword_server::forward_event_bus(
+                    bus_rx,
+                    txc,
+                    id,
+                    move |ev| event_data_for(&path, ev),
+                ));
                 subs.insert(id, handle);
             }
             Some("subscription.stop") => {

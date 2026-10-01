@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.77](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.76...v0.1.77) - 2026-10-01
+
+### Added
+
+- *(server)* expose an additive isPro field on user.listForAdmin (#193)
+
+### Other
+
+- changelog for v0.1.76 [skip ci]
+
+
 ## [0.1.76](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.75...v0.1.76) - 2026-10-01
 
 ### Other

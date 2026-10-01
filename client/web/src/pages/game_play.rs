@@ -258,6 +258,27 @@ fn retains_presence(state: &net::ConnectionState) -> bool {
     )
 }
 
+/// Is every cell of `word` known to hold the right letter?
+///
+/// `verdicts` maps `cord -> is that cell right`, and a cell with no entry is
+/// *unknown*: an unknown cell makes the answer `false`, so a word is solved on
+/// positive evidence only. That is the whole point — the client cannot read the
+/// answer off its own letters, because DEF-243 moved the key to the server.
+///
+/// `word` is the snapshot of the open word taken when the guess was sent, not
+/// the live editor state: the player can select another clue mid-flight, and the
+/// reply belongs to the word it was asked about.
+///
+/// The reply covers `word` exactly. `build_action_batch` sends every slot of the
+/// open word and `addActions` returns one row per submitted action, so the
+/// verdicts for a guess are complete for that word and nothing else.
+fn word_solved(word: &[(i32, i32)], verdicts: &HashMap<(i32, i32), bool>) -> bool {
+    !word.is_empty()
+        && word
+            .iter()
+            .all(|c| verdicts.get(c).copied().unwrap_or(false))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum PanelId {
     Board,
@@ -1250,6 +1271,14 @@ pub fn GamePlay(id: String) -> Element {
         let id_complete = id_for_guess.clone();
         let mut actions_for_reply = actions;
         let mut clear_for_guess = clear_selection.clone();
+        // The word this guess is about, snapshotted now. A `QKey` would be
+        // wrong: the player can select another clue while the request is in
+        // flight, and the reply belongs to the word it was asked about.
+        let word_for_reply: Vec<(i32, i32)> = game_action_data
+            .peek()
+            .iter()
+            .map(|s| (s.cord_x, s.cord_y))
+            .collect();
         let nav = navigator();
         // Dioxus `spawn`: `nav.push` below needs the runtime scope (raw
         // spawn_local panics resolving the history context).
@@ -1265,6 +1294,15 @@ pub fn GamePlay(id: String) -> Element {
                     .filter_map(|a| serde_json::from_value::<GameAction>(a.clone()).ok())
                     .collect();
                 if !reconciled.is_empty() {
+                    // What the server said about this word, and only this word.
+                    let mut from_reply: HashMap<(i32, i32), bool> = HashMap::new();
+                    for a in &reconciled {
+                        from_reply.insert(
+                            (a.cord_x, a.cord_y),
+                            a.action_type == ActionType::CorrectGuess,
+                        );
+                    }
+
                     let mut merged = actions_for_reply.peek().clone();
                     merged.retain(|a| {
                         !reconciled
@@ -1273,6 +1311,18 @@ pub fn GamePlay(id: String) -> Element {
                     });
                     merged.extend(reconciled);
                     actions_for_reply.set(merged);
+
+                    // A right guess ends the word, so the editor closes. This is
+                    // what `a46ff5c` (DEF-243) dropped: it computed `is_correct`
+                    // against an answer the client was still being sent, and
+                    // when the answer moved to the server the clear went with it
+                    // and nothing replaced it. A correct word in a puzzle with
+                    // others left therefore kept its entry row, and the letters
+                    // the player had just submitted stayed editable over the
+                    // now-green cells. Only the server's verdict can say this.
+                    if word_solved(&word_for_reply, &from_reply) {
+                        clear_for_guess(false);
+                    }
                 }
             }
             if !res.get("solved").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -2767,5 +2817,60 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// DEF-103: a correct guess used to end the word, and DEF-243 took the
+    /// decision with it. The client no longer holds the answer, so "is this word
+    /// right" can only be answered by the verdicts the server returns — and only
+    /// on positive evidence, never by the letters sitting in the editor.
+    #[test]
+    fn word_solved_needs_a_verdict_for_every_cell() {
+        let word = vec![(0, 0), (1, 0), (2, 0)];
+        let all_right = HashMap::from([((0, 0), true), ((1, 0), true), ((2, 0), true)]);
+        assert!(word_solved(&word, &all_right));
+
+        // One cell the server marked wrong: not solved.
+        let mut one_wrong = all_right.clone();
+        one_wrong.insert((1, 0), false);
+        assert!(!word_solved(&word, &one_wrong));
+
+        // One cell the server never spoke about: unknown, so not solved. This is
+        // the case a locally-computed answer gets wrong.
+        let mut partial = all_right.clone();
+        partial.remove(&(2, 0));
+        assert!(!word_solved(&word, &partial));
+
+        // Nothing at all — the shape an untouched editor compares equal to.
+        assert!(!word_solved(&word, &HashMap::new()));
+
+        // An empty word is not a solved word; otherwise the clear would fire on
+        // a submit that had no slots to begin with.
+        assert!(!word_solved(&[], &all_right));
+    }
+
+    /// Verdicts for cells outside the open word must not stand in for it. The
+    /// `addActions` reply covers the whole submitted batch, and a reconciled
+    /// board carries every letter ever played, so a `correct` somewhere else is
+    /// not evidence about this word.
+    #[test]
+    fn word_solved_ignores_verdicts_outside_the_word() {
+        let word = vec![(0, 0), (1, 0)];
+        let verdicts = HashMap::from([
+            ((0, 0), true),
+            ((1, 0), true),
+            ((7, 7), true),
+            ((8, 8), true),
+        ]);
+        assert!(word_solved(&word, &verdicts));
+
+        // The same letters, but one of the word's cells is wrong and the surplus
+        // cells are right: still not solved.
+        let mixed = HashMap::from([
+            ((0, 0), true),
+            ((1, 0), false),
+            ((7, 7), true),
+            ((8, 8), true),
+        ]);
+        assert!(!word_solved(&word, &mixed));
     }
 }

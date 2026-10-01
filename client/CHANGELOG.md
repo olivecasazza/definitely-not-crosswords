@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.83](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.82...v0.1.83) - 2026-10-01
+
+### Fixed
+
+- *(server)* fan app events out across pods via a Postgres outbox [DEF-274] (#204)
+
+### Other
+
+- changelog for v0.1.82 [skip ci]
+
+
 ## [0.1.82](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.81...v0.1.82) - 2026-10-01
 
 ### Fixed

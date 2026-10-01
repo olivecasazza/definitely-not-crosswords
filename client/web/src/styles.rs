@@ -227,7 +227,13 @@ a { color: inherit; text-decoration: none; }
    the one the light palette already picked over #71717a for the label. */
 .app-btn { font-family: var(--font-sans); padding: .5rem .9rem; min-height: 44px; font-size: var(--fs-md);
   font-weight: 600; border: 1px solid var(--text-secondary); border-radius: 0; background-color: var(--bg-card);
-  color: var(--text-secondary); transition: all .15s ease; cursor: pointer; }
+  color: var(--text-secondary); transition: all .15s ease; cursor: pointer;
+  /* min-height alone does not centre anything: the box is 44px but the label
+     lays out at the top, so every pixel of slack collects BELOW the text.
+     Measured on "Sign in": 8.5px above the glyphs, 21.5px below — 13px of
+     dead space under the label. Centring is what makes the min-height read
+     as a button rather than as padding. */
+  display: inline-flex; align-items: center; justify-content: center; }
 /* Hover brightens to --text-primary (15:1 dark / 16.6:1 light), not to
    --border-hover, which is 1.6:1 on the dark card: the old hover rule quietly
    dropped the boundary below 3:1 in the very state the pointer is on. */

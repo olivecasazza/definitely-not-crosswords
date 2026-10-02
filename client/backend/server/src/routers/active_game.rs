@@ -2,7 +2,7 @@
 //! Subscriptions (onAddActions / onGameCompleted) are skipped — WebSocket phase.
 use crate::ctx::{sanitised_db_error, Ctx};
 use serde_json::{json, Value};
-use sqlx::Row;
+use sqlx::{Executor, Postgres, Row};
 use uuid::Uuid;
 
 pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<Value, String>> {
@@ -598,7 +598,10 @@ async fn load_answer_key(
 /// The latest letter standing in each cell of the active game, across all
 /// members. One query, `DISTINCT ON` per cell — the same "newest wins" rule the
 /// leaderboard read path in `game_list.rs` uses, so the two cannot disagree.
-async fn load_cell_states(active_game_id: &str, ctx: &Ctx) -> Result<CellStates, String> {
+async fn load_cell_states<'e, E>(active_game_id: &str, executor: E) -> Result<CellStates, String>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let rows = sqlx::query(
         r#"
         SELECT DISTINCT ON ("cordX", "cordY")
@@ -609,7 +612,7 @@ async fn load_cell_states(active_game_id: &str, ctx: &Ctx) -> Result<CellStates,
         "#,
     )
     .bind(active_game_id)
-    .fetch_all(&ctx.pool)
+    .fetch_all(executor)
     .await
     .map_err(|e| sanitised_db_error("load the current grid", &e))?;
 
@@ -685,7 +688,35 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     // What each cell held before this batch, so `previousState` is the server's
     // record rather than something the caller can assert.
-    let before = load_cell_states(id, ctx).await?;
+    //
+    // DEF-281. Serialise every write to a game, and take the cell snapshot
+    // INSIDE that critical section.
+    //
+    // This used to read `before` from the pool, then INSERT on the pool, with
+    // nothing in between. Two players submitting the SAME cell — routine in a
+    // crossword, where an ACROSS and a DOWN clue cross — both snapshotted
+    // before either wrote, so both logged the same `previousState` and the
+    // loser's record was wrong. Measured at a 0.40 conflict rate under four
+    // concurrent writers.
+    //
+    // There is no per-cell row to lock: cells live in the append-only
+    // GameAction log, so `SELECT ... FOR UPDATE` has nothing to attach to. An
+    // advisory lock keyed on the game is the honest serialisation point — one
+    // key, so no lock-ordering deadlock is possible. A hash collision between
+    // two games would only over-serialise them, never corrupt either.
+    let mut tx = ctx
+        .pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
+
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(format!("activeGame:write:{id}"))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| sanitised_db_error("serialise writes to this game", &e))?;
+
+    let before = load_cell_states(id, &mut *tx).await?;
 
     let mut created: Vec<Value> = Vec::with_capacity(submissions.len());
 
@@ -713,7 +744,7 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(action_type)
         .bind(&previous_state)
         .bind(&sub.state)
-        .execute(&ctx.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| sanitised_db_error("save the submitted letters", &e))?;
 
@@ -731,6 +762,14 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         }));
     }
 
+    // Release the advisory lock and make the rows durable BEFORE announcing
+    // them. Publishing first would let a subscriber reload the grid and miss
+    // these actions, and a rolled-back batch would have already been fanned
+    // out to every connected client as phantom moves.
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("commit the submitted letters", &e))?;
+
     // Broadcast for activeGame.onAddActions (live multiplayer).
     ctx.events
         .publish(crossword_db::AppEvent::GameActionsAdded {
@@ -741,7 +780,7 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // The grid's real state after this batch, so the client can finish a solved
     // board without ever holding the key. Previously it computed "solved" itself
     // from the answer the server had been sending it.
-    let after = load_cell_states(id, ctx).await?;
+    let after = load_cell_states(id, &ctx.pool).await?;
     let completion = crate::scoring::completion(&key, &latest_verdicts(&after));
 
     Ok(json!({

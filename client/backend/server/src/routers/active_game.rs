@@ -635,6 +635,48 @@ where
     Ok(states)
 }
 
+/// The advisory-lock key for one active game. Single source of truth: the two
+/// DEF-28x races were each fixed by hand-rolling this string, and a third
+/// mutation that forgot it would reintroduce the same class of bug silently.
+fn game_write_key(active_game_id: &str) -> String {
+    format!("activeGame:write:{active_game_id}")
+}
+
+/// Begin a transaction and take the lock that serialises EVERY mutation of one
+/// active game. Every handler that writes must go through this.
+///
+/// Cells live in the append-only `GameAction` log, so there is no per-cell row
+/// for `SELECT ... FOR UPDATE` to attach to — an advisory lock keyed on the
+/// game is the only honest serialisation point. One key, so a game can never be
+/// locked in two orders and deadlock; a hash collision between two games only
+/// over-serialises them, it cannot corrupt either.
+///
+/// This exists because DEF-281 (`add_actions`) and DEF-282 (`complete`) were two
+/// separate races with the same shape: read state outside a transaction, then
+/// write. Fixing each one in place left the pattern to be remembered, and
+/// `join` — which also writes — had no lock at all. One guard removes the
+/// remembering.
+///
+/// The lock is transaction-scoped, so it is released by `commit` or by the
+/// rollback that happens when `tx` is dropped. Publish `GameActionsAdded` /
+/// `GameCompleted` only AFTER the commit, never inside it.
+async fn begin_game_write<'c>(
+    ctx: &'c Ctx,
+    active_game_id: &str,
+) -> Result<sqlx::Transaction<'c, Postgres>, String> {
+    let mut tx = ctx
+        .pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(game_write_key(active_game_id))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| sanitised_db_error("serialise writes to this game", &e))?;
+    Ok(tx)
+}
+
 /// activeGame.addActions — protected.
 ///
 /// Persists one or more GameActions; returns the created records plus the
@@ -686,9 +728,6 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         submissions.push(crate::scoring::validate_submission(action, index, &key)?);
     }
 
-    // What each cell held before this batch, so `previousState` is the server's
-    // record rather than something the caller can assert.
-    //
     // DEF-281. Serialise every write to a game, and take the cell snapshot
     // INSIDE that critical section.
     //
@@ -698,23 +737,7 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // before either wrote, so both logged the same `previousState` and the
     // loser's record was wrong. Measured at a 0.40 conflict rate under four
     // concurrent writers.
-    //
-    // There is no per-cell row to lock: cells live in the append-only
-    // GameAction log, so `SELECT ... FOR UPDATE` has nothing to attach to. An
-    // advisory lock keyed on the game is the honest serialisation point — one
-    // key, so no lock-ordering deadlock is possible. A hash collision between
-    // two games would only over-serialise them, never corrupt either.
-    let mut tx = ctx
-        .pool
-        .begin()
-        .await
-        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
-
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-        .bind(format!("activeGame:write:{id}"))
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| sanitised_db_error("serialise writes to this game", &e))?;
+    let mut tx = begin_game_write(ctx, id).await?;
 
     let before = load_cell_states(id, &mut *tx).await?;
 

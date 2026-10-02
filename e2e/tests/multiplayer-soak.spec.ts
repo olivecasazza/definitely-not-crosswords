@@ -304,8 +304,12 @@ type SoakState = {
   contexts: BrowserContext[];
   baseURL: string;
   videoDirs: string[];
+  /** The game this run owns; started in beforeAll, pinned or fresh. */
+  activeGameId: string;
+  /** Populated by afterAll when a run starts a game it never finishes. */
+  leak: string[];
 };
-const soak: SoakState = { contexts: [], baseURL: "", videoDirs: [] };
+const soak: SoakState = { contexts: [], baseURL: "", videoDirs: [], activeGameId: "", leak: [] as string[] };
 
 // Recording is OPT-IN via E2E_RECORD=1. It costs a per-context video encoder
 // on all four contexts, which would slow the correctness gate for no benefit,
@@ -355,7 +359,6 @@ test.describe("four-player multiplayer soak", () => {
                 document.body.appendChild(el);
               });
             },
-            { label: acct.label.toUpperCase() },
           );
         }
         soak.contexts.push(ctx);
@@ -364,9 +367,77 @@ test.describe("four-player multiplayer soak", () => {
       await Promise.all(soak.contexts.map((c) => c.close()));
       throw err;
     }
+
+    // Start a FRESH game rather than resuming one.
+    //
+    // Every soak run permanently advances the board it plays: its letters are
+    // committed. Resuming "the in-progress game" therefore handed each run a
+    // board the PREVIOUS runs had already ground down — one recording began
+    // with the game essentially finished before the players had even joined.
+    // That starves the part that matters: four players need a full board to
+    // have anywhere to take parallel turns.
+    //
+    // `activeGame.start` is idempotent per (gameId, caller), so this must pick
+    // a published Game this account has NOT already started; `gameList.get`
+    // returns exactly those. ACTIVE_GAME_ID still wins when set — CI pins it
+    // deliberately, and a pinned board is a known quantity.
+    if (process.env.ACTIVE_GAME_ID) {
+      soak.activeGameId = process.env.ACTIVE_GAME_ID;
+      console.log(`soak board: ACTIVE_GAME_ID=${soak.activeGameId} (pinned)`);
+    } else {
+      const fresh = await trpcPost(soak.contexts[0].request, "gameList.get", {});
+      const candidates: Array<{ id: string; title?: string; clues?: number }> =
+        fresh.data ?? [];
+      // Most clues first: a full board is what makes parallel play meaningful.
+      candidates.sort((a, b) => (b.clues ?? 0) - (a.clues ?? 0));
+      const chosen = candidates[0];
+      if (chosen) {
+        const started = await trpcPost(soak.contexts[0].request, "activeGame.start", {
+          gameId: chosen.id,
+        });
+        if (started.ok && started.data?.id) {
+          soak.activeGameId = started.data.id;
+          console.log(
+            `soak board: started a FRESH game ${chosen.id}` +
+              ` ("${chosen.title ?? "?"}", ${chosen.clues ?? "?"} clues) -> ${soak.activeGameId}`,
+          );
+        } else {
+          console.log(`soak board: start failed (${started.error}); falling back to lobby`);
+        }
+      } else {
+        console.log("soak board: no unstarted published games; falling back to lobby");
+      }
+    }
   });
 
-  test.afterAll(async () => {
+  test.afterAll(async ({ request }) => {
+    // Teardown: report any game this run created but did not finish.
+    //
+    // There is no delete/abandon procedure — the router exposes exactly
+    // get, getStartDetails, start, join, addActions, publishPresence,
+    // complete — so a run aborted before the completion step leaves its
+    // ActiveGame behind. Completing a puzzle deletes the row, so the happy
+    // path leaves nothing; only an aborted or failing run leaks, and it leaks
+    // silently until the pool of unused games is exhausted.
+    //
+    // So this does not pretend to clean up. It NAMES the leak, so a run that
+    // did not finish says so out loud instead of looking green.
+    if (soak.activeGameId) {
+      try {
+        const still = await trpcPost(request, "activeGame.get", { id: soak.activeGameId });
+        if (still.ok) {
+          const msg =
+            `LEAKED GAME: ${soak.activeGameId} still exists — this run did not reach ` +
+            `completion, and the product has no delete/abandon procedure to clean it up. ` +
+            `It will persist until finished by hand.`;
+          console.log(msg);
+          if (soak.leak) soak.leak.push(msg);
+        }
+      } catch {
+        // Nothing observable to report; the contexts are closing anyway.
+      }
+    }
+
     // Close in a finally so a mid-test throw still releases all four contexts.
     try {
       await Promise.all(soak.contexts.map((c) => c.close()));
@@ -674,13 +745,18 @@ test.describe("four-player multiplayer soak", () => {
       });
 
       // ── 4. Each of players 2–4 solves a distinct clue ───────────────────
+      // Concurrently, NOT one after another. The old loop awaited each player
+      // in turn, so on camera the four agents took strict sequential turns —
+      // which is not what a collaborative crossword looks like, and not what
+      // the presence/propagation assertions are meant to exercise. Claiming
+      // the clues up front keeps two players off the same one, then all three
+      // solve at once.
       await test.step("players 2, 3 and 4 each solve a distinct clue", async () => {
-        for (const [n, clue] of picks.entries()) {
-          const playerIdx = n + 1; // pages[1..3]
-          taken.add(clueKey(clue));
-          const before = await Promise.all(pages.map(correctCount));
-          await solveClue(pages[playerIdx], clue);
-          await propagate(playerIdx, before);
+        for (const clue of picks) taken.add(clueKey(clue));
+        const before = await Promise.all(pages.map(correctCount));
+        await Promise.all(picks.map((clue, n) => solveClue(pages[n + 1], clue)));
+        for (let n = 0; n < picks.length; n++) {
+          await propagate(n + 1, before);
         }
       });
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.85](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.84...v0.1.85) - 2026-10-02
+
+### Fixed
+
+- *(server)* serialise cell writes so previousState is truthful (DEF-281)
+- *(server)* completion is exactly-once; test drives the board to solved
+
+### Other
+
+- changelog for v0.1.84 [skip ci]
+- *(e2e)* provision four bot secrets, add four-pane observer recording
+
+
 ## [0.1.84](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.83...v0.1.84) - 2026-10-01
 
 ### Other

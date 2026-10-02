@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.88](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.87...v0.1.88) - 2026-10-02
+
+### Fixed
+
+- *(server)* recover outbox events lost while a pod's listener was down [DEF-275] (#210)
+
+### Other
+
+- changelog for v0.1.87 [skip ci]
+
+
 ## [0.1.87](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.86...v0.1.87) - 2026-10-02
 
 ### Added

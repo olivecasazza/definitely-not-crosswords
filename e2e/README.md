@@ -95,6 +95,26 @@ chapter). The billing canary and the demo both need that account to be a
 - `tests/` runs nightly; the protocol-level k6 load test is
   `nix run ./client#crossword-load -- run multiplayer.js`.
 
+### Watching the four agents play
+
+```bash
+scripts/record-multiplayer-observer.sh          # staging, writes e2e/observer-out/observer.mp4
+scripts/record-multiplayer-observer.sh --keep-raw   # also keep the four per-player clips
+```
+
+Records the same soak with `E2E_RECORD=1` and composites the four browser
+contexts into a 2x2 grid — one pane per player, each badged `PLAYER n` by an
+injected init script, so you can watch a letter typed by one player appear on
+the others instead of reading four separate traces. Output is 1920x1080 h264.
+
+It is a **diagnostic/tour artifact, not a gate**. Recording spins a video
+encoder per context and roughly doubles wall-clock, so `E2E_RECORD` is opt-in
+and the default `npx playwright test multiplayer-soak.spec.ts` is unchanged and
+still the pass/fail signal. The script refuses production unless
+`--allow-production`, because a recording writes real `GameAction`s into a real
+multiplayer game. Video is gitignored (`e2e/.gitignore`); artifacts are not
+committed.
+
 ### DEF-274 (fixed upstream — this suite now guards it)
 
 Broadcast fan-out was pod-local: `EventBus` was an in-process

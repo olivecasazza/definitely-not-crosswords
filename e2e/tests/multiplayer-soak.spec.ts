@@ -1,3 +1,4 @@
+import path from "node:path";
 import { test, expect, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
 
 // Four-player multiplayer soak. Four authenticated browser contexts play ONE
@@ -299,17 +300,65 @@ async function solveClue(page: Page, clue: AnswerClue) {
 /** Count of correctly-marked cells on a board. */
 const correctCount = (page: Page) => page.locator(".cw-correct").count();
 
-type SoakState = { contexts: BrowserContext[]; baseURL: string };
-const soak: SoakState = { contexts: [], baseURL: "" };
+type SoakState = {
+  contexts: BrowserContext[];
+  baseURL: string;
+  videoDirs: string[];
+};
+const soak: SoakState = { contexts: [], baseURL: "", videoDirs: [] };
+
+// Recording is OPT-IN via E2E_RECORD=1. It costs a per-context video encoder
+// on all four contexts, which would slow the correctness gate for no benefit,
+// so the default path is unchanged. With it set, each context records and gets
+// a visible corner badge naming its player — four identical boards in a
+// composite are impossible to tell apart otherwise. The badge is injected via
+// an init script (before any page script runs) and is position:fixed, so it
+// cannot perturb the board layout the assertions measure.
+const RECORD = process.env.E2E_RECORD === "1";
 
 test.describe("four-player multiplayer soak", () => {
-  test.beforeAll(async ({ browser, request }) => {
+  test.beforeAll(async ({ browser, request }, testInfo) => {
     for (const acct of ACCOUNTS) await provision(request, acct);
 
     soak.baseURL = process.env.E2E_BASE_URL ?? "https://crosswords-staging.casazza.io";
     try {
-      for (const _ of ACCOUNTS) {
-        soak.contexts.push(await browser.newContext({ baseURL: soak.baseURL }));
+      for (const [n, acct] of ACCOUNTS.entries()) {
+        const opts: Parameters<typeof browser.newContext>[0] = { baseURL: soak.baseURL };
+        if (RECORD) {
+          const dir = path.join(testInfo.outputDir, `video-p${n + 1}`);
+          soak.videoDirs.push(dir);
+          // 960x540 per pane keeps a 2x2 composite at 1920x1080 without
+          // upscaling, and keeps the upload to a few MB.
+          opts.recordVideo = { dir, size: { width: 960, height: 540 } };
+          opts.viewport = { width: 960, height: 540 };
+        }
+        const ctx = await browser.newContext(opts);
+        if (RECORD) {
+          await ctx.addInitScript(
+            ({ label }: { label: string }) => {
+              window.addEventListener("DOMContentLoaded", () => {
+                const el = document.createElement("div");
+                el.textContent = label;
+                el.setAttribute("data-soak-badge", "1");
+                Object.assign(el.style, {
+                  position: "fixed",
+                  top: "6px",
+                  left: "6px",
+                  zIndex: "2147483647",
+                  padding: "4px 10px",
+                  borderRadius: "6px",
+                  font: "600 18px/1.2 system-ui, sans-serif",
+                  color: "#fff",
+                  background: "rgba(18,18,18,0.82)",
+                  pointerEvents: "none",
+                });
+                document.body.appendChild(el);
+              });
+            },
+            { label: acct.label.toUpperCase() },
+          );
+        }
+        soak.contexts.push(ctx);
       }
     } catch (err) {
       await Promise.all(soak.contexts.map((c) => c.close()));

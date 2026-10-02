@@ -94,8 +94,42 @@ jobs:
             echo "flag=" >> "$GITHUB_OUTPUT"
           fi
 
+      # A tag is not free: it triggers the image build AND deploy-production.
+      # release-plz bumps on any Conventional Commit, so a `test(e2e):` or
+      # `chore:` push shipped v0.1.84 to production with no product change in
+      # it — harmless that time, and the mechanism that would ship a mistake
+      # the next time.
+      #
+      # So: only open a release PR when something actually releasable landed
+      # since the last tag. `revert` is NOT in the list — a revert puts the tree
+      # back where it was, so it must not pull a release forward on its own.
+      - name: Check for releasable commits since the last tag
+        id: releasable
+        run: |
+          set -uo pipefail
+          last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [ -z "$last_tag" ]; then
+            echo "No prior v* tag — treating the first release as releasable."
+            echo "releasable=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Match the type at the start of the subject. A leading scope and a
+          # breaking `!` are both allowed; case matters, because Conventional
+          # Commits is case-sensitive and `Fix:` is still common in the wild.
+          hits=$(git log --format='%s' "$last_tag"..HEAD \
+            | grep -Ec '^(feat|fix|perf|refactor)(\([^)]*\))?!?: ' || true)
+          if [ "$hits" -gt 0 ]; then
+            echo "releasable=true ($hits feat/fix/perf/refactor commit(s) since $last_tag)"
+          else
+            echo "releasable=false (nothing releasable since $last_tag — test/ci/chore/docs only)"
+          fi
+          if [ "$hits" -gt 0 ]; then echo "releasable=true" >> "$GITHUB_OUTPUT";
+          else echo "releasable=false" >> "$GITHUB_OUTPUT"; fi
+
       - name: release-plz release-pr (open/update the version-bump PR)
+        if: steps.releasable.outputs.releasable == 'true'
         env:
+
           GIT_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
           release-plz release-pr \
@@ -104,10 +138,11 @@ jobs:
             --git-token "$GIT_TOKEN"
 
       # Cuts the tag + GitHub release when Cargo.toml is ahead of the tags (i.e.
-      # right after a release PR merges). No baseline needed — it only compares the
-      # manifest version against existing tags. The PAT (not GITHUB_TOKEN) is what
-      # lets the new tag trigger the image-build workflow.
+      # right after a release PR merges). No baseline needed — it only compares
+      # the manifest version against existing tags. The PAT (not GITHUB_TOKEN)
+      # is what lets the new tag trigger the image-build workflow.
       - name: release-plz release (tag + GitHub release)
+        if: steps.releasable.outputs.releasable == 'true'
         env:
           GIT_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |

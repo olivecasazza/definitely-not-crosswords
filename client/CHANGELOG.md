@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.87](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.86...v0.1.87) - 2026-10-02
+
+### Added
+
+- *(server)* activeGame.abandon — a started game is no longer immortal
+
+### Other
+
+- changelog for v0.1.86 [skip ci]
+- *(release)* do not cut a tag for test/ci/chore-only pushes
+- *(e2e)* fresh board per run, players solve in parallel, leak reporting
+
+
 ## [0.1.86](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.85...v0.1.86) - 2026-10-02
 
 ### Fixed

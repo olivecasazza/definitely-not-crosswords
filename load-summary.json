@@ -3,209 +3,288 @@
   "activeGameId": "f55fc2df-7271-4de3-bd06-181a496169a4",
   "gameId": "4cbad4b1-18c5-440e-8d0b-4c1d858821d4",
   "httpFailedRate": 0,
-  "crossingConflictRate": 0.3958333333333333,
-  "broadcastReceived": 100,
-  "httpRequests": 151,
-  "iterations": 128,
+  "crossingConflictRate": 0,
+  "broadcastReceived": 64,
+  "httpRequests": 125,
+  "iterations": 106,
   "thresholds": {
-    "crossword_ws_error_rate": {
-      "rate<0.05": {
-        "ok": true
-      }
-    },
     "trpc_error_rate": {
       "rate<0.05": {
         "ok": true
       }
     },
-    "crossing_conflict_rate": {
+    "crossword_ws_error_rate": {
       "rate<0.05": {
-        "ok": false
+        "ok": true
       }
     },
     "http_req_failed": {
       "rate<0.01": {
         "ok": true
       }
+    },
+    "crossing_conflict_rate": {
+      "rate<0.05": {
+        "ok": true
+      }
     }
   },
   "metrics": {
-    "data_received": {
-      "type": "counter",
-      "contains": "data",
-      "values": {
-        "count": 9003062,
-        "rate": 211646.45835360524
-      }
-    },
-    "crossing_conflict_rate": {
-      "values": {
-        "rate": 0.3958333333333333,
-        "passes": 19,
-        "fails": 29
-      },
-      "thresholds": {
-        "rate<0.05": {
-          "ok": false
-        }
-      },
-      "type": "rate",
-      "contains": "default"
-    },
-    "http_req_duration": {
-      "type": "trend",
-      "contains": "time",
-      "values": {
-        "p(90)": 71.254177,
-        "p(95)": 86.7628695,
-        "avg": 47.55876489403974,
-        "min": 22.432467,
-        "med": 37.858753,
-        "max": 486.391368
-      }
-    },
-    "ws_msgs_received": {
-      "type": "counter",
-      "contains": "default",
-      "values": {
-        "count": 104,
-        "rate": 2.444860611731314
-      }
-    },
-    "crossword_add_actions_duration": {
-      "type": "trend",
-      "contains": "time",
-      "values": {
-        "avg": 56.715276125,
-        "min": 36.595278,
-        "med": 55.60087,
-        "max": 101.97887,
-        "p(90)": 72.31082690000001,
-        "p(95)": 87.80677334999999
-      }
-    },
     "iteration_duration": {
-      "type": "trend",
       "contains": "time",
       "values": {
-        "avg": 1278.0860178750004,
-        "min": 1023.047314,
-        "med": 1044.25783,
-        "max": 3099.310572,
-        "p(90)": 2107.3360040000002,
-        "p(95)": 3026.2352012
-      }
-    },
-    "http_req_failed": {
-      "values": {
-        "rate": 0,
-        "passes": 0,
-        "fails": 151
+        "max": 3119.59591,
+        "p(90)": 2121.1492505,
+        "p(95)": 2836.2407835000004,
+        "avg": 1247.151032962264,
+        "min": 1021.007191,
+        "med": 1038.9561795
       },
-      "thresholds": {
-        "rate<0.01": {
-          "ok": true
-        }
-      },
-      "type": "rate",
-      "contains": "default"
-    },
-    "checks": {
-      "type": "rate",
-      "contains": "default",
-      "values": {
-        "rate": 1,
-        "passes": 268,
-        "fails": 0
-      }
-    },
-    "http_reqs": {
-      "type": "counter",
-      "contains": "default",
-      "values": {
-        "count": 151,
-        "rate": 3.5497495420329654
-      }
-    },
-    "http_req_blocked": {
-      "type": "trend",
-      "contains": "time",
-      "values": {
-        "avg": 5.218005841059605,
-        "min": 0.0001,
-        "med": 0.00031,
-        "max": 86.137082,
-        "p(90)": 0.00068,
-        "p(95)": 59.02597
-      }
-    },
-    "http_req_waiting": {
-      "type": "trend",
-      "contains": "time",
-      "values": {
-        "avg": 40.567721675496706,
-        "min": 22.104925,
-        "med": 37.444862,
-        "max": 101.384478,
-        "p(90)": 62.846542,
-        "p(95)": 69.0294175
-      }
+      "type": "trend"
     },
     "crossword_join_duration": {
       "type": "trend",
       "contains": "time",
       "values": {
-        "avg": 31.628887500000005,
-        "min": 22.432467,
-        "med": 26.996471,
-        "max": 102.273811,
-        "p(90)": 43.998462100000005,
-        "p(95)": 51.14791274999996
+        "avg": 31.241072583333338,
+        "min": 20.446511,
+        "med": 26.3756215,
+        "max": 69.489848,
+        "p(90)": 52.405377200000004,
+        "p(95)": 55.309455099999994
       }
     },
+    "ws_msgs_sent": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 4,
+        "rate": 0.10399374433035334
+      }
+    },
+    "ws_msgs_received": {
+      "contains": "default",
+      "values": {
+        "count": 68,
+        "rate": 1.7678936536160068
+      },
+      "type": "counter"
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 106,
+        "rate": 2.7558342247543637
+      }
+    },
+    "http_reqs": {
+      "contains": "default",
+      "values": {
+        "count": 125,
+        "rate": 3.2498045103235422
+      },
+      "type": "counter"
+    },
+    "http_req_failed": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "rate": 0,
+        "passes": 0,
+        "fails": 125
+      },
+      "thresholds": {
+        "rate<0.01": {
+          "ok": true
+        }
+      }
+    },
+    "checks": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "fails": 0,
+        "rate": 1,
+        "passes": 220
+      }
+    },
+    "crossing_conflict_rate": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "fails": 32,
+        "rate": 0,
+        "passes": 0
+      },
+      "thresholds": {
+        "rate<0.05": {
+          "ok": true
+        }
+      }
+    },
+    "crossword_add_actions_duration": {
+      "contains": "time",
+      "values": {
+        "avg": 68.54970628125002,
+        "min": 30.725146,
+        "med": 60.6937585,
+        "max": 159.334115,
+        "p(90)": 122.69578800000005,
+        "p(95)": 152.06277585
+      },
+      "type": "trend"
+    },
+    "http_req_waiting": {
+      "values": {
+        "p(95)": 87.79229639999998,
+        "avg": 41.852243903999984,
+        "min": 19.841628,
+        "med": 29.891203,
+        "max": 149.272501,
+        "p(90)": 67.7349722
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "crossword_broadcast_received": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 64,
+        "rate": 1.6638999092856535
+      }
+    },
+    "ws_sessions": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 2,
+        "rate": 0.05199687216517667
+      }
+    },
+    "vus": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "max": 14,
+        "value": 2,
+        "min": 2
+      }
+    },
+    "http_req_tls_handshaking": {
+      "values": {
+        "p(95)": 46.9862678,
+        "avg": 4.502440488,
+        "min": 0,
+        "med": 0,
+        "max": 54.031199,
+        "p(90)": 8.711882400000125
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "rate": 2042.9571073697914,
+        "count": 78580
+      }
+    },
+    "http_req_blocked": {
+      "contains": "time",
+      "values": {
+        "avg": 5.735970679999992,
+        "min": 0.00007,
+        "med": 0.00024,
+        "max": 67.71927,
+        "p(90)": 13.365185400000192,
+        "p(95)": 59.252340399999994
+      },
+      "type": "trend"
+    },
     "vus_max": {
+      "contains": "default",
       "values": {
         "value": 14,
         "min": 14,
         "max": 14
       },
-      "type": "gauge",
-      "contains": "default"
+      "type": "gauge"
     },
-    "http_req_tls_handshaking": {
+    "trpc_error_rate": {
+      "thresholds": {
+        "rate<0.05": {
+          "ok": true
+        }
+      },
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "fails": 98,
+        "rate": 0,
+        "passes": 0
+      }
+    },
+    "http_req_duration": {
       "type": "trend",
       "contains": "time",
       "values": {
-        "avg": 4.256471019867549,
-        "min": 0,
-        "med": 0,
-        "max": 73.9986,
-        "p(90)": 0,
-        "p(95)": 47.5912855
+        "med": 30.725146,
+        "max": 172.681034,
+        "p(90)": 89.69823520000001,
+        "p(95)": 110.78926839999997,
+        "avg": 46.49291860800001,
+        "min": 20.446511
       }
     },
     "http_req_receiving": {
       "type": "trend",
       "contains": "time",
       "values": {
-        "p(90)": 3.373114,
-        "p(95)": 29.2883465,
-        "avg": 6.926477602649008,
-        "min": 0.0386,
-        "med": 0.574442,
-        "max": 423.487006
+        "avg": 4.581574463999996,
+        "min": 0.01463,
+        "med": 0.680373,
+        "max": 102.569474,
+        "p(90)": 2.939223200000002,
+        "p(95)": 37.51136979999997
       }
     },
-    "vus": {
+    "http_req_sending": {
       "values": {
-        "value": 2,
-        "min": 2,
-        "max": 14
+        "p(90)": 0.0793404,
+        "p(95)": 0.087864,
+        "avg": 0.05910023999999998,
+        "min": 0.01896,
+        "med": 0.058211,
+        "max": 0.182751
       },
-      "type": "gauge",
-      "contains": "default"
+      "type": "trend",
+      "contains": "time"
+    },
+    "ws_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 207.196507,
+        "min": 207.187677,
+        "med": 207.196507,
+        "max": 207.205337,
+        "p(90)": 207.20357099999998,
+        "p(95)": 207.204454
+      }
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 8774542,
+        "rate": 228124.36934098683
+      }
     },
     "crossword_ws_error_rate": {
+      "type": "rate",
       "contains": "default",
       "values": {
         "rate": 0,
@@ -216,109 +295,30 @@
         "rate<0.05": {
           "ok": true
         }
-      },
-      "type": "rate"
-    },
-    "trpc_error_rate": {
-      "type": "rate",
-      "contains": "default",
-      "values": {
-        "rate": 0,
-        "passes": 0,
-        "fails": 116
-      },
-      "thresholds": {
-        "rate<0.05": {
-          "ok": true
-        }
       }
-    },
-    "iterations": {
-      "type": "counter",
-      "contains": "default",
-      "values": {
-        "count": 128,
-        "rate": 3.00905921443854
-      }
-    },
-    "ws_connecting": {
-      "type": "trend",
-      "contains": "time",
-      "values": {
-        "avg": 168.440727,
-        "min": 168.239596,
-        "med": 168.440727,
-        "max": 168.641858,
-        "p(90)": 168.6016318,
-        "p(95)": 168.6217449
-      }
-    },
-    "ws_sessions": {
-      "values": {
-        "count": 2,
-        "rate": 0.04701655022560219
-      },
-      "type": "counter",
-      "contains": "default"
-    },
-    "http_req_sending": {
-      "type": "trend",
-      "contains": "time",
-      "values": {
-        "min": 0.02475,
-        "med": 0.065001,
-        "max": 0.1234,
-        "p(90)": 0.085571,
-        "p(95)": 0.09357,
-        "avg": 0.06456561589403975
-      }
-    },
-    "data_sent": {
-      "type": "counter",
-      "contains": "data",
-      "values": {
-        "count": 85425,
-        "rate": 2008.1944015110334
-      }
-    },
-    "ws_msgs_sent": {
-      "values": {
-        "count": 4,
-        "rate": 0.09403310045120437
-      },
-      "type": "counter",
-      "contains": "default"
     },
     "http_req_duration{expected_response:true}": {
-      "type": "trend",
       "contains": "time",
       "values": {
-        "p(90)": 71.254177,
-        "p(95)": 86.7628695,
-        "avg": 47.55876489403974,
-        "min": 22.432467,
-        "med": 37.858753,
-        "max": 486.391368
-      }
-    },
-    "http_req_connecting": {
-      "contains": "time",
-      "values": {
-        "min": 0,
-        "med": 0,
-        "max": 13.334537,
-        "p(90)": 0,
-        "p(95)": 11.172768000000001,
-        "avg": 0.9467716291390728
+        "max": 172.681034,
+        "p(90)": 89.69823520000001,
+        "p(95)": 110.78926839999997,
+        "avg": 46.49291860800001,
+        "min": 20.446511,
+        "med": 30.725146
       },
       "type": "trend"
     },
-    "crossword_broadcast_received": {
-      "type": "counter",
-      "contains": "default",
+    "http_req_connecting": {
+      "type": "trend",
+      "contains": "time",
       "values": {
-        "count": 100,
-        "rate": 2.3508275112801096
+        "avg": 1.2173049200000001,
+        "min": 0,
+        "med": 0,
+        "max": 13.6172,
+        "p(90)": 3.8865714000000553,
+        "p(95)": 12.2698548
       }
     }
   }

@@ -364,6 +364,24 @@ export function setup() {
     // contend over. Say so rather than silently measuring nothing.
     console.warn('WARN: this grid has no crossing cells; contention is untestable on it');
   }
+  // The letters that can LEGITIMATELY ever appear in a crossing cell's
+  // `previousState`: the true answer, plus the per-account rotation each of
+  // the four writers will submit. Computed ONCE here because k6 VUs run in
+  // separate JS runtimes and share no state — a VU cannot know what another
+  // VU wrote, so the membership test has to be handed down as data.
+  //
+  // This is what makes the metric meaningful. Asking "does previousState
+  // equal what I last wrote" is false by design once writes serialise, and
+  // read 0.40-0.50 both before and after the DEF-281 fix. Asking "is
+  // previousState a letter some writer could have committed" is the real
+  // invariant: a value outside this set is a state no write ever produced.
+  const legitByCell = {};
+  for (const cell of crossingCells) {
+    const set = [cell.letter];
+    for (let acct = 0; acct < cookies.length; acct += 1) set.push(rotate(cell.letter, acct));
+    legitByCell[cellKey(cell.x, cell.y)] = set;
+  }
+
   return {
     cookies: cookies,
     activeGameId: activeGameId,
@@ -375,6 +393,7 @@ export function setup() {
       // Clue numbers, so publishPresence can name a real clue.
       numbers: game.questions.map((q) => ({ number: q.number, direction: q.direction })),
     },
+    legitByCell: legitByCell,
     baseUrl: BASE_URL,
     batchSize: BATCH_SIZE,
     crossingShare: CROSSING_SHARE,
@@ -389,9 +408,24 @@ function accountIndex(data) {
   return (__VU - 1) % data.cookies.length;
 }
 
-// The four bot accounts each keep their own view of "what I last wrote here".
-// The conflict metric compares that against what the server says was there.
-const lastSubmitted = {};
+// The four bot accounts each write a DIFFERENT letter to the same crossing
+// cell (see `rotate`), so the value the server reports as `previousState` is
+// normally some OTHER account's letter, not this one's.
+//
+// The metric therefore cannot ask "does previousState equal what I last
+// wrote" — that is false by design the moment writes serialise correctly, and
+// asking it made this gate read 0.40-0.50 both BEFORE and AFTER the DEF-281
+// fix landed. The invariant that actually distinguishes correct
+// serialisation from a lost update is:
+//
+//   previousState is either empty (nothing was there) or a letter that some
+//   writer actually committed to that cell.
+//
+// Anything else means the server described a state no write ever produced.
+// Verified directly against staging 0.1.85: eight concurrent distinct writes
+// to one cell returned eight previousStates, every one a letter from that same
+// batch — the chain, intact.
+//
 
 function authHeaders(data) {
   return Object.assign(
@@ -465,11 +499,6 @@ export function actionsScenario(data) {
     sleep(THINK_TIME);
     return;
   }
-  // Remember what we are about to write so the response can be judged against
-  // it. (Recorded before the request: that is the letter we expect to find.)
-  const intended = {};
-  for (const action of batch) intended[cellKey(action.cordX, action.cordY)] = action.state;
-
   const res = http.post(
     `${data.baseUrl}/api/trpc/activeGame.addActions`,
     JSON.stringify({ 0: { id: data.activeGameId, actions: batch } }),
@@ -490,17 +519,17 @@ export function actionsScenario(data) {
     let checked = 0;
     for (const action of created) {
       const key = cellKey(action.cordX, action.cordY);
-      const mine = lastSubmitted[key];
-      const submitted = intended[key];
-      // Did the server's view of the cell match what this VU last wrote?
       const serverSaw = typeof action.previousState === 'string' ? action.previousState : '';
-      if (mine !== undefined && submitted !== undefined) {
-        checked += 1;
-        if (serverSaw !== mine) conflicts += 1;
-      }
-      lastSubmitted[key] = submitted;
+      if (serverSaw === '') continue; // nothing was there: always legitimate
+
+      checked += 1;
+      const legit = data.legitByCell[key];
+      // A cell we know nothing about cannot be judged; only crossing cells
+      // carry a legitimate-letter set.
+      if (legit && legit.indexOf(serverSaw) === -1) conflicts += 1;
     }
-    // One sample per addActions response: 1 when any cell came back wrong.
+    // One sample per addActions response: 1 when any cell came back with a
+    // state no write ever produced.
     crossingConflictRate.add(checked > 0 && conflicts > 0);
   }
 

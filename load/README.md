@@ -102,21 +102,43 @@ cells still submit the real answer letter, so the bulk of the load is realistic.
 
 ### Measured baseline
 
-A 4-VU / 12-second smoke against `crosswords-staging` on 2026-10-01, re-measured
-after the DEF-274 Postgres-outbox fix shipped (staging 0.1.83):
-259 requests, 412 checks, 0 failures, 100 WS broadcast frames, and
-`crossing_conflict_rate` = **0.40**, which crosses the `0.05` threshold.
+4-VU / 12-second smokes against `crosswords-staging`:
 
-This is the current server behaviour under four concurrent writers, not a
-defect in the test: `addActions` reads the pre-write cell snapshot without
-serialising the write, so concurrent writers interleave on shared cells and the
-loser's logged `previousState` is stale. Read the number as "interleaving
-happens this often at this concurrency", and re-baseline the threshold once the
-write path locks.
+| when | server | `crossing_conflict_rate` |
+|---|---|---|
+| 2026-10-01 | 0.1.83, no write lock | 0.40 – 0.66 |
+| 2026-10-02 | 0.1.85, DEF-281 write lock | **0.00** |
 
-Note what the outbox fix changed here: WS frames now arrive for every subscriber
-(100 in this run), where the pod-local bus delivered them to only one replica.
-The crossing race is a separate write-path defect and was NOT fixed by it.
+The 0.1.85 run exits 0 with every threshold met.
+
+**The metric's definition was wrong before, and fixing it was part of the
+work.** It originally asked "does `previousState` equal what *this* VU last
+wrote". That is false by design: the four accounts write *different* letters to
+the same crossing cell (see above), so once writes serialise correctly the
+value the server reports is normally some other account's letter. The metric
+fired at 0.40–0.50 both before *and* after the server fix — a gate that is red
+for the wrong reason trains people to ignore it.
+
+The invariant that actually distinguishes serialisation from a lost update:
+
+> `previousState` is either empty (nothing was there) or a letter some writer
+> actually committed to that cell.
+
+`setup()` therefore precomputes, per crossing cell, the only letters that can
+legitimately appear — the true answer plus each account's rotation — and a
+conflict is any `previousState` outside that set. The set has to be computed
+once in `setup()` because k6 VUs run in separate JS runtimes and share no
+state, so a VU cannot know what another VU wrote.
+
+The server fix was verified independently of this metric: eight concurrent
+writes of distinct letters to one cell on 0.1.85 returned eight
+`previousState` values, every one a letter from that same batch — the write
+chain intact, which is precisely what the advisory lock in `add_actions`
+guarantees.
+
+Not proven: that the corrected metric still goes red if the lock is removed.
+That needs a deliberately broken server; the honest claim is that it now
+measures the right invariant and the chain test independently confirms the fix.
 
 
 ## Cookies and WebSockets

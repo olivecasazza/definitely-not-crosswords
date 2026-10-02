@@ -196,17 +196,19 @@ async function selectClue(page: Page, clue: AnswerClue) {
 const misspelling = (answer: string) =>
   (answer[0].toUpperCase() === "A" ? "B" : "A") + answer.slice(1);
 
-/** Click Guess and wait for the entry row to clear (correct-guess path). */
 async function submitGuess(page: Page) {
   const guess = page.getByRole("button", { name: /^guess$/i });
-  await humanClick(page, guess);
-  // Correct guesses clear the entry row — that's the scoring-path assertion.
-  // Give the mutation a beat, then retry once if a re-render ate the click.
-  await page.waitForTimeout(1500);
-  if (await page.locator(".cw-letter-input").count()) {
-    await humanClick(page, guess);
-  }
-  await expect(page.locator(".cw-letter-input")).toHaveCount(0);
+  const rows = page.locator(".cw-letter-input");
+  await Promise.all([
+    page.waitForResponse(
+      (res) =>
+        res.url().includes("activeGame.addActions") &&
+        res.request().method() === "POST",
+      { timeout: 20_000 },
+    ),
+    humanClick(page, guess),
+  ]);
+  await expect(rows).toHaveCount(0, { timeout: 20_000 });
 }
 
 /** Select a clue from the list and guess it correctly, at reading speed. */

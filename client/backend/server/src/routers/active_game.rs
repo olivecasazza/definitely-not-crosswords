@@ -872,6 +872,32 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing id".to_string())?;
 
+    // DEF-282. Take the game's write lock BEFORE the existence checks and hold
+    // it through the commit below.
+    //
+    // These two reads used to run on the pool with no lock between them and
+    // the transaction that deletes ActiveGame. Four members reaching the
+    // results screen together therefore all passed "am I a member?" and all
+    // saw the ActiveGame, then each opened its own transaction and each
+    // INSERTed a CompletedGame — measured two distinct completedGameIds from
+    // one completion, which is two score records and two GameCompleted
+    // broadcasts for a single solved board.
+    //
+    // Under the lock the losers block, then find the ActiveGame already gone
+    // and are refused, so exactly one call can win. Same single-key advisory
+    // lock as `add_actions`, so a game is never locked in two orders.
+    let mut tx = ctx
+        .pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
+
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(format!("activeGame:write:{active_game_id}"))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| sanitised_db_error("serialise completion of this game", &e))?;
+
     // Membership check: only a member of the active game may complete it
     // (this is destructive — it deletes the ActiveGame and cascades GameActions).
     let is_member = sqlx::query(
@@ -879,7 +905,7 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     )
     .bind(active_game_id)
     .bind(&user.id)
-    .fetch_optional(&ctx.pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| sanitised_db_error("check membership", &e))?
     .is_some();
@@ -887,10 +913,11 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         return Err("FORBIDDEN".to_string());
     }
 
-    // Load the active game.
+    // Load the active game — inside the lock, so a second completer sees the
+    // row this one is about to delete rather than a stale copy.
     let ag = sqlx::query(r#"SELECT id, "gameId" FROM "ActiveGame" WHERE id = $1"#)
         .bind(active_game_id)
-        .fetch_optional(&ctx.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| sanitised_db_error("load the active game", &e))?;
 
@@ -959,12 +986,9 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         })
         .collect();
 
-    // Run the mutation sequence inside a transaction.
-    let mut tx = ctx
-        .pool
-        .begin()
-        .await
-        .map_err(|e| sanitised_db_error("record the completed game", &e))?;
+    // The mutation sequence runs in the transaction opened at the top, which
+    // still holds the advisory lock. Opening a second one here would drop the
+    // lock's protection exactly where it is needed.
 
     let stats_id = Uuid::new_v4().to_string();
     sqlx::query(

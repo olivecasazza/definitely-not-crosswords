@@ -783,8 +783,18 @@ test.describe("four-player multiplayer soak", () => {
         // step's job is to make it observable, not to fail the soak.
       });
 
-      // ── 6. Completion is not duplicated ─────────────────────────────────
-      await test.step("completion is not duplicated", async () => {
+      // ── 6. Completion happens exactly once ─────────────────────────────
+      // Completion has to be DRIVEN, not waited for. A 42-clue grid is far too
+      // big for four browsers to solve a clue at a time, and the old "DEGRADED"
+      // path meant the exactly-once assertions never ran at all.
+      //
+      // So the board is filled over the protocol: this spec already holds the
+      // answer key and the clue geometry, and addActions takes a whole batch per
+      // call, so a full grid is four calls rather than 161 keystrokes. Then all
+      // four members call `complete` in the same tick — that is the race worth
+      // testing, because `complete` reads membership and the ActiveGame row in
+      // two separate pool queries before opening its transaction.
+      await test.step("completion happens exactly once", async () => {
         const data = await trpcGet(pages[0], "activeGame.get", { id: activeGameId });
         // `/api/grids` is keyed by the PARENT game, which `activeGame.get`
         // returns as `gameId` — not by the activeGameId we navigated to.
@@ -792,33 +802,84 @@ test.describe("four-player multiplayer soak", () => {
         const all: AnswerClue[] = (data?.game?.questions ?? [])
           .map((c: Clue) => ({ ...c, answer: answers.get(clueKey(c)) }))
           .filter((c: Clue & { answer?: string }): c is AnswerClue => Boolean(c.answer));
-        const remaining = all.length - solvedClues(all, data?.actions ?? []).size;
-        if (remaining > 0) {
-          const msg =
-            `DEGRADED: ${remaining} of ${all.length} clues still open — puzzle too large to ` +
-            `finish in a soak run; completion duplication not exercised`;
-          console.log(msg);
-          await testInfo.attach("completion-degraded.txt", { body: msg, contentType: "text/plain" });
-          return;
+
+        // Cells the key says should hold a letter that are not correct yet.
+        // Deduped by coordinate because a crossing cell belongs to both an
+        // ACROSS and a DOWN clue.
+        const done = solvedClues(all, data?.actions ?? []);
+        const already = new Set(
+          all.filter((c) => done.has(clueKey(c))).flatMap(clueCells).map(([x, y]) => `${x},${y}`),
+        );
+        const wanted = new Map<string, string>();
+        for (const c of all) {
+          clueCells(c).forEach(([x, y], i) => {
+            const key = `${x},${y}`;
+            if (!already.has(key)) wanted.set(key, (c.answer ?? "")[i] ?? "");
+          });
+        }
+        console.log(`COMPLETION: ${wanted.size} cells left of ${all.length} clues`);
+
+        if (wanted.size > 0) {
+          // Round-robin across the four players so the final writes overlap.
+          const perPlayer: Array<Array<{ cordX: number; cordY: number; state: string }>> = [
+            [],
+            [],
+            [],
+            [],
+          ];
+          let turn = 0;
+          for (const [key, letter] of wanted) {
+            const [cordX, cordY] = key.split(",").map(Number);
+            perPlayer[turn % 4].push({ cordX, cordY, state: letter });
+            turn++;
+          }
+          const filled = await Promise.all(
+            perPlayer.map((actions, n) =>
+              trpcPost(pages[n].request, "activeGame.addActions", { id: activeGameId, actions }),
+            ),
+          );
+          filled.forEach((r, n) =>
+            console.log(
+              `  player ${n + 1}: ${perPlayer[n].length} cells -> ok=${r.ok}` +
+                (r.ok ? ` solved=${r.data?.solved} filled=${r.data?.filled}/${r.data?.total}` : ` err=${r.error}`),
+            ),
+          );
+          const failures = filled.filter((r) => !r.ok);
+          expect(failures.map((f) => f.error), "every fill batch was accepted").toEqual([]);
+          expect(
+            filled.some((r) => r.data?.solved === true),
+            "the board reports solved after the final fill",
+          ).toBe(true);
         }
 
-        // Solved: the last guess mints exactly one CompletedGame. The winning
-        // player is redirected to the results screen by the onGameCompleted
-        // subscription; the others stay on the board.
-        await pages[0].waitForURL(/\/game\/[^/]+\/completed/, { timeout: 60_000 }).catch(() => {});
-        await pages[0].waitForTimeout(5_000);
-
-        const onResults = pages.filter((p) => /\/game\/[^/]+\/completed/.test(p.url()));
-        const completedIds = new Set(
-          onResults.map((p) => p.url().split("/game/")[1].split(/[/?#]/)[0]),
+        // The race: four members call complete() in one tick.
+        const completed = await Promise.all(
+          pages.map((p) => trpcPost(p.request, "activeGame.complete", { id: activeGameId })),
         );
+        const okIds = completed
+          .map((r) => r.data?.id)
+          .filter((v: unknown): v is string => typeof v === "string");
         const report =
-          `completion reached: ${onResults.length} of 4 pages on the results screen, ` +
-          `${completedIds.size} distinct completedGameId(s)`;
+          `complete() by 4 members in one tick: ${okIds.length} returned an id, ` +
+          `${completed.length - okIds.length} refused ` +
+          `(${completed.filter((r) => !r.ok).map((r) => r.error).join(" | ") || "none"}); ` +
+          `distinct completedGameIds = ${new Set(okIds).size} [${okIds.join(", ")}]`;
         console.log(`COMPLETION: ${report}`);
         await testInfo.attach("completion-report.txt", { body: report, contentType: "text/plain" });
-        expect(onResults.length, "at most one GameCompleted navigation").toBeLessThanOrEqual(1);
-        expect(completedIds.size, "the completed-game record is single").toBe(1);
+
+        // EXACTLY ONCE. Two distinct ids means two CompletedGame rows, two sets
+        // of MemberScores and two GameCompleted broadcasts.
+        expect(
+          new Set(okIds).size,
+          "every successful complete() returned the SAME completedGameId",
+        ).toBeLessThanOrEqual(1);
+
+        // complete() deletes ActiveGame, cascading GameActions. A surviving row
+        // means it never ran, whatever the ids said.
+        const after = await trpcGet(pages[0], "activeGame.get", { id: activeGameId }).catch(
+          () => null,
+        );
+        expect(after, "ActiveGame is deleted once completed").toBeNull();
       });
     } finally {
       await Promise.all(pages.map((p) => p.close().catch(() => {})));

@@ -186,6 +186,10 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          if ! command -v jq >/dev/null; then
+            apt-get update
+            apt-get install -y jq
+          fi
           for pair in "E2E_EMAIL E2E_PASSWORD" "E2E_EMAIL_2 E2E_PASSWORD_2" \
                       "E2E_EMAIL_3 E2E_PASSWORD_3" "E2E_EMAIL_4 E2E_PASSWORD_4"; do
             set -- $pair
@@ -289,8 +293,11 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
       - name: Cache Nix store
         uses: cachix/cachix-action@v17
+        env:
+          USER: root
         with:
           name: nix-community
+          skipPush: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       # `nix run` rather than `nix build`: the load scenario needs a LIVE host,
       # so it can never be a `checks` derivation (the repo rule is that Nix

@@ -12,7 +12,12 @@ on:
     - cron: "0 8 * * *" # nightly ~00:00 PT — canary against staging
   release:
     types: [published] # cut a release -> record + publish the demo video
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      prod_url:
+        description: Production canary URL override for forced-failure verification
+        required: false
+        type: string
 
 concurrency:
   group: e2e-canary
@@ -106,14 +111,50 @@ jobs:
             echo "::error::no /_assets/<16-hex>/crossword-web.js in $E2E_BASE_URL/ — bundle layout changed; update this check"
             exit 1
           fi
-          wasm_url="$E2E_BASE_URL$(dirname "$glue")/crossword-web_bg.wasm"
-          for url in "$E2E_BASE_URL$glue" "$wasm_url"; do
-            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url")"
-            if [ "$code" != "200" ]; then
-              echo "::error::served artifact $url returned HTTP $code (want 200) — possible poisoned edge cache entry"
+          probe_artifact_url() {
+            url="$1"
+            samples="$2"
+            label="$3"
+            ok=0
+            http_bad=0
+            transport_bad=0
+            codes=""
+            transport_errors=""
+            for i in $(seq 1 "$samples"); do
+              err_file="$(mktemp)"
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url" 2>"$err_file")"
+              rc=$?
+              err="$(<"$err_file")"
+              rm -f "$err_file"
+              if [ "$rc" -ne 0 ] || [ "$code" = "000" ]; then
+                transport_bad=$((transport_bad + 1))
+                transport_errors="$transport_errors sample $i: curl exit $rc http $code${err:+ ($err)};"
+                continue
+              fi
+              codes="$codes$code "
+              if [ "$code" = "200" ]; then
+                ok=$((ok + 1))
+              else
+                http_bad=$((http_bad + 1))
+              fi
+            done
+            if [ "$http_bad" -gt 0 ]; then
+              echo "::error::$label artifact $url returned HTTP non-200 in $http_bad/$samples completed samples [$codes] — possible poisoned edge cache entry / blank front door for those visitors"
+              [ "$transport_bad" -gt 0 ] && echo "::warning::$label artifact $url also had transport errors in $transport_bad/$samples samples:$transport_errors"
               exit 1
             fi
-            echo "ok  $url -> 200"
+            if [ "$ok" -eq 0 ]; then
+              echo "::error::$label artifact $url had only transport errors in $transport_bad/$samples samples:$transport_errors"
+              exit 1
+            fi
+            if [ "$transport_bad" -gt 0 ]; then
+              echo "::warning::$label artifact $url had transport errors in $transport_bad/$samples samples after retries:$transport_errors"
+            fi
+            echo "ok  $url -> 200 on $ok/$samples completed samples"
+          }
+          wasm_url="$E2E_BASE_URL$(dirname "$glue")/crossword-web_bg.wasm"
+          for url in "$E2E_BASE_URL$glue" "$wasm_url"; do
+            probe_artifact_url "$url" 3 staging
           done
       - name: Install deps
         working-directory: e2e
@@ -375,7 +416,7 @@ jobs:
       # Runs on the same triggers as the rest of the canary.
       - name: Probe production's served bundle
         env:
-          PROD_URL: https://crosswords.casazza.io
+          PROD_URL: ${{ inputs.prod_url || 'https://crosswords.casazza.io' }}
         # Explicit bash. This job has no `container:`, so GitHub already
         # defaults to bash and this step is not currently broken — but the two
         # steps below it are one `container:` line away from the same
@@ -400,17 +441,49 @@ jobs:
           # PoP (observed: 404 from SEA, 200 from PDX), so a single request is a
           # coin flip and would make this alarm useless. 10 samples from one
           # runner reliably catches a PoP split.
-          for url in "$PROD_URL$glue" "$PROD_URL$(dirname "$glue")/crossword-web_bg.wasm"; do
+          probe_artifact_url() {
+            url="$1"
+            samples="$2"
+            label="$3"
+            ok=0
+            http_bad=0
+            transport_bad=0
             codes=""
-            for _ in $(seq 1 10); do
-              codes="$codes$(curl -sS -o /dev/null -w '%{http_code} ' --max-time 60 "$url")"
+            transport_errors=""
+            for i in $(seq 1 "$samples"); do
+              err_file="$(mktemp)"
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url" 2>"$err_file")"
+              rc=$?
+              err="$(<"$err_file")"
+              rm -f "$err_file"
+              if [ "$rc" -ne 0 ] || [ "$code" = "000" ]; then
+                transport_bad=$((transport_bad + 1))
+                transport_errors="$transport_errors sample $i: curl exit $rc http $code${err:+ ($err)};"
+                continue
+              fi
+              codes="$codes$code "
+              if [ "$code" = "200" ]; then
+                ok=$((ok + 1))
+              else
+                http_bad=$((http_bad + 1))
+              fi
             done
-            bad="$(printf '%s' "$codes" | tr ' ' '\n' | grep -vc '^200$' || true)"
-            if [ "$bad" -gt 0 ]; then
-              echo "::error::production artifact $url returned non-200 in $bad/10 samples [$codes] — blank front door for those visitors"
+            if [ "$http_bad" -gt 0 ]; then
+              echo "::error::$label artifact $url returned HTTP non-200 in $http_bad/$samples completed samples [$codes] — possible poisoned edge cache entry / blank front door for those visitors"
+              [ "$transport_bad" -gt 0 ] && echo "::warning::$label artifact $url also had transport errors in $transport_bad/$samples samples:$transport_errors"
               exit 1
             fi
-            echo "ok  $url -> 200 on 10/10"
+            if [ "$ok" -eq 0 ]; then
+              echo "::error::$label artifact $url had only transport errors in $transport_bad/$samples samples:$transport_errors"
+              exit 1
+            fi
+            if [ "$transport_bad" -gt 0 ]; then
+              echo "::warning::$label artifact $url had transport errors in $transport_bad/$samples samples after retries:$transport_errors"
+            fi
+            echo "ok  $url -> 200 on $ok/$samples completed samples"
+          }
+          for url in "$PROD_URL$glue" "$PROD_URL$(dirname "$glue")/crossword-web_bg.wasm"; do
+            probe_artifact_url "$url" 10 production
           done
 
       # The probe above says "is production blank right now". This says "can it
@@ -430,7 +503,7 @@ jobs:
       # non-200, the trap is re-armed and this goes red before a visitor does.
       - name: Production origin must not cache 404s immutably
         env:
-          PROD_URL: https://crosswords.casazza.io
+          PROD_URL: ${{ inputs.prod_url || 'https://crosswords.casazza.io' }}
         # Explicit bash, same reason as the probe above.
         shell: bash
         run: |

@@ -126,8 +126,8 @@ jobs:
             transport_errors=""
             for i in $(seq 1 "$samples"); do
               err_file="$(mktemp)"
-              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url" 2>"$err_file")"
-              rc=$?
+              rc=0
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url" 2>"$err_file")" || rc=$?
               err="$(<"$err_file")"
               rm -f "$err_file"
               if [ "$rc" -ne 0 ] || [ "$code" = "000" ]; then
@@ -462,8 +462,8 @@ jobs:
             transport_errors=""
             for i in $(seq 1 "$samples"); do
               err_file="$(mktemp)"
-              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url" 2>"$err_file")"
-              rc=$?
+              rc=0
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url" 2>"$err_file")" || rc=$?
               err="$(<"$err_file")"
               rm -f "$err_file"
               if [ "$rc" -ne 0 ] || [ "$code" = "000" ]; then

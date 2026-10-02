@@ -400,7 +400,12 @@ if [[ -z "$ACTIVE_GAME_ID" ]]; then
     echo "  NOTE: the only active game is nearly finished ($CORRECT/$TOTAL correct,"
     echo "        $(( TOTAL - CORRECT )) open cells). Starting a fresh game instead."
   fi
-  CANDIDATE="$(jq -r '[ .[] | select(.type == "Game") ][0].id // empty' <<< "$list")"
+  # The parent puzzle id is `gameId` on EVERY row gameList.get returns, and the
+  # row `type` is only ever ActiveGame or CompletedGame — never "Game". So this
+  # used to filter `select(.type == "Game")`, which matches nothing at all, and
+  # the "no published unstarted Game" fallback below was unreachable dead code.
+  # It presented as an exhausted puzzle pool; it was this filter.
+  CANDIDATE="$(jq -r '[ .[] | .gameId // empty ] | unique | .[0] // empty' <<< "$list")"
   [[ -n "$CANDIDATE" ]] || die "no playable game for player 1 at $BASE_URL.
   The lobby has no in-progress ActiveGame and no published unstarted Game, so
   there is nothing to soak. Publish a Game (or seed one) and re-run. Do not

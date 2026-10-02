@@ -386,26 +386,33 @@ test.describe("four-player multiplayer soak", () => {
       console.log(`soak board: ACTIVE_GAME_ID=${soak.activeGameId} (pinned)`);
     } else {
       const fresh = await trpcPost(soak.contexts[0].request, "gameList.get", {});
-      const candidates: Array<{ id: string; title?: string; clues?: number }> =
+      // `gameList.get` returns a MIX — ActiveGame, CompletedGame and available
+      // rows all carry `type`, and the PARENT puzzle is `gameId` while `id` is
+      // the caller's own game/attempt. `activeGame.start` takes the parent
+      // `gameId`, so passing `id` returns "Game not found".
+      const rows: Array<{ type?: string; gameId?: string; game?: { title?: string }; clues?: number }> =
         fresh.data ?? [];
+      // Skip ActiveGame rows: those are already in progress, i.e. exactly the
+      // partly-solved boards this path exists to avoid.
+      const candidates = rows.filter((r) => r.type !== "ActiveGame" && r.gameId);
       // Most clues first: a full board is what makes parallel play meaningful.
       candidates.sort((a, b) => (b.clues ?? 0) - (a.clues ?? 0));
       const chosen = candidates[0];
       if (chosen) {
         const started = await trpcPost(soak.contexts[0].request, "activeGame.start", {
-          gameId: chosen.id,
+          gameId: chosen.gameId,
         });
         if (started.ok && started.data?.id) {
           soak.activeGameId = started.data.id;
           console.log(
-            `soak board: started a FRESH game ${chosen.id}` +
-              ` ("${chosen.title ?? "?"}", ${chosen.clues ?? "?"} clues) -> ${soak.activeGameId}`,
+            `soak board: started game ${chosen.gameId}` +
+              ` ("${chosen.game?.title ?? "?"}", ${chosen.clues ?? "?"} clues) -> ${soak.activeGameId}`,
           );
         } else {
           console.log(`soak board: start failed (${started.error}); falling back to lobby`);
         }
       } else {
-        console.log("soak board: no unstarted published games; falling back to lobby");
+        console.log("soak board: no candidate games; falling back to lobby");
       }
     }
   });
@@ -415,20 +422,21 @@ test.describe("four-player multiplayer soak", () => {
     // There was no way to do this before `activeGame.abandon` existed. Every
     // run started a game that only `complete` could remove, so an aborted run
     // left an immortal ActiveGame — and because `start` is idempotent per
-    // (gameId, caller), that user could never open that game again. It is not
-    // theoretical: the bot accounts exhausted staging's ENTIRE pool of
-    // published games, which is why the fresh-game path could not find
-    // anything to start.
+    // (gameId, caller), that account could never open that puzzle again. Not
+    // theoretical: the bot accounts exhausted staging's whole pool of
+    // published games, which is why the fresh-game path found nothing to start.
     if (soak.activeGameId) {
-      const gone = await trpcPost(request, "activeGame.get", { id: soak.activeGameId });
-      if (!gone.ok) {
+      // A completed game makes `get` answer with an EMPTY object rather than
+      // an error, so existence is "the payload carries a gameId".
+      const now = await trpcPost(request, "activeGame.get", { id: soak.activeGameId });
+      if (!now.ok || !now.data?.id) {
         console.log(`soak teardown: game ${soak.activeGameId} already gone (completed)`);
       } else {
         const dropped = await trpcPost(request, "activeGame.abandon", { id: soak.activeGameId });
         const msg = dropped.ok
           ? `soak teardown: abandoned the unfinished game ${soak.activeGameId}`
           : `soak teardown: FAILED to abandon ${soak.activeGameId} (${dropped.error}) — ` +
-            `it will stay locked for this account until finished by hand`;
+            `it stays locked for this account until finished by hand`;
         console.log(msg);
         soak.leak.push(msg);
       }

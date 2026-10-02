@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.89](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.88...v0.1.89) - 2026-10-02
+
+### Fixed
+
+- *(ci)* pin bash on the e2e-canary steps that are bashisms [DEF-103] (#212)
+
+### Other
+
+- changelog for v0.1.88 [skip ci]
+
+
 ## [0.1.88](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.87...v0.1.88) - 2026-10-02
 
 ### Fixed

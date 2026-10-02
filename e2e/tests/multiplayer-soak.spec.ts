@@ -409,32 +409,28 @@ test.describe("four-player multiplayer soak", () => {
       }
     }
   });
-
   test.afterAll(async ({ request }) => {
-    // Teardown: report any game this run created but did not finish.
+    // Teardown: actually clean up the game this run started.
     //
-    // There is no delete/abandon procedure — the router exposes exactly
-    // get, getStartDetails, start, join, addActions, publishPresence,
-    // complete — so a run aborted before the completion step leaves its
-    // ActiveGame behind. Completing a puzzle deletes the row, so the happy
-    // path leaves nothing; only an aborted or failing run leaks, and it leaks
-    // silently until the pool of unused games is exhausted.
-    //
-    // So this does not pretend to clean up. It NAMES the leak, so a run that
-    // did not finish says so out loud instead of looking green.
+    // There was no way to do this before `activeGame.abandon` existed. Every
+    // run started a game that only `complete` could remove, so an aborted run
+    // left an immortal ActiveGame — and because `start` is idempotent per
+    // (gameId, caller), that user could never open that game again. It is not
+    // theoretical: the bot accounts exhausted staging's ENTIRE pool of
+    // published games, which is why the fresh-game path could not find
+    // anything to start.
     if (soak.activeGameId) {
-      try {
-        const still = await trpcPost(request, "activeGame.get", { id: soak.activeGameId });
-        if (still.ok) {
-          const msg =
-            `LEAKED GAME: ${soak.activeGameId} still exists — this run did not reach ` +
-            `completion, and the product has no delete/abandon procedure to clean it up. ` +
-            `It will persist until finished by hand.`;
-          console.log(msg);
-          if (soak.leak) soak.leak.push(msg);
-        }
-      } catch {
-        // Nothing observable to report; the contexts are closing anyway.
+      const gone = await trpcPost(request, "activeGame.get", { id: soak.activeGameId });
+      if (!gone.ok) {
+        console.log(`soak teardown: game ${soak.activeGameId} already gone (completed)`);
+      } else {
+        const dropped = await trpcPost(request, "activeGame.abandon", { id: soak.activeGameId });
+        const msg = dropped.ok
+          ? `soak teardown: abandoned the unfinished game ${soak.activeGameId}`
+          : `soak teardown: FAILED to abandon ${soak.activeGameId} (${dropped.error}) — ` +
+            `it will stay locked for this account until finished by hand`;
+        console.log(msg);
+        soak.leak.push(msg);
       }
     }
 

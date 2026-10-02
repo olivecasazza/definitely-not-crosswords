@@ -14,6 +14,7 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
         "activeGame.addActions" => Some(add_actions(input, ctx).await),
         "activeGame.publishPresence" => Some(publish_presence(input, ctx).await),
         "activeGame.complete" => Some(complete(input, ctx).await),
+        "activeGame.abandon" => Some(abandon(input, ctx).await),
         _ => None,
     }
 }
@@ -895,10 +896,10 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing id".to_string())?;
 
-    // DEF-282. Take the game's write lock BEFORE the existence checks and hold
-    // it through the commit below.
+    // DEF-282. Take the game's write lock BEFORE the existence checks and
+    // hold it through the commit below.
     //
-    // These two reads used to run on the pool with no lock between them and
+    // These two reads used to run on the pool with nothing between them and
     // the transaction that deletes ActiveGame. Four members reaching the
     // results screen together therefore all passed "am I a member?" and all
     // saw the ActiveGame, then each opened its own transaction and each
@@ -907,19 +908,10 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // broadcasts for a single solved board.
     //
     // Under the lock the losers block, then find the ActiveGame already gone
-    // and are refused, so exactly one call can win. Same single-key advisory
-    // lock as `add_actions`, so a game is never locked in two orders.
-    let mut tx = ctx
-        .pool
-        .begin()
-        .await
-        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
+    // and are refused, so exactly one call can win.
+    let mut tx = begin_game_write(ctx, active_game_id).await?;
 
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-        .bind(format!("activeGame:write:{active_game_id}"))
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| sanitised_db_error("serialise completion of this game", &e))?;
+
 
     // Membership check: only a member of the active game may complete it
     // (this is destructive — it deletes the ActiveGame and cascades GameActions).
@@ -1092,4 +1084,75 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         completed_game_id: completed_id.clone(),
     });
     Ok(json!({ "id": completed_id }))
+}
+
+/// activeGame.abandon — protected.
+///
+/// Delete an unfinished active game. The counterpart to `complete`: `complete`
+/// records a win, `abandon` discards the attempt, and both remove the
+/// ActiveGame (cascading GameActions).
+///
+/// This exists because without it a started game is immortal. `activeGame.start`
+/// is idempotent per (gameId, caller), so a user who starts a game and walks
+/// away can never start that game again — the row is the only thing marking
+/// it as taken, and only completing it removed it. That is not theoretical:
+/// the four-player soak exhausted staging's entire pool of published games
+/// because every run started one and none could ever be released.
+///
+/// Gate: any member, matching `complete`. Both are destructive and both are
+/// scoped by membership today; adding an owner-only gate here would make
+/// abandon stricter than complete, and a game nobody can abandon is the
+/// situation this fixes. Worth revisiting if "any member may destroy a shared
+/// game" turns out to be wrong.
+///
+/// Locked with the same per-game advisory lock, so an abandon cannot interleave
+/// with a completion or a batch of cell writes and leave a half-deleted game.
+async fn abandon(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let user = match ctx.require_user() {
+        Ok(u) => u,
+        Err(e) => return Err(e),
+    };
+
+    let active_game_id = input
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing id".to_string())?;
+
+    let mut tx = begin_game_write(ctx, active_game_id).await?;
+
+    let is_member = sqlx::query(
+        r#"SELECT 1 FROM "GameMember" WHERE "activeGameId" = $1 AND "userId" = $2 LIMIT 1"#,
+    )
+    .bind(active_game_id)
+    .bind(&user.id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| sanitised_db_error("check membership", &e))?
+    .is_some();
+    if !is_member {
+        return Err("FORBIDDEN".to_string());
+    }
+
+    let deleted = sqlx::query(r#"DELETE FROM "ActiveGame" WHERE id = $1"#)
+        .bind(active_game_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| sanitised_db_error("abandon the active game", &e))?;
+
+    if deleted.rows_affected() == 0 {
+        return Err("Active game not found".to_string());
+    }
+
+    // Durable before it is announced, same rule as add_actions: publishing
+    // first would let a subscriber read a game that a rollback undid.
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("abandon the active game", &e))?;
+
+    // Subscribers need to know, or a connected client sits on a board that no
+    // longer exists and keeps typing into it.
+    ctx.events.publish(crossword_db::AppEvent::GameAbandoned {
+        active_game_id: active_game_id.to_string(),
+    });
+    Ok(json!({ "abandoned": true }))
 }

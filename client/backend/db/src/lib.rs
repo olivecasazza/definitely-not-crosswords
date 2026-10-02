@@ -117,6 +117,12 @@ pub enum AppEvent {
         active_game_id: String,
         completed_game_id: String,
     },
+    /// An unfinished active game was discarded via `activeGame.abandon`.
+    /// Subscribers need this or a client sits on a board that no longer exists,
+    /// still typing into it.
+    GameAbandoned {
+        active_game_id: String,
+    },
     /// Ephemeral co-op presence: which clue a member is focused on right now.
     /// `number`/`direction` are `None` when the player clears their selection.
     /// Not persisted — broadcast-only, fan-out via `activeGame.onPresence`.

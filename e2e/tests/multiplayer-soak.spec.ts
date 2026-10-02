@@ -164,6 +164,49 @@ async function signInDirect(page: Page, email: string, password: string) {
  * `minOpen` unsolved clues wins. Player 1's library accumulates near-finished
  * games, so blindly taking the first card can leave nothing to play.
  */
+/**
+ * Start a puzzle this account has no live game for, so each run gets a board
+ * nobody has already ground down. Returns "" when none is free, which the
+ * caller treats as "fall back to the lobby" rather than failing.
+ *
+ * `gameList.get` is a MIX, not a clean list: rows carry `type` of `ActiveGame`
+ * or `CompletedGame`, and the PARENT puzzle is `gameId` while `id` is the
+ * caller's own attempt. `activeGame.start` takes the parent `gameId`, so
+ * passing `id` returns "Game not found". `ActiveGame` rows are exactly the
+ * in-progress boards this exists to avoid, so they are filtered out; the
+ * remaining distinct parents are free to start.
+ *
+ * MUST be called with an authenticated context — `context.request` rides the
+ * context's cookie jar, and an unauthenticated call returns an empty list.
+ */
+async function startFreshGame(page: Page): Promise<string> {
+  const listed = await trpcPost(page.request, "gameList.get", {});
+  const rows: Array<{ type?: string; gameId?: string; game?: { title?: string }; clues?: number }> =
+    listed.data ?? [];
+  const free = new Map<string, { clues: number; title: string }>();
+  for (const r of rows) {
+    if (r.type === "ActiveGame" || !r.gameId) continue;
+    if (!free.has(r.gameId)) {
+      free.set(r.gameId, { clues: r.clues ?? 0, title: r.game?.title ?? "?" });
+    }
+  }
+  const ranked = [...free.entries()].sort((a, b) => b[1].clues - a[1].clues);
+  for (const [gameId, meta] of ranked) {
+    const started = await trpcPost(page.request, "activeGame.start", { gameId });
+    if (started.ok && started.data?.id) {
+      console.log(
+        `soak board: started a FRESH game ${gameId} ("${meta.title}", ${meta.clues} clues)` +
+          ` -> ${started.data.id}`,
+      );
+      return started.data.id;
+    }
+    console.log(`soak board: start(${gameId}) failed: ${started.error}`);
+  }
+  console.log("soak board: no free puzzle to start; falling back to the lobby");
+  return "";
+}
+
+
 async function openBoard(page: Page, minOpen: number): Promise<string> {
   const rows = () =>
     page.locator('div[style*="cursor: pointer"]').and(page.locator('[aria-label*="— "]'));
@@ -367,56 +410,9 @@ test.describe("four-player multiplayer soak", () => {
       await Promise.all(soak.contexts.map((c) => c.close()));
       throw err;
     }
-
-    // Start a FRESH game rather than resuming one.
-    //
-    // Every soak run permanently advances the board it plays: its letters are
-    // committed. Resuming "the in-progress game" therefore handed each run a
-    // board the PREVIOUS runs had already ground down — one recording began
-    // with the game essentially finished before the players had even joined.
-    // That starves the part that matters: four players need a full board to
-    // have anywhere to take parallel turns.
-    //
-    // `activeGame.start` is idempotent per (gameId, caller), so this must pick
-    // a published Game this account has NOT already started; `gameList.get`
-    // returns exactly those. ACTIVE_GAME_ID still wins when set — CI pins it
-    // deliberately, and a pinned board is a known quantity.
-    if (process.env.ACTIVE_GAME_ID) {
-      soak.activeGameId = process.env.ACTIVE_GAME_ID;
-      console.log(`soak board: ACTIVE_GAME_ID=${soak.activeGameId} (pinned)`);
-    } else {
-      const fresh = await trpcPost(soak.contexts[0].request, "gameList.get", {});
-      // `gameList.get` returns a MIX — ActiveGame, CompletedGame and available
-      // rows all carry `type`, and the PARENT puzzle is `gameId` while `id` is
-      // the caller's own game/attempt. `activeGame.start` takes the parent
-      // `gameId`, so passing `id` returns "Game not found".
-      const rows: Array<{ type?: string; gameId?: string; game?: { title?: string }; clues?: number }> =
-        fresh.data ?? [];
-      // Skip ActiveGame rows: those are already in progress, i.e. exactly the
-      // partly-solved boards this path exists to avoid.
-      const candidates = rows.filter((r) => r.type !== "ActiveGame" && r.gameId);
-      // Most clues first: a full board is what makes parallel play meaningful.
-      candidates.sort((a, b) => (b.clues ?? 0) - (a.clues ?? 0));
-      const chosen = candidates[0];
-      if (chosen) {
-        const started = await trpcPost(soak.contexts[0].request, "activeGame.start", {
-          gameId: chosen.gameId,
-        });
-        if (started.ok && started.data?.id) {
-          soak.activeGameId = started.data.id;
-          console.log(
-            `soak board: started game ${chosen.gameId}` +
-              ` ("${chosen.game?.title ?? "?"}", ${chosen.clues ?? "?"} clues) -> ${soak.activeGameId}`,
-          );
-        } else {
-          console.log(`soak board: start failed (${started.error}); falling back to lobby`);
-        }
-      } else {
-        console.log("soak board: no candidate games; falling back to lobby");
-      }
-    }
   });
-  test.afterAll(async ({ request }) => {
+
+  test.afterAll(async () => {
     // Teardown: actually clean up the game this run started.
     //
     // There was no way to do this before `activeGame.abandon` existed. Every
@@ -425,14 +421,22 @@ test.describe("four-player multiplayer soak", () => {
     // (gameId, caller), that account could never open that puzzle again. Not
     // theoretical: the bot accounts exhausted staging's whole pool of
     // published games, which is why the fresh-game path found nothing to start.
-    if (soak.activeGameId) {
+    // Abandon through a PLAYER's context, not the `request` fixture: the
+    // fixture is an unauthenticated APIRequestContext, so every call came back
+    // UNAUTHORIZED and the cleanup silently never happened. Context 0 belongs
+    // to player 1, who owns the game we started, and it is still open here —
+    // the close happens below.
+    const owner = soak.contexts[0];
+    if (soak.activeGameId && owner) {
       // A completed game makes `get` answer with an EMPTY object rather than
       // an error, so existence is "the payload carries a gameId".
-      const now = await trpcPost(request, "activeGame.get", { id: soak.activeGameId });
+      const now = await trpcPost(owner.request, "activeGame.get", { id: soak.activeGameId });
       if (!now.ok || !now.data?.id) {
         console.log(`soak teardown: game ${soak.activeGameId} already gone (completed)`);
       } else {
-        const dropped = await trpcPost(request, "activeGame.abandon", { id: soak.activeGameId });
+        const dropped = await trpcPost(owner.request, "activeGame.abandon", {
+          id: soak.activeGameId,
+        });
         const msg = dropped.ok
           ? `soak teardown: abandoned the unfinished game ${soak.activeGameId}`
           : `soak teardown: FAILED to abandon ${soak.activeGameId} (${dropped.error}) — ` +
@@ -468,9 +472,33 @@ test.describe("four-player multiplayer soak", () => {
 
       await test.step("open the shared game and join the other three", async () => {
         const [p1, ...rest] = pages;
+        // Fresh board when we can get one. This runs HERE, after sign-in, not
+        // in beforeAll: `context.request` rides the context's cookie jar, and
+        // before the players authenticate there is no session, so an earlier
+        // attempt here silently got an empty list and fell back to the lobby.
+        //
+        // Every soak run permanently commits its letters, so resuming "the
+        // in-progress game" hands each run a board PREVIOUS runs ground down —
+        // which is why a recording once began with the game essentially
+        // finished. Four players need a full board to take parallel turns on.
+        //
+        // ACTIVE_GAME_ID still wins: CI pins it deliberately, and a pinned
+        // board is a known quantity.
+        if (process.env.ACTIVE_GAME_ID) {
+          activeGameId = process.env.ACTIVE_GAME_ID;
+          soak.activeGameId = activeGameId;
+          console.log(`soak board: ACTIVE_GAME_ID=${activeGameId} (pinned)`);
+        } else {
+          activeGameId = await startFreshGame(p1);
+          soak.activeGameId = activeGameId;
+        }
         // Headroom: four plays plus an unsolved ACROSS/DOWN crossing pair.
-        activeGameId = await openBoard(p1, 8);
+        // `openBoard` navigates player 1 itself; the fresh path does not, so
+        // without this player 1 sits on the lobby while the others join a game
+        // it never opened — which surfaced as "player 1 board cells not found".
+        if (!activeGameId) activeGameId = await openBoard(p1, 8);
         const gameUrl = `${soak.baseURL}/game/${activeGameId}`;
+        await p1.goto(gameUrl);
         for (const [n, p] of rest.entries()) {
           await p.goto(gameUrl);
           // "Join game" is optional — members of this active game don't see it.
@@ -840,7 +868,8 @@ test.describe("four-player multiplayer soak", () => {
           `the cell reflects exactly one of the two concurrent writes=${lastWriteWon}; ` +
           `previousState logged by the correct writer=${JSON.stringify(correctPrev)}, ` +
           `by the wrong writer=${JSON.stringify(wrongPrev)} ` +
-          `(both are read from a pre-batch snapshot, so the loser's is stale)`;
+          `(the loser's previousState is the cell as it stood before the winner's write, ` +
+          `which is what a serialised writer observes — see DEF-281)`;
         console.log(`CONTENTION: ${report}`);
         await testInfo.attach("crossing-cell-report.txt", {
           body: report,

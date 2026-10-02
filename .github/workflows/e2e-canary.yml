@@ -178,6 +178,12 @@ jobs:
       # exits non-zero on a partial state on purpose: a soak that ran against
       # three accounts is not a four-player result.
       - name: Reconcile accounts and provision a playable game
+        # Explicit bash, not GitHub's default. A `container:` job runs `run:`
+        # under `sh -e`, which on this image is dash: `set -o pipefail` aborts
+        # with "Illegal option" before the loop is ever entered, so this step
+        # failed on every dispatch regardless of account state. The indirect
+        # expansion `${!1:-}` below is a bashism too.
+        shell: bash
         run: |
           set -uo pipefail
           for pair in "E2E_EMAIL E2E_PASSWORD" "E2E_EMAIL_2 E2E_PASSWORD_2" \
@@ -291,6 +297,10 @@ jobs:
       # verification lives in checks and GHA keeps only non-Nix gates). The flake
       # supplies the pinned k6 + the scenario; the scenario needs the network.
       - name: Run k6 multiplayer load
+        # Explicit bash: this is a `container:` job, so GitHub would run it
+        # under `sh -e` and `set -o pipefail` below would abort with
+        # "Illegal option" instead of enforcing the threshold.
+        shell: bash
         run: |
           # stdout carries the Prometheus exposition format (handleSummary
           # returns it as `stdout`), so tee it to a file for the push step.
@@ -359,6 +369,12 @@ jobs:
       - name: Probe production's served bundle
         env:
           PROD_URL: https://crosswords.casazza.io
+        # Explicit bash. This job has no `container:`, so GitHub already
+        # defaults to bash and this step is not currently broken — but the two
+        # steps below it are one `container:` line away from the same
+        # "Illegal option -o pipefail" death as multiplayer-soak, and the
+        # default flips silently with that line. Pinned, not implicit.
+        shell: bash
         run: |
           set -uo pipefail
           index="$(curl -fsS --max-time 30 "$PROD_URL/")" || {
@@ -408,6 +424,8 @@ jobs:
       - name: Production origin must not cache 404s immutably
         env:
           PROD_URL: https://crosswords.casazza.io
+        # Explicit bash, same reason as the probe above.
+        shell: bash
         run: |
           set -uo pipefail
           probe="/_assets/$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')/crossword-web.js"

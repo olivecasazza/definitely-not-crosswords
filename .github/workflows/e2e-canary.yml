@@ -18,6 +18,10 @@ on:
         description: Production canary URL override for forced-failure verification
         required: false
         type: string
+      prod_bundle_path:
+        description: Production bundle path override for forced-failure verification
+        required: false
+        type: string
 
 concurrency:
   group: e2e-canary
@@ -425,17 +429,23 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          index="$(curl -fsS --max-time 30 "$PROD_URL/")" || {
-            echo "::error::production index.html unreachable at $PROD_URL/"; exit 1; }
+          index=""
+          if [ -z "${{ inputs.prod_bundle_path }}" ]; then
+            index="$(curl -fsS --max-time 30 "$PROD_URL/")" || {
+              echo "::error::production index.html unreachable at $PROD_URL/"; exit 1; }
+          fi
           # Same anchor as the staging probe, for the same reason: the boot
           # card's CSS comment in <head> names a `/_assets/<64-hex>/…` example
           # before the real <script> tag, and an unanchored match probes a URL
           # that never existed. That is how a green production probe became a
           # permanent red one the moment this build shipped.
-          glue="$(printf '%s' "$index" | grep -o '/_assets/[0-9a-f]\{16\}/crossword-web\.js' | head -1 || true)"
+          glue="${{ inputs.prod_bundle_path }}"
           if [ -z "$glue" ]; then
-            echo "::error::no /_assets/<16-hex>/crossword-web.js in production index.html — bundle layout changed; update this check"
-            exit 1
+            glue="$(printf '%s' "$index" | grep -o '/_assets/[0-9a-f]\{16\}/crossword-web\.js' | head -1 || true)"
+            if [ -z "$glue" ]; then
+              echo "::error::no /_assets/<16-hex>/crossword-web.js in production index.html — bundle layout changed; update this check"
+              exit 1
+            fi
           fi
           # Sample repeatedly instead of once. A poisoned edge entry splits by
           # PoP (observed: 404 from SEA, 200 from PDX), so a single request is a

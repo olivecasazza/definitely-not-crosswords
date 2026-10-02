@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.86](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.85...v0.1.86) - 2026-10-02
+
+### Fixed
+
+- *(load)* correct the crossing-conflict invariant; it measured the wrong thing
+
+### Other
+
+- changelog for v0.1.85 [skip ci]
+
+
 ## [0.1.85](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.84...v0.1.85) - 2026-10-02
 
 ### Fixed

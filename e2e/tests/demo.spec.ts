@@ -403,13 +403,16 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       await dwell(page, 2400, 3400); // let the red sink in
 
       // Beat 3 — correct it: retype over the boxes, green cells, entry clears.
-      await humanClick(page, page.locator(".cw-letter-input").first());
-      await humanTypeLetters(page, hitClue.answer);
-      const typed = await page
-        .locator(".cw-letter-input")
-        .evaluateAll((els) =>
-          els.map((e) => (e as HTMLInputElement).value).join(""),
-        );
+      const hitInputs = page.locator(".cw-letter-input");
+      await humanClick(page, hitInputs.first());
+      for (const ch of hitClue.answer) {
+        await page.keyboard.press("Backspace");
+        await page.keyboard.type(ch.toUpperCase());
+        await page.waitForTimeout(rand(70, 210));
+      }
+      const typed = await hitInputs.evaluateAll((els) =>
+        els.map((e) => (e as HTMLInputElement).value).join(""),
+      );
       expect(typed.toUpperCase()).toBe(hitClue.answer.toUpperCase());
       await dwell(page, 300, 800);
       await submitGuess(page);

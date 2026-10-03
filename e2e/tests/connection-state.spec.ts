@@ -376,6 +376,45 @@ test("a reconnect reconciles the board without a reload (DEF-175 c3)", async ({ 
 // 1.4.11 asks 3:1 of a focus indicator. Both numbers are asserted as they are,
 // not rounded toward the fix.
 
+type AXNode = {
+  nodeId: string;
+  role?: { value?: string };
+  name?: { value?: string };
+  childIds?: string[];
+};
+
+/**
+ * The whole accessibility tree, via CDP.
+ *
+ * DEF-215: the question these assertions answer is not "is the text in the
+ * DOM" but "does a screen reader land on it". Only the AX tree answers that,
+ * so the tests read the AX tree rather than inspecting markup — a node removed
+ * from the tree by `display: none` still passes every DOM query.
+ */
+async function fullAXTree(page: Page): Promise<AXNode[]> {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { nodes } = (await session.send("Accessibility.getFullAXTree")) as { nodes: AXNode[] };
+    return nodes;
+  } finally {
+    await session.detach();
+  }
+}
+
+/** Whether `predicate` holds anywhere at or under `node`. */
+function hasSelfOrDescendant(
+  nodesById: Map<string, AXNode>,
+  node: AXNode,
+  predicate: (node: AXNode) => boolean,
+): boolean {
+  if (predicate(node)) return true;
+  for (const childId of node.childIds ?? []) {
+    const child = nodesById.get(childId);
+    if (child && hasSelfOrDescendant(nodesById, child, predicate)) return true;
+  }
+  return false;
+}
+
 /** A stale chip, with the name's own computed colour and the surface behind it. */
 async function firstChipBorderBottomStyle(page: Page) {
   return page.locator(".cw-chip").first().evaluate((chip) => getComputedStyle(chip).borderBottomStyle);
@@ -386,8 +425,23 @@ async function staleChip(page: Page) {
     const chip = document.querySelector<HTMLElement>(".cw-chip-stale");
     if (!chip) throw new Error("no .cw-chip-stale in the roster bar");
     const cs = getComputedStyle(chip);
+    const hidden = chip.querySelector<HTMLElement>(".cw-sr-only");
     return {
       text: (chip.textContent ?? "").trim(),
+      // DEF-215 A15: the visible text is the name, the tags and the clue ref.
+      // The hidden last-known span must not appear here, so it is subtracted
+      // back out of textContent and compared against the live chip.
+      visibleText: [...chip.childNodes]
+        .filter((node) => !(node instanceof HTMLElement && node.classList.contains("cw-sr-only")))
+        .map((node) => node.textContent ?? "")
+        .join("")
+        .trim(),
+      height: chip.getBoundingClientRect().height,
+      // `display: none` would also pass a textContent check — the whole point of
+      // .cw-sr-only is that it stays in the AX tree — so the hiding mechanism
+      // itself is asserted.
+      hiddenPosition: hidden ? getComputedStyle(hidden).position : "",
+      hiddenDisplay: hidden ? getComputedStyle(hidden).display : "",
       colour: cs.color,
       background: cs.backgroundColor,
       borderBottomStyle: cs.borderBottomStyle,
@@ -411,6 +465,7 @@ async function staleRingCell(page: Page) {
       opacity: cs.opacity,
       ring: cs.boxShadow,
       insetBands: cs.boxShadow.match(/inset/g)?.length ?? 0,
+      aria: cell.getAttribute("aria-label") ?? "",
     };
   });
 }
@@ -458,13 +513,19 @@ async function tabIntoBoard(page: Page): Promise<boolean> {
   return false;
 }
 
-test("a stale roster chip keeps its name above AA in both themes (DEF-188 A1)", async ({
+test("a stale roster chip keeps its name above AA and announces last-known state (DEF-188 A1, DEF-215 A13/A15)", async ({
   page,
 }) => {
   const sockets = await trapSockets(page);
   if (!(await openPlayScreen(page))) {
     test.skip(true, "no playable game available on staging");
   }
+  // Snapshot the live chip BEFORE going stale: A15 is a before/after
+  // comparison, so the baseline has to be the unhidden rendering.
+  const liveChip = await page.locator(".cw-chip").first().evaluate((chip) => ({
+    visibleText: (chip.textContent ?? "").trim(),
+    height: chip.getBoundingClientRect().height,
+  }));
   await inEachTheme(page, async (theme) => {
     expect(await firstChipBorderBottomStyle(page), `live chip underline in ${theme}`).toBe("solid");
   });
@@ -474,9 +535,34 @@ test("a stale roster chip keeps its name above AA in both themes (DEF-188 A1)", 
   await sockets.drop();
   await expect(page.locator(".cw-chip-stale").first()).toBeVisible({ timeout: 10_000 });
 
+  // DEF-215 A13: the words have to reach the AX tree. The chip's `title` is
+  // already in there, but as a `description` on a nameless `generic`, which no
+  // screen reader announces — so the assertion is on a real StaticText.
+  const axTree = await fullAXTree(page);
+  const nodesById = new Map(axTree.map((node) => [node.nodeId, node]));
+  const isLastKnownText = (node: AXNode) =>
+    node.role?.value === "StaticText" && /last known position/i.test(node.name?.value ?? "");
+  expect(
+    axTree.some(isLastKnownText),
+    "no StaticText node exposes the stale chip's last-known text",
+  ).toBe(true);
+  expect(
+    axTree.some((node) => hasSelfOrDescendant(nodesById, node, isLastKnownText)),
+    "the stale-chip StaticText is not reachable under any AX parent",
+  ).toBe(true);
+
   await inEachTheme(page, async (theme) => {
     const chip = await staleChip(page);
     expect(chip.text, `no name in the stale chip (${theme})`).not.toBe("");
+    // A15: the hidden span must be invisible to layout in BOTH directions —
+    // same words on screen, same box. A chip that grew would reflow the roster
+    // at exactly the moment a player is reading it during an outage.
+    expect(chip.visibleText, `visible chip text changed (${theme})`).toBe(liveChip.visibleText);
+    expect(chip.height, `hidden stale text changed chip height (${theme})`).toBe(liveChip.height);
+    // Clipped, not display:none — display:none would pass every text assertion
+    // above while deleting the node from the tree they exist to protect.
+    expect(chip.hiddenPosition, `hidden stale text is not clipped (${theme})`).toBe("absolute");
+    expect(chip.hiddenDisplay, `hidden stale text uses display:none (${theme})`).not.toBe("none");
     expect(chip.opacity, `stale chip is dimmed by opacity (${theme})`).toBe("1");
     expect(chip.borderBottomStyle, `stale chip underline in ${theme}`).toBe("dashed");
     expect(
@@ -486,7 +572,7 @@ test("a stale roster chip keeps its name above AA in both themes (DEF-188 A1)", 
   });
 });
 
-test("a stale presence ring never dims the letter it surrounds (DEF-188 A2)", async ({
+test("a stale presence ring never dims the letter it surrounds and announces last-known state (DEF-188 A2, DEF-215 A14/A16)", async ({
   page,
 }) => {
   if (!EMAIL2 || !PASSWORD2) {
@@ -525,6 +611,18 @@ test("a stale presence ring never dims the letter it surrounds (DEF-188 A2)", as
     const cell = await staleRingCell(page);
     expect(cell.opacity, `stale ring cell is dimmed by opacity (${theme})`).toBe("1");
     expect(cell.letter, `stale ring cell has no letter (${theme})`).not.toBe("");
+    // DEF-215 A14: the accessible name has to say the position is last-known,
+    // AND still answer "is this letter right?" — appending presence must not
+    // have displaced the state suffix that `title` could never override.
+    expect(cell.aria, `stale ring cell omits last-known state (${theme})`).toMatch(
+      /last known/i,
+    );
+    expect(cell.aria, `stale ring cell dropped answer state (${theme})`).toMatch(
+      /correct|incorrect|in progress/i,
+    );
+    // A16: unchanged ring geometry. The live/stale inset-band counts are the
+    // DEF-200 A10 assertion, kept here so this change cannot quietly restyle
+    // the ring it only ever meant to describe.
     expect(cell.insetBands, `stale ring inset bands in ${theme}: ${cell.ring}`).toBe(2);
     expect(
       contrast(cell.colour, cell.background),

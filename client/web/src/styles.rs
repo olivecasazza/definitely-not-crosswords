@@ -343,6 +343,12 @@ a { color: inherit; text-decoration: none; }
   display: inline-flex; align-items: center; justify-content: center;
   font-size: var(--fs-xs); font-family: var(--mono, monospace); flex-shrink: 0; }
 
+/* Visually hidden, still in the accessibility tree. `display: none` and
+   `visibility: hidden` both REMOVE the node from the AX tree, which is exactly
+   the gap this exists to close (DEF-215), so the text is clipped instead of
+   suppressed. */
+.cw-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
 .square-pulse { display: grid; grid-template-columns: repeat(5, 6px); gap: 3px; width: fit-content; }
 .square-pulse-cell { width: 6px; height: 6px; background: var(--text-secondary);
   animation: square-pulse 1.2s ease-in-out infinite; }

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.96](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.95...v0.1.96) - 2026-10-03
+
+### Fixed
+
+- *(load)* k6 setup used the same dead filter as the admin bot
+
+### Other
+
+- changelog for v0.1.95 [skip ci]
+
+
 ## [0.1.95](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.94...v0.1.95) - 2026-10-03
 
 ### Added

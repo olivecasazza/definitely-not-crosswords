@@ -861,27 +861,44 @@ test.describe("four-player multiplayer soak", () => {
         }
       };
 
-      // ── 3. Live action propagation ──────────────────────────────────────
-      await test.step("player 1's solve reaches another board", async () => {
-        const before = await Promise.all(pages.map(correctCount));
-        await solveClue(pages[0], firstClue);
-        await propagate(0, before);
-      });
+      // ── 3. The four players actually PLAY ──────────────────────────────
+      // Previously this was four solves: one for player 1, then one each for
+      // players 2-4. Everything else on the board was filled by four
+      // `addActions` calls in the completion step, so a recording was a minute
+      // of setup and measurement followed by the whole crossword being played
+      // in about ten seconds — the interesting part was the smallest part.
+      //
+      // So the four players play in ROUNDS, all four solving a distinct clue
+      // at the same time, until the board is close enough to finished that the
+      // contention probe and the completion race still have open cells to work
+      // with. Concurrent per round, never serialised — that was the same
+      // `await`-inside-a-`for` defect, three times over.
+      const ROUNDS_MAX = 12;
+      const LEAVE_OPEN = 18; // clues still open for contention + completion
+      await test.step("the four players play together", async () => {
+        let played = 0;
+        for (let round = 0; round < ROUNDS_MAX; round++) {
+          await refreshOpen();
+          const playable = open.filter((c) => !taken.has(clueKey(c)) && c.answer);
+          if (playable.length <= LEAVE_OPEN || playable.length < ACCOUNTS.length) break;
 
-      // ── 4. Each of players 2–4 solves a distinct clue ───────────────────
-      // Concurrently, NOT one after another. The old loop awaited each player
-      // in turn, so on camera the four agents took strict sequential turns —
-      // which is not what a collaborative crossword looks like, and not what
-      // the presence/propagation assertions are meant to exercise. Claiming
-      // the clues up front keeps two players off the same one, then all three
-      // solve at once.
-      await test.step("players 2, 3 and 4 each solve a distinct clue", async () => {
-        for (const clue of picks) taken.add(clueKey(clue));
-        const before = await Promise.all(pages.map(correctCount));
-        await Promise.all(picks.map((clue, n) => solveClue(pages[n + 1], clue)));
-        for (let n = 0; n < picks.length; n++) {
-          await propagate(n + 1, before);
+          // One distinct clue per player so nobody races the same cell.
+          const batch = playable.slice(0, ACCOUNTS.length);
+          for (const clue of batch) taken.add(clueKey(clue));
+
+          const before = await Promise.all(pages.map(correctCount));
+          const started = Date.now();
+          await Promise.all(batch.map((clue, n) => solveClue(pages[n], clue)));
+          for (let n = 0; n < batch.length; n++) {
+            await propagate(n, before);
+          }
+          played += batch.length;
+          console.log(
+            `  round ${round + 1}: ${batch.length} players solved ` +
+              `${batch.map(clueKey).join(", ")} in ${Date.now() - started} ms`,
+          );
         }
+        console.log(`PLAY: ${played} clues solved through the UI across 4 players`);
       });
 
       await test.step("crossing-cell contention is observable", async () => {

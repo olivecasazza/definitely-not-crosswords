@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.97](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.96...v0.1.97) - 2026-10-03
+
+### Fixed
+
+- *(ci)* assert buildSha on :sha staging deploys instead of skipping [DEF-288] (#226)
+
+### Other
+
+- changelog for v0.1.96 [skip ci]
+- *(e2e)* let the four players actually play the board
+- *(e2e)* play before measuring, and show the final standings per player
+
+
 ## [0.1.96](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.95...v0.1.96) - 2026-10-03
 
 ### Fixed

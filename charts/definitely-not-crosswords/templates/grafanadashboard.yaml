@@ -130,8 +130,9 @@ spec:
   {{- /* Tags ride the same opt-in as nested folders: the default must render
          byte-identically to what shipped before tiering existed, so a CRD that
          rejects either field is never handed one. */}}
-  {{- if and $.Values.observability.grafanaDashboard.nestedFolders .tags }}
-  tags: [{{ $i := 0 }}{{ range $t := splitList "," . }}{{ if $i }}, {{ end }}{{ $t | quote }}{{ $i = add1 $i }}{{ end }}]
+  {{- $tagList := .tags | default "" }}
+  {{- if and $.Values.observability.grafanaDashboard.nestedFolders $tagList }}
+  tags: [{{ $i := 0 }}{{ range $t := splitList "," $tagList }}{{ if $i }}, {{ end }}{{ $t | quote }}{{ $i = add1 $i }}{{ end }}]
   {{- end }}
   datasources:
     - inputName: DS_PROMETHEUS

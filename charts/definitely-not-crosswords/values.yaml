@@ -266,6 +266,12 @@ observability:
     # (comma separated) — tags are what the search box filters on, folders are
     # what the sidebar nests, and they answer different questions.
     folder: "Applications"
+    # Set true to render each dashboard's own tier as a NESTED folder path
+    # ("Crosswords/Observability/Errors"). Defaults to FALSE: a nested path
+    # requires the cluster's Grafana operator to create the intermediate
+    # folders, and if it cannot, every GrafanaDashboard CR fails to apply at
+    # once — the whole dashboard set stops syncing, not just one.
+    nestedFolders: false
     # Leave true when dashboards are created outside the Grafana instance namespace.
     allowCrossNamespaceImport: true
     labels:

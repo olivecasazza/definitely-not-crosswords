@@ -109,12 +109,28 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "grafana"
-  # Per-dashboard tier wins; the chart-wide folder is the fallback so a
-  # dashboard added without a "folder" key still lands somewhere sensible
-  # instead of silently dropping out of the tree.
+  # NESTED FOLDERS ARE OPT-IN and default to OFF.
+  #
+  # Each dashboard carries a tier like "Crosswords/Observability/Errors",
+  # which renders as `folder: Crosswords/Observability/Errors`. A nested path
+  # only works if this cluster's Grafana operator can CREATE the intermediate
+  # folders — if it cannot, the GrafanaDashboard CR fails to apply and every
+  # dashboard stops syncing at once, which reads as the entire dashboard set
+  # regressing rather than as one bad resource.
+  #
+  # Operator capability is not verifiable from this repo, so the default
+  # restores exactly what shipped before tiering: a single folder from values.
+  # Enable with `nestedFolders: true` once the operator version is known good.
+  {{- if $.Values.observability.grafanaDashboard.nestedFolders }}
   folder: {{ (.folder | default $.Values.observability.grafanaDashboard.folder) | quote }}
+  {{- else }}
+  folder: {{ $.Values.observability.grafanaDashboard.folder | quote }}
+  {{- end }}
   uid: {{ .uid | quote }}
-  {{- with .tags }}
+  {{- /* Tags ride the same opt-in as nested folders: the default must render
+         byte-identically to what shipped before tiering existed, so a CRD that
+         rejects either field is never handed one. */}}
+  {{- if and $.Values.observability.grafanaDashboard.nestedFolders .tags }}
   tags: [{{ $i := 0 }}{{ range $t := splitList "," . }}{{ if $i }}, {{ end }}{{ $t | quote }}{{ $i = add1 $i }}{{ end }}]
   {{- end }}
   datasources:

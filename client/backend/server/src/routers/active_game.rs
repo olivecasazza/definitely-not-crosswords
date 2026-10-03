@@ -911,8 +911,6 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // and are refused, so exactly one call can win.
     let mut tx = begin_game_write(ctx, active_game_id).await?;
 
-
-
     // Membership check: only a member of the active game may complete it
     // (this is destructive — it deletes the ActiveGame and cascades GameActions).
     let is_member = sqlx::query(

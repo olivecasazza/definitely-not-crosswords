@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.95](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.94...v0.1.95) - 2026-10-03
+
+### Added
+
+- *(charts)* tier the Grafana dashboards into nested folders with tags
+
+### Fixed
+
+- *(scripts)* admin bot picked games with a filter that matched nothing
+
+### Other
+
+- changelog for v0.1.94 [skip ci]
+- *(e2e)* correct the game-selection fields for the fresh-board path
+- *(e2e)* fresh board per run — three auth/navigation bugs fixed
+- *(e2e)* genuinely fresh board, concurrent joins
+
+
 ## [0.1.94](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.93...v0.1.94) - 2026-10-02
 
 ### Fixed

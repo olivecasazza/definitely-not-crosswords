@@ -277,16 +277,26 @@ export function setup() {
     }
   }
   if (!activeGameId) {
-    const published = rows.find((row) => row.type === 'Game' && row.id);
+    // `gameList.get` returns a MIX: `type` is only ever `ActiveGame` or
+    // `CompletedGame` — never "Game", so this used to select
+    // `row.type === 'Game'` and matched nothing at all. It only surfaced when
+    // the caller had no live ActiveGame left to resume, which is exactly what
+    // happens once every game has been completed or abandoned.
+    //
+    // The parent puzzle id is `gameId` on EVERY row; `id` is the caller's own
+    // attempt. Start a fresh game on the first non-ActiveGame parent.
+    const published = rows.find((row) => row.type !== 'ActiveGame' && row.gameId);
     if (!published) {
       throw new Error('gameList.get returned no published game to start');
     }
-    const started = trpc(cookies[0], 'activeGame.start', { gameId: published.id });
+    const started = trpc(cookies[0], 'activeGame.start', { gameId: published.gameId });
     if (!started.data || !started.data.id) {
       throw new Error(`activeGame.start failed: ${trpcError(started.res)}`);
     }
     activeGameId = started.data.id;
-    gameId = published.id;
+    // The PARENT puzzle id, which is what `/api/grids/<gameId>` is keyed by.
+    // `published.id` is the caller's own attempt, not the parent.
+    gameId = published.gameId;
   }
 
   // Everyone joins before the scenarios begin, so `actions` and `presence` are

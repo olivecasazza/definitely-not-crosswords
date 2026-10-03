@@ -161,14 +161,24 @@ jobs:
               cfg=$(curl -s --max-time 15 "$BASE_URL/api/config" 2>/dev/null) || cfg=""
               # A release/tag deploy must be serving exactly that version. Continuous
               # staging deploys a :<sha> image while /api/config reports the crate
-              # version, so only assert the version when the tag is a version tag.
+              # version, so a version tag is asserted against "version" and a :<sha>
+              # tag against "buildSha" — both are assertions, neither is a skip.
               #
-              # A version MISMATCH is a retry condition, not a verdict — same bug
-              # the production probe had. The previous pod answers 200 for the
+              # The sha arm exists because skipping it made a green run meaningless.
+              # Every continuous deploy is a :<sha> tag, so the sha arm is the only
+              # one most runs ever take; with it skipped this step degenerated to
+              # "healthz == 200", which a SURVIVING PRE-FIX POD returns perfectly
+              # well for the whole rolling update. That is exactly how PR #111
+              # (fedd69d) merged, deploy-staging went green, and staging kept
+              # serving 0.1.49 for days (DEF-124). buildSha is the first 12 chars
+              # of the git rev (client/flake.nix), so it is comparable to the tag.
+              #
+              # A MISMATCH on either arm is a retry condition, not a verdict — same
+              # bug the production probe had. The previous pod answers 200 for the
               # whole rolling update, so the first poll lands on the old build and
               # the loop bailed after ~1s of its 18m budget. A tag deploy that
-              # then completed correctly was reported red. Retry the version
-              # exactly the way the health check is retried.
+              # then completed correctly was reported red. Retry exactly the way
+              # the health check is retried.
               case "$TAG" in
                 *v[0-9]*)
                   got=$(printf '%s' "$cfg" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
@@ -181,7 +191,18 @@ jobs:
                   echo "serving expected version $got"
                   ;;
                 *)
-                  echo "tag $TAG is not a version tag; skipping the version assertion"
+                  # buildSha is builtins.substring 0 12 of the flake rev, i.e.
+                  # "${TAG:0:12}". A missing buildSha is a failure, not a pass: it
+                  # means the pod answering 200 cannot be shown to be the build
+                  # this run deployed.
+                  got=$(printf '%s' "$cfg" | grep -o '"buildSha":"[^"]*"' | cut -d'"' -f4)
+                  want="${TAG:0:12}"
+                  if [ "$got" != "$want" ]; then
+                    echo "healthz=200 from $BASE_URL but serving build ${got:-<none>}, want $want — the previous pod is still up, rolling out — retry $i/$POLL_BUDGET"
+                    sleep "$POLL_INTERVAL"
+                    continue
+                  fi
+                  echo "serving expected build $got"
                   ;;
               esac
               echo "healthz=200 from $BASE_URL; /api/config -> ${cfg:-<empty>}"

@@ -522,6 +522,8 @@ test.describe("four-player multiplayer soak", () => {
     let activeGameId = "";
     /** Clues already played or claimed, so no two players race the same one. */
     const taken = new Set<string>();
+    /** Raw complete() responses; the standings step reads the ids back out. */
+    let completedCalls: Array<{ ok: boolean; data?: unknown; error?: string }> = [];
 
     try {
       // ── Setup: four signed-in contexts in one shared game ────────────────
@@ -662,6 +664,78 @@ test.describe("four-player multiplayer soak", () => {
           .map((c) => clueKey(c))
           .join(", ")}`,
       );
+
+      const propagate = async (actor: number, before: number[]) => {
+        const peers = [0, 1, 2, 3].filter((i) => i !== actor);
+        await expect
+          .poll(
+            async () =>
+              (
+                await Promise.all(
+                  peers.map(async (i) => ((await correctCount(pages[i])) > before[i]) as boolean),
+                )
+              ).every(Boolean),
+            { timeout: 30_000, intervals: [500, 1_000, 2_000, 4_000, 8_000] },
+          )
+          .toBe(true);
+        const after = await Promise.all(peers.map((i) => correctCount(pages[i])));
+        const missed = peers.filter((_, k) => after[k] <= before[peers[k]]);
+        if (missed.length) {
+          // Unreachable while the outbox holds; kept because a failure here is
+          // the DEF-274 regression and the names are what you want in the log.
+          const msg =
+            `${ACCOUNTS[actor].label}'s solve did NOT reach ` +
+            `${missed.map((i) => ACCOUNTS[i].label).join(", ")} — broadcast fan-out ` +
+            `regressed (DEF-274). Events should now relay across pods via the ` +
+            `Postgres outbox; a peer missing a solve means that relay broke.`;
+          console.log(`DEFECT: ${msg}`);
+          await testInfo.attach(`fanout-defect-p${actor + 1}.txt`, {
+            body: msg,
+            contentType: "text/plain",
+          });
+        }
+      };
+
+      // ── 3. The four players actually PLAY ──────────────────────────────
+      // Previously this was four solves: one for player 1, then one each for
+      // players 2-4. Everything else on the board was filled by four
+      // `addActions` calls in the completion step, so a recording was a minute
+      // of setup and measurement followed by the whole crossword being played
+      // in about ten seconds — the interesting part was the smallest part.
+      //
+      // So the four players play in ROUNDS, all four solving a distinct clue
+      // at the same time, until the board is close enough to finished that the
+      // contention probe and the completion race still have open cells to work
+      // with. Concurrent per round, never serialised — that was the same
+      // `await`-inside-a-`for` defect, three times over.
+      const ROUNDS_MAX = 12;
+      const LEAVE_OPEN = 18; // clues still open for contention + completion
+      await test.step("the four players play together", async () => {
+        let played = 0;
+        for (let round = 0; round < ROUNDS_MAX; round++) {
+          await refreshOpen();
+          const playable = open.filter((c) => !taken.has(clueKey(c)) && c.answer);
+          if (playable.length <= LEAVE_OPEN || playable.length < ACCOUNTS.length) break;
+
+          // One distinct clue per player so nobody races the same cell.
+          const batch = playable.slice(0, ACCOUNTS.length);
+          for (const clue of batch) taken.add(clueKey(clue));
+
+          const before = await Promise.all(pages.map(correctCount));
+          const started = Date.now();
+          await Promise.all(batch.map((clue, n) => solveClue(pages[n], clue)));
+          for (let n = 0; n < batch.length; n++) {
+            await propagate(n, before);
+          }
+          played += batch.length;
+          console.log(
+            `  round ${round + 1}: ${batch.length} players solved ` +
+              `${batch.map(clueKey).join(", ")} in ${Date.now() - started} ms`,
+          );
+        }
+        console.log(`PLAY: ${played} clues solved through the UI across 4 players`);
+      });
+
 
       /**
        * How many of the four contexts receive a server broadcast.
@@ -830,76 +904,6 @@ test.describe("four-player multiplayer soak", () => {
       // 4/4 sockets, 24/24 across six publishes. So the loose form is now
       // actively harmful: it would pass again if the outbox regressed, which
       // is precisely the bug this suite exists to catch. Strict is correct.
-      const propagate = async (actor: number, before: number[]) => {
-        const peers = [0, 1, 2, 3].filter((i) => i !== actor);
-        await expect
-          .poll(
-            async () =>
-              (
-                await Promise.all(
-                  peers.map(async (i) => ((await correctCount(pages[i])) > before[i]) as boolean),
-                )
-              ).every(Boolean),
-            { timeout: 30_000, intervals: [500, 1_000, 2_000, 4_000, 8_000] },
-          )
-          .toBe(true);
-        const after = await Promise.all(peers.map((i) => correctCount(pages[i])));
-        const missed = peers.filter((_, k) => after[k] <= before[peers[k]]);
-        if (missed.length) {
-          // Unreachable while the outbox holds; kept because a failure here is
-          // the DEF-274 regression and the names are what you want in the log.
-          const msg =
-            `${ACCOUNTS[actor].label}'s solve did NOT reach ` +
-            `${missed.map((i) => ACCOUNTS[i].label).join(", ")} — broadcast fan-out ` +
-            `regressed (DEF-274). Events should now relay across pods via the ` +
-            `Postgres outbox; a peer missing a solve means that relay broke.`;
-          console.log(`DEFECT: ${msg}`);
-          await testInfo.attach(`fanout-defect-p${actor + 1}.txt`, {
-            body: msg,
-            contentType: "text/plain",
-          });
-        }
-      };
-
-      // ── 3. The four players actually PLAY ──────────────────────────────
-      // Previously this was four solves: one for player 1, then one each for
-      // players 2-4. Everything else on the board was filled by four
-      // `addActions` calls in the completion step, so a recording was a minute
-      // of setup and measurement followed by the whole crossword being played
-      // in about ten seconds — the interesting part was the smallest part.
-      //
-      // So the four players play in ROUNDS, all four solving a distinct clue
-      // at the same time, until the board is close enough to finished that the
-      // contention probe and the completion race still have open cells to work
-      // with. Concurrent per round, never serialised — that was the same
-      // `await`-inside-a-`for` defect, three times over.
-      const ROUNDS_MAX = 12;
-      const LEAVE_OPEN = 18; // clues still open for contention + completion
-      await test.step("the four players play together", async () => {
-        let played = 0;
-        for (let round = 0; round < ROUNDS_MAX; round++) {
-          await refreshOpen();
-          const playable = open.filter((c) => !taken.has(clueKey(c)) && c.answer);
-          if (playable.length <= LEAVE_OPEN || playable.length < ACCOUNTS.length) break;
-
-          // One distinct clue per player so nobody races the same cell.
-          const batch = playable.slice(0, ACCOUNTS.length);
-          for (const clue of batch) taken.add(clueKey(clue));
-
-          const before = await Promise.all(pages.map(correctCount));
-          const started = Date.now();
-          await Promise.all(batch.map((clue, n) => solveClue(pages[n], clue)));
-          for (let n = 0; n < batch.length; n++) {
-            await propagate(n, before);
-          }
-          played += batch.length;
-          console.log(
-            `  round ${round + 1}: ${batch.length} players solved ` +
-              `${batch.map(clueKey).join(", ")} in ${Date.now() - started} ms`,
-          );
-        }
-        console.log(`PLAY: ${played} clues solved through the UI across 4 players`);
-      });
 
       await test.step("crossing-cell contention is observable", async () => {
         // The pre-contention read, kept for the coherence check at the end.
@@ -1071,16 +1075,16 @@ test.describe("four-player multiplayer soak", () => {
         }
 
         // The race: four members call complete() in one tick.
-        const completed = await Promise.all(
+        completedCalls = await Promise.all(
           pages.map((p) => trpcPost(p.request, "activeGame.complete", { id: activeGameId })),
         );
-        const okIds = completed
-          .map((r) => r.data?.id)
+        const okIds = completedCalls
+          .map((r) => (r.data as { id?: string } | undefined)?.id)
           .filter((v: unknown): v is string => typeof v === "string");
         const report =
           `complete() by 4 members in one tick: ${okIds.length} returned an id, ` +
-          `${completed.length - okIds.length} refused ` +
-          `(${completed.filter((r) => !r.ok).map((r) => r.error).join(" | ") || "none"}); ` +
+          `${completedCalls.length - okIds.length} refused ` +
+          `(${completedCalls.filter((r) => !r.ok).map((r) => r.error).join(" | ") || "none"}); ` +
           `distinct completedGameIds = ${new Set(okIds).size} [${okIds.join(", ")}]`;
         console.log(`COMPLETION: ${report}`);
         await testInfo.attach("completion-report.txt", { body: report, contentType: "text/plain" });
@@ -1098,6 +1102,71 @@ test.describe("four-player multiplayer soak", () => {
           () => null,
         );
         expect(after, "ActiveGame is deleted once completed").toBeNull();
+      });
+
+      // ── 7. Standings, per player ───────────────────────────────────────
+      // Completion mints ONE CompletedGame carrying a MemberScore row per
+      // player, but nothing here ever read them back, so the run finished
+      // without showing who actually won. This is also what the recording
+      // ends on.
+      await test.step("standings are shown per player", async () => {
+        // Let the GameCompleted subscription land and the results screen render.
+        await expect
+          .poll(
+            async () =>
+              (await Promise.all(pages.map((p) => p.locator("body").innerText().catch(() => ""))))
+                .filter((t) => /solved|complete|standings|score/i.test(t)).length,
+            { timeout: 60_000, intervals: [500, 1_000, 2_000, 4_000, 8_000] },
+          )
+          .toBeGreaterThan(0);
+
+        // Authoritative numbers, read from the server rather than scraped off a
+        // rendered table.
+        const ids = completedCalls
+          .map((r) => (r as { data?: { id?: string } })?.data?.id)
+          .filter((v): v is string => typeof v === "string");
+        expect(ids.length, "one completedGameId to read standings from").toBeGreaterThan(0);
+
+        const detail = await trpcPost(pages[0].request, "stats.getCompletedGame", {
+          id: ids[0],
+        });
+        // Shape, verified against a live response: the rows hang off
+        // gameStats.memberScores[] and the player identity is member.user.name.
+        // Guessing a top-level `members` array returned nothing, and the step
+        // failed on "no member rows returned".
+        const payload = detail.data as
+          | { gameStats?: { memberScores?: Array<Record<string, unknown>> } }
+          | undefined;
+        const standings = (payload?.gameStats?.memberScores ?? []).map((r) => {
+          const member = r.member as { user?: { name?: string; email?: string } } | undefined;
+          return {
+            name: member?.user?.name ?? "unknown",
+            score: r.score,
+            correctGuesses: r.correctGuesses,
+            incorrectGuesses: r.incorrectGuesses,
+          };
+        });
+        standings.sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0));
+
+        const report =
+          `standings for ${ids[0]}: ` +
+          (standings.length
+            ? standings
+                .map(
+                  (r, n) =>
+                    `${n + 1}. ${r.name}: score=${r.score ?? "?"} ` +
+                    `correct=${r.correctGuesses ?? "?"} incorrect=${r.incorrectGuesses ?? "?"}`,
+                )
+            : "no member rows returned");
+        console.log(`STANDINGS: ${report}`);
+        await testInfo.attach("standings.txt", { body: report, contentType: "text/plain" });
+        // Every player who played must appear. Fewer rows than players means
+        // the score write dropped someone — the bug this catches.
+        expect(standings.length, "a standing for each of the four players").toBe(4);
+
+        // Hold the results long enough to be read on the recording; the clip
+        // otherwise ends the instant the standings appear.
+        await pages[0].waitForTimeout(4_000);
       });
     } finally {
       await Promise.all(pages.map((p) => p.close().catch(() => {})));

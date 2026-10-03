@@ -253,11 +253,14 @@ jobs:
       pull-requests: write
       actions: write
     # `rust-test` is in `needs` because a test job nothing waits on is advice,
-    # not a gate. This job is the thing that actually lands commits: it calls
-    # `gh pr merge --auto`, and `main` has no branch protection
-    # (`GET /branches/main/protection` → 404), so there are no required status
-    # checks for auto-merge to wait on and it merges on the first green signal
-    # GitHub offers. Without `rust-test` here, a red suite merges silently.
+    # not a gate. This job is the thing that actually lands commits, so a red
+    # suite must stop it here.
+    #
+    # `Rust Test Suite` is ALSO a required status check on `main`
+    # (branch protection, applied 2026-10-03 under DEF-220), which is the
+    # backstop for merges that never reach this job — a maintainer merging
+    # from the UI. Keep both: `needs` fails closed inside the workflow, and the
+    # required check fails closed server-side.
     needs: [ conventional-commits-check, approval-check, rust-test ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:

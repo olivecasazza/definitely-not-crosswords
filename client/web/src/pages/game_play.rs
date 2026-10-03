@@ -1621,24 +1621,44 @@ fn step_to_playable(grid: &[Vec<Cell>], from: (i32, i32), dx: i32, dy: i32) -> O
 ///
 /// Built from what is actually DRAWN (`display`), so a letter sitting in the
 /// local draft but not yet committed is announced instead of reading as empty.
-fn cell_aria_label(num: Option<i32>, display: &str, action_type: Option<ActionType>) -> String {
+///
+/// DEF-215: when a remote player's presence projects a ring onto this cell, the
+/// label also carries who and whether that position is live or last-known. The
+/// ring's `title` says the same thing, but `title` never wins over an explicit
+/// `aria-label` — so without this, a screen-reader user on a stale ring hears
+/// the letter and the correctness and nothing about the staleness.
+fn cell_aria_label(
+    num: Option<i32>,
+    display: &str,
+    action_type: Option<ActionType>,
+    presence: Option<(&str, bool)>,
+) -> String {
     let mut label = String::new();
     if let Some(n) = num {
         label.push_str(&format!("{n}, "));
     }
     if display.trim().is_empty() {
         label.push_str("empty");
-        return label;
+    } else {
+        label.push_str(display.trim());
+        label.push_str(", ");
+        label.push_str(match action_type {
+            Some(ActionType::CorrectGuess) => "correct",
+            Some(ActionType::IncorrectGuess) => "incorrect",
+            // A typed-but-uncommitted letter and a saved placeholder are both
+            // "in progress" as far as the board is concerned.
+            _ => "in progress",
+        });
     }
-    label.push_str(display.trim());
-    label.push_str(", ");
-    label.push_str(match action_type {
-        Some(ActionType::CorrectGuess) => "correct",
-        Some(ActionType::IncorrectGuess) => "incorrect",
-        // A typed-but-uncommitted letter and a saved placeholder are both
-        // "in progress" as far as the board is concerned.
-        _ => "in progress",
-    });
+    // Appending presence must not drop the state suffix above (DEF-215 A14):
+    // "is this wrong?" is still answerable after "whose cell is this?".
+    if let Some((name, stale)) = presence {
+        label.push_str(", ");
+        label.push_str(name);
+        if stale {
+            label.push_str(" (last known — reconnecting)");
+        }
+    }
     label
 }
 
@@ -1841,7 +1861,7 @@ fn render_board(
                                                     .any(|c| c.cord_x == x && c.cord_y == y)
                                         })
                                     });
-                                    let (ring, ring_title, ring_stale) = match remote_hit {
+                                    let (ring, ring_title, ring_stale, ring_presence) = match remote_hit {
                                         Some(r) => {
                                             // Last-known, not live: the socket is
                                             // reconnecting, so dim the ring rather
@@ -1872,9 +1892,10 @@ fn render_board(
                                                     if r.stale { " (last known — reconnecting)" } else { "" }
                                                 ),
                                                 r.stale,
+                                                Some((r.name.as_str(), r.stale)),
                                             )
                                         }
-                                        None => (String::new(), String::new(), false),
+                                        None => (String::new(), String::new(), false, None),
                                     };
                                     // A state hook for the e2e suite, not a style: the
                                     // visual treatment is the ring above.
@@ -1886,7 +1907,8 @@ fn render_board(
                                     } else {
                                         cell.modifications.first().map(|m| m.state.clone()).unwrap_or_default()
                                     };
-                                    let aria_label = cell_aria_label(num, &display, action_type);
+                                    let aria_label =
+                                        cell_aria_label(num, &display, action_type, ring_presence);
                                     // Roving tabindex: exactly one cell in the
                                     // grid is a Tab stop, so Tab enters the
                                     // board once instead of 225 times.
@@ -2167,6 +2189,13 @@ fn render_players_strip(
                                 span { class: "cw-chip-clue", style: "color: {color};",
                                     "#{n} {dir_str(d).to_lowercase()}"
                                 }
+                            }
+                            // DEF-215: `title` is in the AX tree but lands as a
+                            // `description` on a nameless `generic`, which no
+                            // screen reader announces. A real StaticText in the
+                            // content flow is announced in browse mode instead.
+                            if stale {
+                                span { class: "cw-sr-only", "last known position, reconnecting" }
                             }
                         }
                     }
@@ -2670,20 +2699,64 @@ mod tests {
     #[test]
     fn cell_aria_label_reads_number_letter_then_state() {
         assert_eq!(
-            cell_aria_label(Some(14), "R", Some(ActionType::CorrectGuess)),
+            cell_aria_label(Some(14), "R", Some(ActionType::CorrectGuess), None),
             "14, R, correct"
         );
         assert_eq!(
-            cell_aria_label(Some(7), "", Some(ActionType::CorrectGuess)),
+            cell_aria_label(Some(7), "", Some(ActionType::CorrectGuess), None),
             "7, empty"
         );
         assert_eq!(
-            cell_aria_label(None, "Q", Some(ActionType::IncorrectGuess)),
+            cell_aria_label(None, "Q", Some(ActionType::IncorrectGuess), None),
             "Q, incorrect"
         );
         // A letter in the local draft but not yet committed is still drawn, so
         // it is announced rather than read as empty.
-        assert_eq!(cell_aria_label(Some(3), "A", None), "3, A, in progress");
+        assert_eq!(
+            cell_aria_label(Some(3), "A", None, None),
+            "3, A, in progress"
+        );
+    }
+
+    /// DEF-215 A14: a cell under a remote ring has to say whose cell it is, and
+    /// a stale one has to say the position is last-known — without that append
+    /// costing the letter its state suffix.
+    #[test]
+    fn cell_aria_label_appends_presence_without_dropping_state() {
+        assert_eq!(
+            cell_aria_label(
+                Some(14),
+                "R",
+                Some(ActionType::CorrectGuess),
+                Some(("ada", false))
+            ),
+            "14, R, correct, ada"
+        );
+        assert_eq!(
+            cell_aria_label(
+                Some(14),
+                "R",
+                Some(ActionType::CorrectGuess),
+                Some(("ada", true))
+            ),
+            "14, R, correct, ada (last known — reconnecting)"
+        );
+        // An empty square on somebody's ring still carries the ring: "empty" is
+        // the whole state there is, so there is nothing to preserve behind it.
+        assert_eq!(
+            cell_aria_label(
+                Some(7),
+                "",
+                Some(ActionType::CorrectGuess),
+                Some(("ada", true))
+            ),
+            "7, empty, ada (last known — reconnecting)"
+        );
+        // In-progress is the default suffix and must survive the same way.
+        assert_eq!(
+            cell_aria_label(None, "A", None, Some(("bo", true))),
+            "A, in progress, bo (last known — reconnecting)"
+        );
     }
 
     /// A word running across row 1 from (0,1) for 3 cells, and one running down

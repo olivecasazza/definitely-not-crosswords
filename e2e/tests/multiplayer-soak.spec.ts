@@ -172,38 +172,100 @@ async function signInDirect(page: Page, email: string, password: string) {
  * `gameList.get` is a MIX, not a clean list: rows carry `type` of `ActiveGame`
  * or `CompletedGame`, and the PARENT puzzle is `gameId` while `id` is the
  * caller's own attempt. `activeGame.start` takes the parent `gameId`, so
- * passing `id` returns "Game not found". `ActiveGame` rows are exactly the
- * in-progress boards this exists to avoid, so they are filtered out; the
- * remaining distinct parents are free to start.
+ * passing `id` returns "Game not found".
+ *
+ * `activeGame.start` is IDEMPOTENT per (gameId, caller): it hands back the
+ * caller's EXISTING ActiveGame instead of creating one. So "start a fresh
+ * puzzle" has to be preceded by `activeGame.abandon` on every ActiveGame this
+ * account holds for that parent — which also cascades its GameActions away.
+ * That is what makes the board below genuinely empty; without it a run can
+ * inherit a board earlier runs advanced — one measured run began with only
+ * 156 of 175 cells open.
+ * Abandoning also re-opens a puzzle to this account, so parents that DO have
+ * a live attempt are candidates again instead of being filtered out.
  *
  * MUST be called with an authenticated context — `context.request` rides the
  * context's cookie jar, and an unauthenticated call returns an empty list.
  */
 async function startFreshGame(page: Page): Promise<string> {
   const listed = await trpcPost(page.request, "gameList.get", {});
-  const rows: Array<{ type?: string; gameId?: string; game?: { title?: string }; clues?: number }> =
-    listed.data ?? [];
-  const free = new Map<string, { clues: number; title: string }>();
+  const rows: Array<{
+    type?: string;
+    id?: string;
+    gameId?: string;
+    game?: { title?: string };
+    clues?: number;
+  }> = listed.data ?? [];
+  // One entry per PARENT puzzle. `activeId` is this account's own live
+  // attempt on it, when the list carries one; a parent seen only as a
+  // CompletedGame has none and needs no abandon.
+  const parents = new Map<string, { activeId: string; title: string; clues: number }>();
   for (const r of rows) {
-    if (r.type === "ActiveGame" || !r.gameId) continue;
-    if (!free.has(r.gameId)) {
-      free.set(r.gameId, { clues: r.clues ?? 0, title: r.game?.title ?? "?" });
+    if (!r.gameId) continue;
+    const held = parents.get(r.gameId);
+    if (!held) {
+      parents.set(r.gameId, {
+        activeId: r.type === "ActiveGame" && r.id ? r.id : "",
+        title: r.game?.title ?? "?",
+        clues: r.clues ?? 0,
+      });
+    } else if (!held.activeId && r.type === "ActiveGame" && r.id) {
+      held.activeId = r.id;
     }
   }
-  const ranked = [...free.entries()].sort((a, b) => b[1].clues - a[1].clues);
+  const ranked = [...parents.entries()].sort((a, b) => b[1].clues - a[1].clues);
   for (const [gameId, meta] of ranked) {
-    const started = await trpcPost(page.request, "activeGame.start", { gameId });
-    if (started.ok && started.data?.id) {
+    if (meta.activeId) {
+      // Drop this account's live attempt first — `start` would otherwise hand
+      // back exactly that attempt, with every letter a previous run committed.
+      const dropped = await trpcPost(page.request, "activeGame.abandon", {
+        id: meta.activeId,
+      });
       console.log(
-        `soak board: started a FRESH game ${gameId} ("${meta.title}", ${meta.clues} clues)` +
-          ` -> ${started.data.id}`,
+        `soak board: abandoned stale ActiveGame ${meta.activeId} for ${gameId}` +
+          (dropped.ok ? "" : ` — FAILED (${dropped.error})`),
       );
-      return started.data.id;
     }
-    console.log(`soak board: start(${gameId}) failed: ${started.error}`);
+    const started = await trpcPost(page.request, "activeGame.start", { gameId });
+    if (!started.ok || !started.data?.id) {
+      console.log(`soak board: start(${gameId}) failed: ${started.error}`);
+      continue;
+    }
+    const freshId: string = started.data.id;
+    // A truly fresh board has NO cell filled. Assert that off the server's own
+    // state, so a regression in `start` idempotence can never again hand a
+    // half-solved board to the soak without the run failing loudly.
+    const cells = await boardCellCount(page, freshId);
+    console.log(
+      `soak board: started a FRESH game ${gameId} ("${meta.title}", ${meta.clues} clues)` +
+        ` -> ${freshId} — ${cells.open}/${cells.total} cells open`,
+    );
+    expect(cells.total, `fresh game ${freshId} grid cell count`).toBeGreaterThan(0);
+    expect(
+      cells.open,
+      `fresh game ${freshId} must start with every cell open (no inherited letters)`,
+    ).toBe(cells.total);
+    return freshId;
   }
   console.log("soak board: no free puzzle to start; falling back to the lobby");
   return "";
+}
+
+/** Grid size plus how many of those cells already carry a committed letter. */
+async function boardCellCount(page: Page, activeId: string) {
+  const active = await trpcGet(page, "activeGame.get", { id: activeId });
+  const all = boardCells(active?.game?.questions ?? []);
+  const latest = latestStates(active?.actions ?? []);
+  let open = all.size;
+  for (const key of latest.keys()) if (all.has(key)) open--;
+  return { total: all.size, open };
+}
+
+/** Every cell the board occupies, across all of its clues, as "x,y" keys. */
+function boardCells(clues: Clue[]): Set<string> {
+  const cells = new Set<string>();
+  for (const c of clues) for (const [x, y] of clueCells(c)) cells.add(`${x},${y}`);
+  return cells;
 }
 
 
@@ -499,21 +561,31 @@ test.describe("four-player multiplayer soak", () => {
         if (!activeGameId) activeGameId = await openBoard(p1, 8);
         const gameUrl = `${soak.baseURL}/game/${activeGameId}`;
         await p1.goto(gameUrl);
-        for (const [n, p] of rest.entries()) {
-          await p.goto(gameUrl);
-          // "Join game" is optional — members of this active game don't see it.
-          const join = p.getByRole("button", { name: /^join game$/i });
-          const joined = await join
-            .waitFor({ state: "visible", timeout: 30_000 })
-            .then(() => true)
-            .catch(() => false);
-          if (joined) {
-            await join.click();
-            console.log(`clicked "Join game" for player ${n + 2}`);
-          } else {
-            console.log(`no "Join game" button for player ${n + 2} — already a member`);
-          }
-        }
+        // All three navigate AND join concurrently. Serially, each pane paid
+        // its own full page load plus up to 30s waiting for its own join
+        // button — visible in recordings as one pane sitting on the lobby
+        // while the others had already moved on.
+        const joinStart = Date.now();
+        await Promise.all(
+          rest.map(async (p, n) => {
+            await p.goto(gameUrl);
+            // "Join game" is optional — members of this active game don't see it.
+            const join = p.getByRole("button", { name: /^join game$/i });
+            const joined = await join
+              .waitFor({ state: "visible", timeout: 30_000 })
+              .then(() => true)
+              .catch(() => false);
+            if (joined) {
+              await join.click();
+              console.log(`clicked "Join game" for player ${n + 2}`);
+            } else {
+              console.log(`no "Join game" button for player ${n + 2} — already a member`);
+            }
+          }),
+        );
+        console.log(
+          `soak joins: players 2-4 navigated and joined CONCURRENTLY in ${Date.now() - joinStart} ms`,
+        );
         // The members query has to land before addActions will accept anyone.
         await expect
           .poll(
@@ -535,6 +607,7 @@ test.describe("four-player multiplayer soak", () => {
 
       // ── 1. All four boards render ───────────────────────────────────────
       await test.step("all four boards render", async () => {
+        const renderStart = Date.now();
         for (const [i, p] of pages.entries()) {
           await expect(
             p.locator(".cw-letter").first(),
@@ -545,6 +618,9 @@ test.describe("four-player multiplayer soak", () => {
             `${ACCOUNTS[i].label} clue list`,
           ).toBeVisible({ timeout: 30_000 });
         }
+        console.log(
+          `soak boards: all 4 panes on the board ${Date.now() - renderStart} ms after the join phase`,
+        );
       });
 
       // Pick the four clues up front: player 1's, plus one distinct clue each
@@ -690,19 +766,35 @@ test.describe("four-player multiplayer soak", () => {
         // The `spin()` on each tick is still required: re-selecting the SAME
         // clue is a client-side no-op and emits no publishPresence, so an
         // alternating selection is what actually re-publishes.
+        let lastCounts: number[] = [];
         await expect
           .poll(
             async () => {
               await spin();
               // Each context must show the OTHER three, so 3 chips each.
-              const counts = await Promise.all(
+              lastCounts = await Promise.all(
                 pages.map((p) => p.locator(".cw-players .cw-chip-clue").count()),
               );
-              return counts.every((n) => n >= 3);
+              return lastCounts.every((n) => n >= 3);
             },
             { timeout: 90_000, intervals: [1_000, 2_000, 3_000, 5_000, 8_000, 13_000] },
           )
-          .toBe(true);
+          .toBe(true)
+          .catch(async (err) => {
+            // Name WHO went dark — a bare timeout says nothing about which
+            // context lost the roster.
+            console.log(
+              `PRESENCE FAILED: chips per context ${lastCounts.join(", ")} (want >= 3 each)` +
+                ` after 90s of alternating selections`,
+            );
+            await testInfo.attach("presence-fanout-failed.txt", {
+              body:
+                `presence chips per context: ${lastCounts.join(", ")}; ` +
+                `action broadcasts reached ${reachable.size} of 4`,
+              contentType: "text/plain",
+            });
+            throw err;
+          });
         const chipCounts = await Promise.all(
           pages.map((p) => p.locator(".cw-players .cw-chip-clue").count()),
         );

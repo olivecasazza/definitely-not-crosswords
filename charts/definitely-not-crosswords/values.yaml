@@ -244,7 +244,27 @@ observability:
     # Namespace used for GrafanaDashboard/ConfigMap resources.
     # If empty, defaults to the release namespace.
     namespace: ""
-    # Dashboard folder in Grafana.
+    # FALLBACK folder, used only by a dashboard that declares no "folder" of its
+    # own in templates/grafanadashboard.yaml. Every shipped dashboard sets one,
+    # because a flat folder is unusable once there is more than a handful:
+    # you cannot tell an error dashboard from a delivery one at a glance.
+    #
+    # Dashboards are tiered three deep, and Grafana treats "/" as nesting:
+    #
+    #   Crosswords/
+    #     Observability/
+    #       Errors/      frontend-errors, backend-errors
+    #       Platform/    platform-health, resource-efficiency
+    #     Delivery/
+    #       GitOps/      delivery
+    #     Testing/
+    #       Suites/      testing-regressions
+    #       Multiplayer/ multiplayer
+    #
+    # Tier 1 is the app, tier 2 the domain, tier 3 the specific concern. Add a
+    # new dashboard by giving it a "folder" in that shape plus a "tags" string
+    # (comma separated) — tags are what the search box filters on, folders are
+    # what the sidebar nests, and they answer different questions.
     folder: "Applications"
     # Leave true when dashboards are created outside the Grafana instance namespace.
     allowCrossNamespaceImport: true

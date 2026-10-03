@@ -25,42 +25,56 @@
     "title" "Crosswords Frontend Error Rate"
     "uid" "crosswords-frontend-errors"
     "file" "frontend-errors.json"
+    "folder" "Crosswords/Observability/Errors"
+    "tags" "observability,errors,frontend"
   )
   (dict
     "name" "backend-errors"
     "title" "Crosswords Backend Error Rate"
     "uid" "crosswords-backend-errors"
     "file" "backend-errors.json"
+    "folder" "Crosswords/Observability/Errors"
+    "tags" "observability,errors,backend"
   )
   (dict
     "name" "testing-regressions"
     "title" "Crosswords Testing Regressions"
     "uid" "crosswords-testing-regressions"
     "file" "testing-regressions.json"
+    "folder" "Crosswords/Testing/Suites"
+    "tags" "testing,regressions"
   )
   (dict
     "name" "multiplayer"
     "title" "Crosswords Multiplayer Soak & Load"
     "uid" "crosswords-multiplayer"
     "file" "multiplayer.json"
+    "folder" "Crosswords/Testing/Multiplayer"
+    "tags" "testing,multiplayer,realtime"
   )
   (dict
     "name" "platform-health"
     "title" "Crosswords Platform Health"
     "uid" "crosswords-platform-health"
     "file" "platform-health.json"
+    "folder" "Crosswords/Observability/Platform"
+    "tags" "observability,platform,kubernetes"
   )
   (dict
     "name" "resource-efficiency"
     "title" "Crosswords Resource Efficiency"
     "uid" "crosswords-resource-efficiency"
     "file" "resource-efficiency.json"
+    "folder" "Crosswords/Observability/Platform"
+    "tags" "observability,platform,resources"
   )
   (dict
     "name" "delivery"
     "title" "Crosswords Delivery & GitOps"
     "uid" "crosswords-delivery"
     "file" "delivery.json"
+    "folder" "Crosswords/Delivery/GitOps"
+    "tags" "delivery,gitops,flux"
   )
 -}}
 {{- range $dashboards }}
@@ -95,8 +109,14 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "grafana"
-  folder: {{ $.Values.observability.grafanaDashboard.folder | quote }}
+  # Per-dashboard tier wins; the chart-wide folder is the fallback so a
+  # dashboard added without a "folder" key still lands somewhere sensible
+  # instead of silently dropping out of the tree.
+  folder: {{ (.folder | default $.Values.observability.grafanaDashboard.folder) | quote }}
   uid: {{ .uid | quote }}
+  {{- with .tags }}
+  tags: [{{ $i := 0 }}{{ range $t := splitList "," . }}{{ if $i }}, {{ end }}{{ $t | quote }}{{ $i = add1 $i }}{{ end }}]
+  {{- end }}
   datasources:
     - inputName: DS_PROMETHEUS
       datasourceName: Prometheus

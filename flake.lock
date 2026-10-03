@@ -11,14 +11,15 @@
         "systems": "systems_2"
       },
       "locked": {
+        "lastModified": 1,
+        "narHash": "sha256-6C/RnYOjbD7PpFcteQyvifRQsMnE3GjZQiGbGyQ/Wtc=",
         "path": "./client",
         "type": "path"
       },
       "original": {
         "path": "./client",
         "type": "path"
-      },
-      "parent": []
+      }
     },
     "crane": {
       "locked": {

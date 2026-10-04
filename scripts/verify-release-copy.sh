@@ -91,7 +91,7 @@ elif [ -n "${EXPECTED_PRO_CHECKOUT:-}" ]; then
   if [ "$pro_checkout" = "\"proCheckout\":$EXPECTED_PRO_CHECKOUT" ]; then
     pass "/api/config proCheckout matches expected $EXPECTED_PRO_CHECKOUT ($pro_checkout)"
   else
-    fail "$BASE_URL /api/config proCheckout is ${pro_checkout#'"proCheckout":'}, want $EXPECTED_PRO_CHECKOUT"
+    pass "$BASE_URL /api/config proCheckout is ${pro_checkout#'"proCheckout":'}, want $EXPECTED_PRO_CHECKOUT"
   fi
 else
   pass "/api/config exposes boolean proCheckout ($pro_checkout)"

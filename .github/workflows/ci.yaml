@@ -357,7 +357,13 @@ jobs:
     # backstop for merges that never reach this job — a maintainer merging
     # from the UI. Keep both: `needs` fails closed inside the workflow, and the
     # required check fails closed server-side.
-    needs: [ conventional-commits-check, approval-check, rust-test, guards ]
+    #
+    # `runner-toolchain-cc` joins for the same reason DEF-325's guard exists at
+    # all: without it in `needs`, the check that the runner's compiler still
+    # compiles without linking would be advice, not a gate — and the regression it
+    # guards is silent, because every Rust-only crate builds fine on a broken `cc`
+    # and the failure only shows up as an opaque lld error inside a C dependency.
+    needs: [ conventional-commits-check, approval-check, rust-test, guards, runner-toolchain-cc ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
       - name: Enable Auto-Merge

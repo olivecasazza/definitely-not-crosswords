@@ -42,18 +42,80 @@
 
   outputs =
     inputs:
-    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
+    # flake-parts evaluates each option against the SAME attrset, but that
+    # attrset is not `rec`, so two options cannot see each other by bare name
+    # (`perSystem` referencing `packagesForImpl` is an "undefined variable",
+    # not a typo). A `let` around the `mkFlake` application gives both wrappers
+    # one shared scope — which is also what keeps the default outputs and
+    # `packagesFor` provably identical in how they resolve a sha, since they
+    # call the same function.
+    let
+      fp = inputs.flake-parts.lib;
+      # flake-parts' own nixpkgs lib: `lib.genAttrs` shapes `flake.<name>`
+      # exactly like its transposition module does.
+      lib = inputs.flake-parts.inputs.nixpkgs-lib.lib;
       systems = import inputs.systems;
 
-      perSystem =
-        { system, self', ... }:
+      # The commit this build came from, for `BUILD_SHA` (the server's
+      # `/api/config.buildSha` and the bundle's `data-build`).
+      #
+      # THE CONTRACT (DEF-317). `packagesFor` is the provenance-aware entry
+      # point; `perSystem` (i.e. `nix build ./client#…`) is the same code with
+      # no caller-supplied sha. Resolution order, most trustworthy first:
+      #
+      #   1. `CROSSWORDS_BUILD_SHA` — an explicit override, for a direct
+      #      `nix build ./client` from a shell that knows the commit.
+      #   2. `fallbackBuildSha` — what the caller passed to `packagesFor`. The
+      #      root flake passes its own `self.rev` here (DEF-317).
+      #   3. `self.rev`, then `self.dirtyRev` — set only when THIS flake is
+      #      itself evaluated from a git checkout.
+      #
+      # (3) is why (2) is needed. The ROOT flake consumes this one as
+      # `client.url = "path:./client"`, and a `path:` input carries NEITHER
+      # `rev` NOR `dirtyRev` — only `sourceInfo`/`narHash`. So under the root
+      # flake, step (3) can never fire and any bare `client.packages.${system}`
+      # yields "unknown" no matter how clean the checkout is. It is the CALLER
+      # that knows the commit when the callee is a `path:` input. Verified in
+      # isolation on nix 2.20.6 (two-flake repro, root + nested `path:./inner`):
+      #
+      #     root, clean checkout    -> self.rev = 7e1696f…, dirtyRev = ABSENT
+      #     nested path:./inner     -> rev = false,     dirtyRev = false
+      #     CROSSWORDS_BUILD_SHA set -> inner sees "abcdef1234567890"
+      #
+      # Threading it down fixes buildbot, `nix build .#dockerImage` and
+      # `nix develop` in one place, and reduces ci.yaml's CROSSWORDS_BUILD_SHA
+      # handoff to a redundant convenience rather than the load-bearing fix it
+      # was (#241).
+      #
+      # `lib` is an argument, not captured from flake scope, so this stays a
+      # plain function that `nix eval` can exercise on its own.
+      resolveBuildSha = lib: fallback:
+        let
+          fromEnv = builtins.getEnv "CROSSWORDS_BUILD_SHA";
+          fromSelf = inputs.self.rev or inputs.self.dirtyRev or "";
+          raw = if fromEnv != "" then fromEnv else (if fallback != "" then fallback else fromSelf);
+          # AC4 (DEF-317): never ship `<rev>-dirty` as a buildSha. A dirty tree
+          # is NOT the commit it names, and `<rev>-dirty` can never equal the
+          # `${TAG:0:12}` a deploy gate compares against, so shipping it would
+          # just convert a loud failure into a 30-minute red poll. Strip the
+          # suffix: the rev alone still names the base commit, which is the
+          # most useful thing to report, and an unresolvable tree still lands on
+          # "unknown" and is caught by the gates. Buildbot checks out a git ref,
+          # so its trees are clean and this arm never fires there.
+          stripped = lib.strings.removeSuffix "-dirty" raw;
+        in
+        if stripped == "" then "unknown" else builtins.substring 0 12 stripped;
+
+      # The one real implementation. `fallbackBuildSha` is resolved by
+      # `resolve`; everything else is the per-system package set.
+      packagesForImpl = resolve: fallbackBuildSha: system:
         let
           pkgs = import inputs.nixpkgs {
             inherit system;
             overlays = [ inputs.rust-overlay.overlays.default ];
           };
           inherit (pkgs) lib;
-          buildSha = builtins.substring 0 12 (inputs.self.rev or inputs.self.dirtyRev or "unknown");
+          buildSha = resolve lib fallbackBuildSha;
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
             extensions = [
@@ -692,18 +754,6 @@
           fi
           exec ${pkgs.k6}/bin/k6 version
         '';
-        in
-        {
-          packages = {
-            default = crossword-web;
-            inherit
-              crossword-web
-              crossword-desktop
-              crossword-server
-              crossword-tools
-              crossword-load
-              ;
-          };
 
           checks = {
             cargo-fmt = craneLib.cargoFmt {
@@ -768,9 +818,31 @@
               ;
           };
 
+          packages = {
+            default = crossword-web;
+            inherit
+              crossword-web
+              crossword-desktop
+              crossword-server
+              crossword-tools
+              crossword-load
+              ;
+          };
+        in
+        {
+          inherit checks packages;
+
+          # Returned so `packagesFor` callers and `nix eval` can read back the
+          # sha these packages bake, with no builder involved.
+          buildSha = buildSha;
+
+          # `nix develop ./client` runs these same checks on `enterShell`. This is
+          # the `checks` binding in the `let` above rather than flake-parts'
+          # `self'.checks`: there is no `self` in scope here (this function is
+          # what `perSystem` wraps, so referring back to it would be a cycle).
           devShells.default = craneLib.devShell (
             {
-              checks = self'.checks;
+              checks = checks;
               packages = with pkgs; [
                 rustToolchain
                 cargo-watch
@@ -797,19 +869,72 @@
             // ortEnv
           );
         };
+    in
+    fp.mkFlake { inherit inputs; }
+    {
+      systems = import inputs.systems;
 
-      # Hydra builds the `hydraJobs` output (NOT `checks`/`packages`), so the
-      # nixlab Hydra jobset that points at this flake (gcp-hydra,
-      # definitely-not-crosswords project, `dioxus-migration` jobset) would
-      # build nothing without this. Surface every check (which already includes
-      # the `crossword-web` bundle) as a Hydra job on the on-prem linux builders.
-      flake.hydraJobs.x86_64-linux = inputs.self.checks.x86_64-linux;
+      # The default outputs: this flake consumed directly
+      # (`nix build ./client#…`, `nix develop ./client`). Empty fallback sha, so
+      # `resolveBuildSha` falls through to CROSSWORDS_BUILD_SHA, then self.rev.
+      perSystem =
+        { system, ... }:
+        builtins.removeAttrs (packagesForImpl resolveBuildSha "" system) [ "buildSha" ];
 
-      # `om ci run` builds every flake check + package across the configured
-      # systems. The root subflake covers this flake.
-      flake.om.ci.default.root = {
-        dir = ".";
-        steps.build.enable = true;
-      };
+      # DEF-317: the two provenance outputs, keyed by system.
+      #
+      # Published through the `flake` option because it is freeform — "Any
+      # attribute can be set here" — so no `mkOption` declaration is needed and
+      # nothing has to be transposed. Measured, because the obvious routes all
+      # fail here:
+      #   * an extra key on `perSystem`'s result is dropped ("The option
+      #     `perSystem.x86_64-linux.buildSha' does not exist"): flake-parts only
+      #     publishes declared options;
+      #   * a custom top-level `options`/`config` attrset makes flake-parts
+      #     reject the module outright when the flake also sets `flake` —
+      #     "Module `:anon-17:anon-1' has an unsupported attribute `flake'" — so
+      #     declaring options here would mean deleting `flake.hydraJobs` (the
+      #     nixlab Hydra jobset) and `flake.om`;
+      #   * `mkTransposedPerSystemModule` type-checks its transposed `flake.<name>`
+      #     against the option type and rejects a plain string ("A definition for
+      #     option `flake.myStr.x86_64-linux' is not of type `string'"), so it
+      #     cannot carry a build sha.
+      # `lib.genAttrs` over `systems` is the shape flake-parts' own
+      # transposition module produces, so this reads the same as a declared one.
+      flake =
+        {
+          # The sha THIS flake resolves with no caller, per system.
+          # `nix eval .#buildSha.x86_64-linux` — no builder required, which is
+          # the only kind of proof a builderless CI runner can produce.
+          buildSha = lib.genAttrs systems (
+            system: (packagesForImpl resolveBuildSha "" system).buildSha
+          );
+
+          # client.packagesFor.${system} { buildSha = self.rev or ""; }
+          #
+          # A FUNCTION, not a resolved attrset: the sha is an INPUT to it, not an
+          # output. So `nix flake check` never coerces or builds it, and `nix
+          # eval` reads `.buildSha` straight off the result. A caller that passes
+          # no sha gets exactly what `perSystem` exposes, so the two paths cannot
+          # drift.
+          packagesFor = lib.genAttrs systems (
+            system: { buildSha ? "" }: packagesForImpl resolveBuildSha buildSha system
+          );
+        }
+        // {
+          # Hydra builds the `hydraJobs` output (NOT `checks`/`packages`), so the
+          # nixlab Hydra jobset that points at this flake (gcp-hydra,
+          # definitely-not-crosswords project, `dioxus-migration` jobset) would
+          # build nothing without this. Surface every check (which already includes
+          # the `crossword-web` bundle) as a Hydra job on the on-prem linux builders.
+          hydraJobs.x86_64-linux = inputs.self.checks.x86_64-linux;
+
+          # `om ci run` builds every flake check + package across the configured
+          # systems. The root subflake covers this flake.
+          om.ci.default.root = {
+            dir = ".";
+            steps.build.enable = true;
+          };
+        };
     };
 }

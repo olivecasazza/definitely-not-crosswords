@@ -140,6 +140,14 @@ jobs:
         env:
           BASE_URL: https://crosswords-staging.casazza.io
           TAG: ${{ github.event.inputs.tag || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha) || github.event.workflow_run.head_branch }}
+          # DEF-317: the COMMIT behind the deployed tag, so the gate can assert
+          # buildSha on a `v*` tag. A `workflow_run` event does not populate
+          # `github.sha` with the tagged commit (it is the default branch's head),
+          # so the trigger's own `head_sha` is used — that IS the commit the tag
+          # names. Delivered as an env var rather than `git rev-parse` because
+          # neither deploy workflow checks the repository out, so there is no git
+          # tree on the runner to ask.
+          COMMIT_SHA: ${{ github.event.inputs.tag && '' || github.event.workflow_run.head_sha || '' }}
           # The budget is a variable, not a literal, so the log line and the loop
           # can never disagree about it again. See POLL_BUDGET below.
           POLL_INTERVAL: 20
@@ -179,32 +187,74 @@ jobs:
               # the loop bailed after ~1s of its 18m budget. A tag deploy that
               # then completed correctly was reported red. Retry exactly the way
               # the health check is retried.
+              # DEF-317: BOTH arms assert buildSha, and the version arm asserts
+              # version too. Previously the `v*` arm checked `version` only,
+              # which is why run 37173764985 went green against
+              # `"buildSha":"unknown"`: the crate version is correct in an image
+              # whose provenance is unknown, so `version` matching proved
+              # nothing about WHICH build was serving. A release that cannot name
+              # its own build is not a verified release.
+              #
+              # `version` alone stays insufficient for a second reason: it is the
+              # crate version, identical across every image built from that
+              # commit. buildSha is `builtins.substring 0 12` of the commit, so
+              # it is the only field that can distinguish this build from any
+              # other build of the same version.
+              version_ok=1
+              build_sha_ok=1
               case "$TAG" in
                 *v[0-9]*)
                   got=$(printf '%s' "$cfg" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
                   want="${TAG##*v}"
                   if [ "$got" != "$want" ]; then
-                    echo "healthz=200 from $BASE_URL but serving ${got:-unknown}, want $want — the previous pod is still up, rolling out — retry $i/$POLL_BUDGET"
-                    sleep "$POLL_INTERVAL"
-                    continue
+                    version_ok=0
+                    echo "healthz=200 from $BASE_URL but serving version ${got:-<none>}, want $want — the previous pod is still up, rolling out — retry $i/$POLL_BUDGET"
                   fi
-                  echo "serving expected version $got"
-                  ;;
-                *)
-                  # buildSha is builtins.substring 0 12 of the flake rev, i.e.
-                  # "${TAG:0:12}". A missing buildSha is a failure, not a pass: it
-                  # means the pod answering 200 cannot be shown to be the build
-                  # this run deployed.
-                  got=$(printf '%s' "$cfg" | grep -o '"buildSha":"[^"]*"' | cut -d'"' -f4)
-                  want="${TAG:0:12}"
-                  if [ "$got" != "$want" ]; then
-                    echo "healthz=200 from $BASE_URL but serving build ${got:-<none>}, want $want — the previous pod is still up, rolling out — retry $i/$POLL_BUDGET"
-                    sleep "$POLL_INTERVAL"
-                    continue
-                  fi
-                  echo "serving expected build $got"
                   ;;
               esac
+              # buildSha is `builtins.substring 0 12` of the COMMIT. A `v*` tag
+              # names a version, not a commit, so "${TAG:0:12}" would be
+              # "v0.1.101" — which no buildSha can ever equal. Resolve the tag to
+              # its commit first:
+              #   * on a `workflow_run` from a tag push, the trigger's head_sha IS
+              #     the tagged commit (release-plz cuts the tag ON the release
+              #     commit; measured: v0.1.101 ->
+              #     28f7bfb6ba955c2703c9c75f9ac37152fb83bedd), delivered as
+              #     COMMIT_SHA above;
+              #   * for a `:latest`/`:<sha>` image, the sha is literally the tag.
+              #
+              # If the commit cannot be resolved the gate FAILS rather than
+              # skipping: an unverifiable release is not a green release, and
+              # that skip is exactly how run 37173764985 went green.
+              got=$(printf '%s' "$cfg" | grep -o '"buildSha":"[^"]*"' | cut -d'"' -f4)
+              commit=""
+              case "$TAG" in
+                *v[0-9]*)
+                  commit="$COMMIT_SHA"
+                  if [ -z "$commit" ]; then
+                    build_sha_ok=0
+                    echo "::error::cannot resolve $TAG to a commit, so buildSha cannot be asserted — refusing to report a green deploy for an unverifiable release (DEF-317)"
+                    want=""
+                  else
+                    want="${commit:0:12}"
+                  fi
+                  ;;
+                *)
+                  want="${TAG:0:12}"
+                  ;;
+              esac
+              if [ "$build_sha_ok" -eq 1 ] && { [ -z "$got" ] || [ "$got" = "unknown" ]; }; then
+                build_sha_ok=0
+                echo "::error::healthz=200 from $BASE_URL but /api/config reports buildSha ${got:-<none>} — an image with no build identity. DEF-317 threaded the root flake's rev into BUILD_SHA so this cannot happen; if it does, the image was built from something other than this commit."
+              elif [ "$got" != "$want" ]; then
+                build_sha_ok=0
+                echo "healthz=200 from $BASE_URL but serving build $got, want $want — the previous pod is still up, rolling out — retry $i/$POLL_BUDGET"
+              fi
+              if [ "$version_ok" -eq 0 ] || [ "$build_sha_ok" -eq 0 ]; then
+                sleep "$POLL_INTERVAL"
+                continue
+              fi
+              echo "serving expected version ${TAG##*v} and build $got"
               echo "healthz=200 from $BASE_URL; /api/config -> ${cfg:-<empty>}"
               echo "::notice::Post-deploy readiness OK: $BASE_URL is serving."
               exit 0

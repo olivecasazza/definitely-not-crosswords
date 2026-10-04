@@ -90,6 +90,12 @@ jobs:
       # (`want="${TAG:0:12}"` on a :sha image) can never match — it burns the
       # full 90-poll/30-minute budget and fails every main deploy. `github.sha`
       # is the commit this run builds, so hand it down explicitly.
+      #
+      # DEF-317: no longer load-bearing. The root flake now threads its own
+      # `self.rev` down through `client.packagesFor`, so a bare
+      # `nix build .#dockerImage` from a git checkout bakes a real BUILD_SHA with
+      # no env var at all — which is what a builder that runs no ci.yaml needs.
+      # This stays as an explicit override (it still wins in `resolveBuildSha`).
       - name: Build image (nix)
         env:
           CROSSWORDS_BUILD_SHA: ${{ github.sha }}

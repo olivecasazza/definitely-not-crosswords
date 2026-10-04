@@ -26,10 +26,31 @@
           config.allowUnfree = true;
         };
 
-        crossword-server = client.packages.${system}.crossword-server;
-        crossword-web = client.packages.${system}.crossword-web;
-        crossword-tools = client.packages.${system}.crossword-tools;
-        crossword-desktop = client.packages.${system}.crossword-desktop;
+        # DEF-317: `client` is a `path:` input, and a `path:` input carries
+        # NEITHER `rev` NOR `dirtyRev` — only `sourceInfo`/`narHash`. So the
+        # client flake cannot see that it is being built from git, and its own
+        # `self.rev`/`dirtyRev` fallback is dead code under this flake: every
+        # `.#dockerImage` baked `BUILD_SHA="unknown"` into the server binary and
+        # the wasm bundle, so `/api/config` reported `"buildSha":"unknown"` on
+        # both hosts and the deploy readiness gates could never match a tag.
+        #
+        # This flake CAN see the rev — buildbot, `nix build .#dockerImage` and
+        # `nix develop` all evaluate it from a git checkout — so it is the one
+        # that knows the commit, and it hands it down. `packagesFor` is the
+        # client flake's provenance-aware entry point; calling it with an empty
+        # `buildSha` reproduces the old behaviour exactly, so this is the only
+        # place the sha is threaded.
+        #
+        # This also retires #241's `CROSSWORDS_BUILD_SHA` handoff in ci.yaml from
+        # load-bearing to a redundant convenience: `resolveBuildSha` still
+        # prefers the env var, so ci.yaml keeps working unchanged, but it is no
+        # longer the only thing standing between a build and a real buildSha.
+        clientFor = client.packagesFor.${system} { buildSha = self.rev or self.dirtyRev or ""; };
+
+        crossword-server = clientFor.packages.crossword-server;
+        crossword-web = clientFor.packages.crossword-web;
+        crossword-tools = clientFor.packages.crossword-tools;
+        crossword-desktop = clientFor.packages.crossword-desktop;
 
         # Runtime assets for the generator (embedding model + WordNet dictionary),
         # fetched and verified by hash. This is the Rust/Nix replacement for
@@ -90,6 +111,11 @@
         };
       in
       {
+        # DEF-317: the sha the client flake resolved for this system, published so
+        # `nix eval .#buildSha.<system>` states it without a builder — the only
+        # kind of proof available on a runner with no Nix store contents.
+        buildSha = clientFor.buildSha;
+
         packages = {
           default = crossword-server;
           inherit crossword-server crossword-web dockerImage;

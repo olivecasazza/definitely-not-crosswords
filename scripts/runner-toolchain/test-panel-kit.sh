@@ -67,8 +67,13 @@ cp "$REPO_ROOT/client/Cargo.lock" "$TMP/client/Cargo.lock" 2>/dev/null || true
 
 [ -f "$TMP/during-run.toml" ] || fail "the cargo stub never ran, so nothing was asserted"
 
-grep -q '/home/olive/Repositories/panel-kit' "$TMP/during-run.toml" \
-  && fail "web/Cargo.toml still pointed at the host path mid-run"
+# No panel-kit git dep may survive the repoint. This is the assertion DEF-244
+# invalidated: the old guard here only checked for the `/home/olive/...` host
+# path, which stopped existing from that change, so it passed vacuously while
+# `with-cargo.sh`'s sed matched nothing and cargo quietly resolved panel-kit
+# itself. The leftover git dep is the rot; this is what catches it.
+grep -qE '^panel-kit(-core)? = \{.*git =' "$TMP/during-run.toml" \
+  && fail "web/Cargo.toml still declares a panel-kit git dep mid-run, so cargo would resolve panel-kit itself"
 grep -q "path = \"[^\"]*panel-kit-$PINNED\"" "$TMP/during-run.toml" \
   || fail "web/Cargo.toml did not point at the pinned checkout mid-run"
 grep -q "path = \"[^\"]*panel-kit-$PINNED/crates/panel-kit-core\"" "$TMP/during-run.toml" \

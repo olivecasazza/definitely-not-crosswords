@@ -212,18 +212,59 @@ fn parse_board(data: &Value) -> (Vec<Question>, Vec<GameAction>) {
     (questions, actions)
 }
 
-/// Replace `questions` / `actions` / `members` wholesale from `activeGame.get`.
+/// Should this connection-state transition trigger a reconcile?
+///
+/// Split out from the subscription setup so the *sequence* is testable without
+/// a live socket — the bug this guards (DEF-235) was not one call behaving
+/// wrongly, it was a whole class of reconnect never re-announcing presence.
+///
+/// The rule: every `Live` after the first one is a reconnect that has just
+/// repaired its subscriptions, so it must reconcile. The first-ever `Live` is
+/// deliberately skipped — there is nothing to reconcile, and re-fetching would
+/// discard the optimistic local merge the player has not submitted yet.
+/// Anything that is not `Live` (connecting, reconnecting, offline) does not
+/// reconcile on its own.
+fn is_reconcile_trigger(state: &net::ConnectionState, seen_live: &mut bool) -> bool {
+    if state != &net::ConnectionState::Live {
+        return false;
+    }
+    // `mem::replace` rather than `mem::take`: mark it seen on the way out so a
+    // second `Live` in the same tick is still a genuine reconnect.
+    !std::mem::replace(seen_live, true)
+}
+
+/// Replace `questions` / `actions` / `members` wholesale from `activeGame.get`,
+/// then re-announce our own selection.
 ///
 /// The reconcile step of a reconnect (DEF-175 §3). Every action taken while
 /// the socket was down is missing from the local append-only `actions` list, and
 /// nothing else can recover it — so the only correct repair is to re-read the
 /// server's state and overwrite. All three are already signals, so this is a
 /// `set`, not a re-render of the page.
+///
+/// The re-announce is the part that was missing (DEF-235). Presence is
+/// ephemeral and fire-and-forget: the other players' picture of us lives only as
+/// long as we keep publishing. A dropped socket takes every publish we made over
+/// the dead connection with it, and nothing republished — so the partner kept
+/// rendering us as "working on nothing" until we happened to select a *different*
+/// clue. One reconnect was enough to make a live co-op player go invisible on
+/// their partner's board, which is what `demo.spec.ts`'s presence-ring assertion
+/// kept failing on with a 20s timeout and no ring anywhere in the DOM.
+///
+/// Republishing the current selection (including `None`) is the whole repair,
+/// and it is safe to do here specifically: the reconnect that drove this call has
+/// already re-established the subscription, so the broadcast lands on a live
+/// socket rather than dying with the old one. `selected` is read after the fetch
+/// so the announce reflects where the player is now, not where they were when
+/// the socket dropped. It is the publisher's own `joined` guard (inside
+/// `publish_presence`) that keeps a non-member from publishing.
 fn reconcile_game(
     id: &str,
     questions: Signal<Vec<Question>>,
     actions: Signal<Vec<GameAction>>,
     members: Signal<Vec<MemberInfo>>,
+    selected: Signal<Option<QKey>>,
+    reannounce: impl Fn(Option<QKey>) + 'static,
 ) {
     let id = id.to_string();
     let mut questions = questions;
@@ -239,6 +280,7 @@ fn reconcile_game(
         questions.set(qs);
         actions.set(acts);
         members.set(parse_members(&data));
+        reannounce(*selected.peek());
     });
 }
 
@@ -450,6 +492,38 @@ pub fn GamePlay(id: String) -> Element {
     let mut joining = use_signal(|| false);
     let mut join_error = use_signal(String::new);
 
+    // Broadcast our selection to the other members (no-op until we join).
+    //
+    // Hoisted above the load/subscribe block because the reconnect reconcile
+    // needs it: presence is fire-and-forget, so a socket that dropped and came
+    // back has to re-announce or the other player renders us as idle for the
+    // rest of the session (DEF-235).
+    let id_for_presence = id.clone();
+    let members_for_presence = members;
+    let publish_presence = move |selection: Option<QKey>| {
+        let joined = state
+            .user()
+            .map(|u| {
+                members_for_presence
+                    .peek()
+                    .iter()
+                    .any(|m| m.user_id == u.id)
+            })
+            .unwrap_or(false);
+        if !joined {
+            return;
+        }
+        let input = match selection {
+            Some((n, d)) => json!({ "id": id_for_presence, "number": n, "direction": dir_str(d) }),
+            None => json!({ "id": id_for_presence, "number": null }),
+        };
+        spawn_local(async move {
+            let _ = net::mutation("activeGame.publishPresence", Some(input)).await;
+        });
+    };
+    // Same publisher under its own handle, for the reconnect reconcile.
+    let publish_for_reconcile = publish_presence.clone();
+
     // per-letter input mount handles, so we can drive focus without web-sys.
     let mut input_refs = use_signal(Vec::<Option<Rc<MountedData>>>::new);
 
@@ -526,12 +600,17 @@ pub fn GamePlay(id: String) -> Element {
             let seen_live = seen_live.clone();
             let id = id_for_load.clone();
             move |s: net::ConnectionState| {
-                if s != net::ConnectionState::Live
-                    || std::mem::replace(&mut *seen_live.borrow_mut(), true)
-                {
+                if !is_reconcile_trigger(&s, &mut seen_live.borrow_mut()) {
                     return;
                 }
-                reconcile_game(&id, questions, actions, members);
+                reconcile_game(
+                    &id,
+                    questions,
+                    actions,
+                    members,
+                    selected,
+                    publish_for_reconcile.clone(),
+                );
             }
         }));
         let on_state_for = move |s: net::ConnectionState| on_state.borrow_mut()(s);
@@ -780,25 +859,6 @@ pub fn GamePlay(id: String) -> Element {
     });
 
     // --- selection helpers ---------------------------------------------------
-
-    // Broadcast our selection to the other members (no-op until we join).
-    let id_for_presence = id.clone();
-    let publish_presence = move |selection: Option<QKey>| {
-        let joined = state
-            .user()
-            .map(|u| members.peek().iter().any(|m| m.user_id == u.id))
-            .unwrap_or(false);
-        if !joined {
-            return;
-        }
-        let input = match selection {
-            Some((n, d)) => json!({ "id": id_for_presence, "number": n, "direction": dir_str(d) }),
-            None => json!({ "id": id_for_presence, "number": null }),
-        };
-        spawn_local(async move {
-            let _ = net::mutation("activeGame.publishPresence", Some(input)).await;
-        });
-    };
 
     // Snapshot the in-progress word for a question, pre-filling current letters.
     let publish_for_select = publish_presence.clone();
@@ -2945,5 +3005,69 @@ mod tests {
             ((8, 8), true),
         ]);
         assert!(!word_solved(&word, &mixed));
+    }
+
+    /// DEF-235: the presence ring never appeared for a live co-op player.
+    ///
+    /// Presence is fire-and-forget, so a reconnect silently dropped every
+    /// publish we had made over the dead socket. Nothing republished, which
+    /// left the partner rendering us as idle for the rest of the session — the
+    /// exact "no ring anywhere in the DOM after 20s" the demo tour hit. The
+    /// repair rides the reconcile, so the guard has to fire on every reconnect,
+    /// not just the first.
+    #[test]
+    fn reconnect_after_the_first_live_still_triggers_a_reconcile() {
+        use net::ConnectionState::*;
+
+        let mut seen_live = false;
+
+        // Cold start: Connecting → Live is the first-ever Live. Nothing to
+        // reconcile (and re-fetching would drop the un-submitted optimistic
+        // merge), so it must not fire.
+        assert!(!is_reconcile_trigger(&Connecting, &mut seen_live));
+        assert!(!is_reconcile_trigger(&Live, &mut seen_live));
+
+        // The blip that broke it: the socket drops and comes back. This is the
+        // transition that must reconcile — and therefore must re-announce
+        // presence.
+        assert!(!is_reconcile_trigger(
+            &Reconnecting { attempt: 1 },
+            &mut seen_live
+        ));
+        assert!(
+            is_reconcile_trigger(&Live, &mut seen_live),
+            "a reconnect must reconcile so presence is re-announced"
+        );
+
+        // And it keeps firing: a player whose connection flaps repeatedly must
+        // be re-announced on every repair, not just the first.
+        assert!(!is_reconcile_trigger(
+            &Reconnecting { attempt: 2 },
+            &mut seen_live
+        ));
+        assert!(is_reconcile_trigger(&Live, &mut seen_live));
+    }
+
+    /// A `Live` is the only thing that reconciles. `Connecting`,
+    /// `Reconnecting` and `Offline` must leave the board alone — in particular
+    /// `Offline` must not mark the connection as seen, or the eventual recovery
+    /// would be swallowed as a "first" Live and presence would never come back.
+    #[test]
+    fn non_live_transitions_never_reconcile_or_consume_the_first_live() {
+        use net::ConnectionState::*;
+
+        let mut seen_live = false;
+
+        for state in [Connecting, Reconnecting { attempt: 3 }, Offline] {
+            assert!(
+                !is_reconcile_trigger(&state, &mut seen_live),
+                "{state:?} must not reconcile"
+            );
+        }
+        assert!(
+            !seen_live,
+            "a never-live connection must still be eligible for its first reconcile"
+        );
+        assert!(is_reconcile_trigger(&Live, &mut seen_live));
     }
 }

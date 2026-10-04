@@ -235,6 +235,41 @@ jobs:
           bash scripts/test-alpha-invite-send.sh
           bash scripts/test-verify-release-copy.sh
 
+  # The `cc` wrapper is the fix for DEF-325: the runner's default `cc` appended
+  # link flags unconditionally, so zig linked even for `-c` and every C build
+  # dependency in the workspace failed. `test-cc.sh` is what keeps that fixed —
+  # that `-c` does not link, that a real link still works (i.e. the fix was not
+  # just "drop the flags", which links clean and fails at runtime), and that the
+  # host and wasm target triples map onto ones zig accepts.
+  #
+  # It needs zig, which the runner image has and ubuntu-latest does not, so it
+  # cannot join the hermetic `guards` job above. It runs in the nix-backed jobs
+  # instead, where zig is already present. `--check` additionally asserts the
+  # runner's *installed* `cc` is not zigcc, which is what actually stops the
+  # regression reaching agents; it is allowed to pass when nothing is installed
+  # yet (a stock CI box is not the runner), so it reports rather than blocks.
+  runner-toolchain-cc:
+    name: Runner cc Wrapper
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # actions/checkout
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'pull_request_review' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - name: Guard the wrapper
+        run: |
+          bash scripts/runner-toolchain/test-cc.sh
+          # Non-fatal here: this only has teeth on the runner itself.
+          bash scripts/runner-toolchain/install-runner-cc.sh --check || \
+            echo "note: this runner has no /paperclip/bin, so the default cc is not under test"
+
   conventional-commits-check:
     name: Conventional Commits Check
     runs-on: ubuntu-latest
@@ -322,7 +357,13 @@ jobs:
     # backstop for merges that never reach this job — a maintainer merging
     # from the UI. Keep both: `needs` fails closed inside the workflow, and the
     # required check fails closed server-side.
-    needs: [ conventional-commits-check, approval-check, rust-test, guards ]
+    #
+    # `runner-toolchain-cc` joins for the same reason DEF-325's guard exists at
+    # all: without it in `needs`, the check that the runner's compiler still
+    # compiles without linking would be advice, not a gate — and the regression it
+    # guards is silent, because every Rust-only crate builds fine on a broken `cc`
+    # and the failure only shows up as an opaque lld error inside a C dependency.
+    needs: [ conventional-commits-check, approval-check, rust-test, guards, runner-toolchain-cc ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
       - name: Enable Auto-Merge

@@ -200,6 +200,41 @@ jobs:
             ./client#checks.x86_64-linux.cargo-test \
             ./client#checks.x86_64-linux.cargo-test-server
 
+  # The `scripts/` guard suites encode the rules that keep a bad send, a wrong
+  # release, or a rotted deploy from being reported as a success, and until now
+  # nothing in any workflow executed them: 84 assertions across
+  # alpha-invite-send.sh (DEF-120, DEF-228) and verify-release-copy.sh
+  # (DEF-199, DEF-110) had no runner at all. They were not run by buildbot-nix
+  # either — see the enrolment note on `build-and-push`.
+  #
+  # They need no Nix and no toolchain, which is what makes them a real gate: the
+  # only network client either script can reach for is `curl`, and each suite
+  # installs its own `curl` stub at the front of PATH (and points the host at
+  # `https://stub.invalid`), so no case can touch a real host and this job needs
+  # no credentials and no network. That hermeticity is what keeps it cheap
+  # enough to run on every event instead of on main alone.
+  guards:
+    name: Script Guard Suites
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # actions/checkout
+    # Same condition as `rust-test`: the suites must gate a PR before merge, and
+    # must still run on a direct push/dispatch to main so a hand-merged or
+    # bot-dispatched commit is checked the same way.
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'pull_request_review' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Sequential, not a matrix: both suites share a repo checkout and the
+      # alpha-invite one creates a throwaway git repo under $TMPDIR. `set -e`
+      # is the failure gate — either script exiting non-zero fails the step, and
+      # therefore the job and the `auto-merge` that waits on it.
+      - name: Run the scripts/ guard suites
+        run: |
+          bash scripts/test-alpha-invite-send.sh
+          bash scripts/test-verify-release-copy.sh
+
   conventional-commits-check:
     name: Conventional Commits Check
     runs-on: ubuntu-latest
@@ -274,12 +309,20 @@ jobs:
     # not a gate. This job is the thing that actually lands commits, so a red
     # suite must stop it here.
     #
+    # `guards` is here for the same reason and it is cheap enough to cost
+    # nothing: the scripts/ suites run in seconds on a stock runner with no Nix
+    # and no credentials, and they are the only thing standing between a PR that
+    # silently rots `alpha-invite-send.sh` / `verify-release-copy.sh` and a
+    # release that reports a send or a deploy that never happened. Since this
+    # job calls `gh pr merge --auto` and then dispatches the main build that
+    # deploys to staging, a rotted guard must not be able to ride that path.
+    #
     # `Rust Test Suite` is ALSO a required status check on `main`
     # (branch protection, applied 2026-10-03 under DEF-220), which is the
     # backstop for merges that never reach this job — a maintainer merging
     # from the UI. Keep both: `needs` fails closed inside the workflow, and the
     # required check fails closed server-side.
-    needs: [ conventional-commits-check, approval-check, rust-test ]
+    needs: [ conventional-commits-check, approval-check, rust-test, guards ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
       - name: Enable Auto-Merge

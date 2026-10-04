@@ -132,9 +132,9 @@
         # deliverables, the deployable image, and the migration gate.
         #
         # x86_64-linux only: the buildbot workers are all x86_64-linux, and the
-        # other systems' checks fail at eval time (crossword-client-src is built
-        # during evaluation and no darwin/aarch64 builder exists), so they only
-        # produced red statuses. Packages for other systems are unaffected.
+        # other systems' checks fail at eval time (the client's fileset `src` is
+        # built during evaluation and no darwin/aarch64 builder exists), so they
+        # only produced red statuses. Packages for other systems are unaffected.
         checks = nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           inherit
             crossword-server

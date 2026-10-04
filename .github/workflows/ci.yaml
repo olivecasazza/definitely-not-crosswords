@@ -270,6 +270,23 @@ jobs:
           bash scripts/runner-toolchain/install-runner-cc.sh --check || \
             echo "note: this runner has no /paperclip/bin, so the default cc is not under test"
 
+      # The other half of this job's subject: with-cargo.sh rewrites the web
+      # crate's panel-kit git deps into path deps at the checkout
+      # fetch-panel-kit.sh materialises, so `crossword-web` is compiled against
+      # the revision this repo pins instead of whatever cargo fetches on its own.
+      #
+      # DEF-244 replaced those path deps with a git dep and the repoint sed kept
+      # matching the old shape, so it silently became a no-op and the whole
+      # real-panel-kit mechanism was inert on main — and nothing noticed for
+      # weeks, because this test was not CI-gated anywhere. It lives here rather
+      # than in `guards` for one reason: unlike those suites it must reach
+      # github.com to clone panel-kit. panel-kit is public, so that needs no
+      # credentials — the shallow single-rev fetch is ~1s and ~11 MB, which is
+      # why it is affordable on every PR. Nothing in it builds: the cargo it runs
+      # is a stub that snapshots the manifest.
+      - name: Guard the panel-kit repoint
+        run: bash scripts/runner-toolchain/test-panel-kit.sh
+
   conventional-commits-check:
     name: Conventional Commits Check
     runs-on: ubuntu-latest

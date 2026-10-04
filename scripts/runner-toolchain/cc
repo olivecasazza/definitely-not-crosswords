@@ -9,6 +9,10 @@
 #   ld.lld: error: attempted static link of dynamic object .../libstdc++.so.6
 #
 # Compiling (`-c`), assembling (`-S`) and preprocessing (`-E`) get no link flags.
+#
+# This is also what `scripts/runner-toolchain/install-runner-cc.sh` installs as the
+# runner's default `cc`, so the behaviour agents get without any export is defined
+# here, once, rather than in whatever a previous run happened to leave in ~/.cache.
 set -euo pipefail
 
 ZIG="${ZIG:-}"
@@ -27,15 +31,22 @@ fi
 
 args=()
 link=1
+glibc=1
 for a in "$@"; do
   case "$a" in
     --target=x86_64-unknown-linux-gnu) a="--target=x86_64-linux-gnu" ;;
+    # zig has no `*-unknown-*` targets: it rejects them outright with
+    #   error: unable to parse target query 'wasm32-unknown-unknown': UnknownOperatingSystem
+    # The glibc/libstdc++ flags are x86_64 host libs, so they must not be passed to
+    # a wasm link either.
+    --target=wasm32-unknown-*)
+      a="--target=wasm32-freestanding-musl"; glibc=0 ;;
     -c|-S|-E) link=0 ;;
   esac
   args+=("$a")
 done
 
-if [ "$link" = 1 ]; then
+if [ "$link" = 1 ] && [ "$glibc" = 1 ]; then
   exec "$ZIG" cc "${args[@]}" -L/usr/lib/x86_64-linux-gnu -l:libstdc++.so.6 -lm -ldl -lpthread
 else
   exec "$ZIG" cc "${args[@]}"

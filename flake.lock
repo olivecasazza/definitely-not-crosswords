@@ -12,7 +12,7 @@
       },
       "locked": {
         "lastModified": 1,
-        "narHash": "sha256-6C/RnYOjbD7PpFcteQyvifRQsMnE3GjZQiGbGyQ/Wtc=",
+        "narHash": "sha256-4IbXrNLDFEMEP4SCntxg6KgtXngJNk6g+NrAn10FybQ=",
         "path": "./client",
         "type": "path"
       },

@@ -53,7 +53,45 @@
             overlays = [ inputs.rust-overlay.overlays.default ];
           };
           inherit (pkgs) lib;
-          buildSha = builtins.substring 0 12 (inputs.self.rev or inputs.self.dirtyRev or "unknown");
+          # The commit this build came from, for `BUILD_SHA` (the server's
+          # `/api/config.buildSha` and the bundle's `data-build`).
+          #
+          # `inputs.self.rev or inputs.self.dirtyRev` is NOT sufficient: the
+          # ROOT flake consumes this flake as `client.url = "path:./client"`,
+          # and a `path:` input carries NEITHER attribute — only `sourceInfo`
+          # (verified: `builtins.getFlake "path:.../repo"` yields
+          # `client_attrs` with `sourceInfo`/`narHash` and no `rev`). So every
+          # `.#dockerImage` build — i.e. every CI build, `ci.yaml`
+          # `build-and-push` — compiled BUILD_SHA="unknown" into the server
+          # binary and the wasm bundle. Observed consequences:
+          #   * `/api/config` reports `"buildSha":"unknown"` on BOTH hosts;
+          #   * `deploy-staging.yml`'s post-deploy readiness gate compares that
+          #     against `want="${TAG:0:12}"` for a `:sha`-tagged image, so it
+          #     burned the whole 90-poll / 30-minute budget and then failed the
+          #     run — run 37154697368, 2026-10-03: "healthz=200 from
+          #     https://crosswords-staging.casazza.io but serving build
+          #     unknown, want 1c968462e748" (x90), then `::error::... did not
+          #     come up on 1c968462e748...`;
+          #   * the footer/boot-shell build id reads "unknown", so neither an
+          #     operator nor a closed-alpha tester can name the build they hit.
+          #
+          # Resolution order — each step is an independent provenance source,
+          # most trustworthy first:
+          #   1. `CROSSWORDS_BUILD_SHA` env var, set by `.github/workflows/ci.yaml`
+          #      from `github.sha`. This is the only source that is correct for a
+          #      `path:` input, because the caller — not the callee — is what
+          #      knows the commit. `builtins.getEnv` yields "" under pure eval
+          #      (e.g. `nix flake check`), which falls through to the next step
+          #      instead of failing the evaluation.
+          #   2. `self.rev` / `self.dirtyRev`, for direct `nix build ./client`
+          #      from a git checkout (`nix develop ./client`).
+          buildSha =
+            let
+              fromEnv = builtins.getEnv "CROSSWORDS_BUILD_SHA";
+              fromSelf = inputs.self.rev or inputs.self.dirtyRev or "";
+              raw = if fromEnv != "" then fromEnv else fromSelf;
+            in
+            builtins.substring 0 12 (if raw == "" then "unknown" else raw);
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
             extensions = [

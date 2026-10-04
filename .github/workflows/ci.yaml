@@ -82,7 +82,17 @@ jobs:
           password: ${{ steps.auth.outputs.access_token }}
 
       # Build the layered image with nix and load it into the local docker daemon.
+      #
+      # CROSSWORDS_BUILD_SHA: the root flake consumes ./client as `path:./client`,
+      # which carries no `rev`, so BUILD_SHA would bake as "unknown" into the
+      # server binary and the wasm bundle. /api/config then reports
+      # buildSha "unknown" and deploy-staging.yml's readiness gate
+      # (`want="${TAG:0:12}"` on a :sha image) can never match — it burns the
+      # full 90-poll/30-minute budget and fails every main deploy. `github.sha`
+      # is the commit this run builds, so hand it down explicitly.
       - name: Build image (nix)
+        env:
+          CROSSWORDS_BUILD_SHA: ${{ github.sha }}
         run: |
           IMAGE_TAR=$(nix build --option allow-import-from-derivation true --no-link --print-out-paths .#dockerImage)
           docker load < "$IMAGE_TAR"
@@ -177,6 +187,8 @@ jobs:
       # the check runs the tests — crane's cargoTest executes them, and a
       # non-zero test result fails the build.
       - name: Run the workspace test suite
+        env:
+          CROSSWORDS_BUILD_SHA: ${{ github.sha }}
         run: |
           nix build --option allow-import-from-derivation true --no-link --print-out-paths \
             ./client#checks.x86_64-linux.cargo-test \

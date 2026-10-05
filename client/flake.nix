@@ -30,29 +30,25 @@
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     omnix.url = "github:juspay/omnix";
 
-    # THE panel-kit revision this repo builds and checks against. It is the
-    # commit `client/web/Cargo.toml`'s `tag = "v1.1.1"` resolves to, and the one
-    # `client/Cargo.lock` records as
-    # `git+…/panel-kit.git?tag=v1.1.1#503f46c32a1c2410aa4e15b2b3bf725207068906`.
+    # DEF-330: there is deliberately NO `panel-kit` input here any more.
     #
-    # It used to point one commit further ahead (4aad83c8) and used to be
-    # vendored into the build: `src` copied this input in as `vendor-panel-kit`
-    # and `sed`-repointed the web crate's absolute `/home/olive/Repositories/…`
-    # path deps at it. DEF-244 replaced those path deps with a plain git dep, so
-    # the repoint `sed` had matched nothing since, the `exclude` protected a
-    # directory cargo never read, and a whole second source tree was copied into
-    # every build for nothing. All of that is gone (see `src`); the build now
-    # resolves panel-kit through `cargoVendorDir` from the real Cargo.lock.
+    # It was a third copy of one revision, alongside `web/Cargo.toml`'s tag and
+    # the `rev` in `Cargo.lock`, and nothing reconciled them. It was also inert:
+    # `flake = false`, and DEF-324 had already removed the only consumer — the
+    # `vendor-panel-kit` copy in `src` below. Its last reader was
+    # `scripts/runner-toolchain/fetch-panel-kit.sh`, which sedded the rev out of
+    # this line to decide what the runner checks out, which is precisely how the
+    # runner came to check out a different commit than cargo compiled.
     #
-    # WHY THE INPUT STILL EXISTS: it is no longer read by this build, only by
-    # `scripts/runner-toolchain/fetch-panel-kit.sh`, which seds the rev out of
-    # this line to materialise the real panel-kit so `crossword-web` can be
-    # type-checked in a container with no nix dev shell. That consumer is why
-    # this line and Cargo.lock must name the SAME commit: if you bump the tag in
-    # web/Cargo.toml, repin both this URL and Cargo.lock together. (Nothing
-    # enforces that today — see the follow-up filed from DEF-324.)
-    panel-kit.url = "github:olivecasazza/panel-kit/503f46c32a1c2410aa4e15b2b3bf725207068906";
-    panel-kit.flake = false;
+    # `client/Cargo.lock` is now the single source of truth, and it is the file
+    # cargo actually resolves, so the revision the runner checks out and the
+    # revision the build compiles cannot be two different facts. Nothing in this
+    # flake reads a panel-kit revision: `cargoVendorDir` vendors the dep from
+    # the lock.
+    #
+    # TO BUMP panel-kit: change the `tag` in `web/Cargo.toml` and re-resolve the
+    # lock. There is no nix side to keep in step, which is the point — that side
+    # is what silently rotted.
   };
 
   outputs =

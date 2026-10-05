@@ -9,12 +9,14 @@
 #      pins. The pin the runner checks (fetch-panel-kit.sh) and the code the
 #      build compiles are then two different facts. So both git deps are
 #      temporarily rewritten into path deps at the real panel-kit, checked out at
-#      the revision `flake.nix` pins (see `fetch-panel-kit.sh`). If that checkout
-#      is unavailable — offline, no git — they fall back to the manifest-only
-#      shim in `panel-kit-shim/`, which loads the manifest but cannot type-check
-#      anything. `[patch]` does not help: cargo resolves patches after the
-#      manifest is loaded, and the dep here has to resolve to *a* directory
-#      first.
+#      the revision `client/Cargo.lock` pins (see `fetch-panel-kit.sh` and
+#      `panel-kit-pin.sh`) — the same file cargo resolves, so the two cannot
+#      disagree (DEF-330; it used to read client/flake.nix, which could). If that
+#      checkout is unavailable — offline, no git — they fall back to the
+#      manifest-only shim in `panel-kit-shim/`, which loads the manifest but
+#      cannot type-check anything. `[patch]` does not help: cargo resolves
+#      patches after the manifest is loaded, and the dep here has to resolve to
+#      *a* directory first.
 #   2. `/paperclip/bin/cc` -> `zigcc` appends link flags unconditionally, so zig
 #      tries to link even for `-c` and fails. `./cc` in this directory fixes that.
 #
@@ -31,7 +33,7 @@ SHIM="$HERE/panel-kit-shim"
 SUBCMD="${1:?usage: with-cargo.sh <cargo subcommand> [args...]}"
 shift
 
-# Prefer the real panel-kit at the flake-pinned rev: that is the only way
+# Prefer the real panel-kit at the lock-pinned rev: that is the only way
 # `crossword-web`/`crossword-desktop` can be type-checked here. The shim is the
 # offline fallback, and it is not panel-kit — say so rather than let a caller
 # believe a shim build verified the frontend.

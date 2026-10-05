@@ -3,7 +3,7 @@
 A minimal shim that makes the native `client/` crates buildable in a container
 that has no nix dev shell. This exists because `/paperclip/bin/cc` (the default
 compiler in this runner) is broken for `-c`, and because `client/web/Cargo.toml`
-pins `panel-kit` at an absolute host path.
+pins `panel-kit` as a git dep that cargo would otherwise resolve on its own.
 
 `nix develop ./client` is the supported way to work on this repo and is
 unaffected by any of this. Use the shim only when nix is unavailable or its
@@ -25,7 +25,7 @@ If you are on a runner where it is not installed yet, `cc` is still the broken
 
 ### The wrapper script (`with-cargo.sh`)
 
-For everything `install-runner-cc.sh` does not cover — the `panel-kit` path deps
+For everything `install-runner-cc.sh` does not cover — the `panel-kit` git deps
 and `ORT_LIB_LOCATION`:
 
 ```bash
@@ -34,7 +34,7 @@ scripts/runner-toolchain/with-cargo.sh build -p crossword-server
 scripts/runner-toolchain/with-cargo.sh clippy -p crossword-server
 ```
 
-It temporarily repoints the two `panel-kit` path deps, puts this directory first
+It temporarily repoints the two `panel-kit` git deps, puts this directory first
 on `PATH` so `cc`/`gcc`/`c++`/`g++` resolve to the wrapper, sets
 `ORT_LIB_LOCATION`/`ORT_SKIP_DOWNLOAD`, runs cargo, and restores
 `client/web/Cargo.toml` and `client/Cargo.lock` on exit via a trap. The tree is
@@ -121,34 +121,38 @@ maps, and the wasm target compiles without host libs leaking in.
 
 ### 2. `panel-kit` — the workspace manifest
 
-`client/web/Cargo.toml` depends on `panel-kit` and `panel-kit-core` by absolute
-path:
+`client/web/Cargo.toml` depends on `panel-kit` and `panel-kit-core` by git tag
+(since DEF-244):
 
 ```toml
-panel-kit = { path = "/home/olive/Repositories/panel-kit" }
-panel-kit-core = { path = "/home/olive/Repositories/panel-kit/crates/panel-kit-core" }
+panel-kit = { git = "https://github.com/olivecasazza/panel-kit.git", tag = "v1.1.1" }
+panel-kit-core = { git = "https://github.com/olivecasazza/panel-kit.git", tag = "v1.1.1" }
 ```
 
-That path is the release-plz host's checkout and does not exist elsewhere, so
-cargo fails at manifest load, before it resolves anything:
+That resolves on its own, so the manifest loads — but cargo then fetches
+panel-kit itself, on its own schedule. Left alone, the runner would compile
+whatever cargo happened to resolve rather than the revision this repo pins.
 
-```
-failed to read /home/olive/Repositories/panel-kit/Cargo.toml: No such file or directory (os error 2)
-```
+`fetch-panel-kit.sh` is the fix for a bare container: it checks out panel-kit at
+**the revision `client/Cargo.lock` pins** — read out of the lockfile by
+`panel-kit-pin.sh`, never hardcoded here — and `with-cargo.sh` repoints both git
+deps at that checkout as path deps for the duration of the cargo run.
 
-`client/flake.nix` solves this for nix builds by vendoring the pinned
-`panel-kit` input into the workspace source and rewriting the paths.
-`fetch-panel-kit.sh` is the same idea for a bare container: it checks out
-panel-kit at **the revision `client/flake.nix` pins** — read out of the flake,
-never hardcoded here, so the runner and the nix build cannot drift — and
-`with-cargo.sh` repoints both path deps at that checkout.
+Reading the **lock** rather than `client/flake.nix` is the load-bearing part
+(DEF-330). The lock is the file cargo itself resolves, so "the revision the
+runner checks out" and "the revision the build compiles" are the same fact by
+construction instead of two hand-kept copies. They used to be two copies: with
+the flake pinned at `7517e673` and the lock at `503f46c3`, `test-panel-kit.sh`
+printed `PASS` and exited 0 while the runner compiled a commit no `cargo build`
+would ever produce. The `panel-kit` flake input that carried the third copy has
+been deleted; nothing in the nix build read it since DEF-324.
 
 This is what makes `crossword-web` type-checkable here at all:
 
 ```console
 $ scripts/runner-toolchain/with-cargo.sh check -p crossword-web
-panel-kit: ~/.cache/runner-toolchain/panel-kit-4aad83c86285c83706e380c054a2b317ff8c6f69
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 32.09s
+panel-kit: ~/.cache/runner-toolchain/panel-kit-503f46c32a1c2410aa4e15b2b3bf725207068906
+    Finished `dev` profile [optimized + debuginfo] target(s) in 32.09s
 ```
 
 The checkout is cached per revision under `~/.cache/runner-toolchain` (~11M) and
@@ -163,12 +167,14 @@ and `crossword-desktop` do not compile against it, and the fallback prints that
 warning precisely so a shim build is never mistaken for a real frontend
 verification.
 
-`./test-panel-kit.sh` guards all of this: the resolved rev equals the flake's
-pin, the checkout is panel-kit and not the shim, the repoint happens while
-cargo runs and the host path does not survive it, and the tree is clean after.
+`./test-panel-kit.sh` guards all of this: the lock really does pin panel-kit at
+a commit from that repo, the resolved rev equals it, the checkout is panel-kit
+and not the shim, the repoint happens while cargo runs and no git dep survives
+it, and the tree is clean after.
 
-`[patch]` in `.cargo/config.toml` is not an alternative here: cargo fails while
-loading the manifest, before patch resolution runs.
+`[patch]` in `.cargo/config.toml` is not an alternative here: cargo resolves
+patches after loading the manifest, and the dep has to resolve to *a* directory
+first.
 
 ### 3. `ORT_LIB_LOCATION`
 
@@ -207,4 +213,5 @@ instead of by host path. That is the state `install-runner-cc.sh` gets you; the
 panel-kit checkout.
 
 Tracked as **DEF-325** (wiring the wrapper in as the default `cc`); the wrapper
-and the panel-kit/ORT workarounds are **DEF-244**.
+and the panel-kit/ORT workarounds are **DEF-244**, and reading the panel-kit
+revision out of `Cargo.lock` instead of `client/flake.nix` is **DEF-330**.

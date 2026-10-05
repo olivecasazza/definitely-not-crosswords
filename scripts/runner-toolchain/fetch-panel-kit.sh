@@ -1,11 +1,14 @@
 #!/bin/bash
-# Materialise the real panel-kit at the revision `flake.nix` pins, so
+# Materialise the real panel-kit at the revision `client/Cargo.lock` pins, so
 # `crossword-web` and `crossword-desktop` can actually be type-checked in this
 # container. Prints the checkout path on stdout; diagnostics on stderr.
 #
-# The revision is read out of the flake rather than duplicated here, so the
-# runner and the nix build can never drift apart. `client/flake.nix` vendors
-# the same input into the workspace source for the same reason.
+# The revision comes from `panel-kit-pin.sh`, which reads `client/Cargo.lock` —
+# the file cargo itself resolves. So the revision checked out here and the
+# revision cargo compiles are the same fact by construction, with no second
+# copy of the pin anywhere to drift (DEF-330). This used to read the rev out of
+# `client/flake.nix` instead, which let the runner check out a different commit
+# from the one cargo compiled; that flake input is now deleted outright.
 #
 # The checkout is cached per revision under
 # ${PANEL_KIT_CACHE_DIR:-~/.cache/runner-toolchain} and reused, so repeat runs
@@ -16,22 +19,15 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$HERE/../.." && pwd)"
-# CLIENT_FLAKE exists so the test can point at the real flake while running a
-# copy of this script out of a temp dir; see test-panel-kit.sh.
-FLAKE="${CLIENT_FLAKE:-$REPO_ROOT/client/flake.nix}"
-
-if [ ! -f "$FLAKE" ]; then
-  echo "fetch-panel-kit: no flake.nix at $FLAKE" >&2
+# CLIENT_LOCK exists so the test can point the resolver at a lockfile it
+# controls while running a copy of this script out of a temp dir; see
+# test-panel-kit.sh. panel-kit-pin.sh defaults to the repo's own lock.
+read -r REV URL < <(bash "$HERE/panel-kit-pin.sh" 2>/dev/null) || {
+  echo "fetch-panel-kit: could not resolve the panel-kit pin from Cargo.lock" >&2
   exit 1
-fi
-
-# `panel-kit.url = "github:olivecasazza/panel-kit/<rev>";` — the rev is the
-# last path segment. Anchored to the panel-kit input so a future flake input
-# with a similar URL cannot be picked up by accident.
-REV="$(sed -n 's#.*panel-kit\.url = "github:olivecasazza/panel-kit/\([0-9a-f]\{40\}\)".*#\1#p' "$FLAKE")"
-if [ -z "$REV" ]; then
-  echo "fetch-panel-kit: could not read the pinned panel-kit rev from $FLAKE" >&2
+}
+if [ -z "$REV" ] || [ -z "$URL" ]; then
+  echo "fetch-panel-kit: panel-kit-pin.sh resolved no rev/url from Cargo.lock" >&2
   exit 1
 fi
 
@@ -60,7 +56,7 @@ CLONE="$STAGE/repo"
 cleanup() { rm -rf "$STAGE"; }
 trap cleanup EXIT
 
-if ! git clone --quiet --no-checkout https://github.com/olivecasazza/panel-kit.git "$CLONE" 2>"$STAGE/clone.log"; then
+if ! git clone --quiet --no-checkout "$URL" "$CLONE" 2>"$STAGE/clone.log"; then
   echo "fetch-panel-kit: clone failed:" >&2
   cat "$STAGE/clone.log" >&2
   exit 1
@@ -74,7 +70,7 @@ if ! git -C "$CLONE" fetch --quiet --depth 1 origin "$REV" 2>"$STAGE/fetch.log";
   rm -rf "$STAGE"
   STAGE="$(mktemp -d "$CACHE_ROOT/.panel-kit-XXXXXX")"
   CLONE="$STAGE/repo"
-  if ! git clone --quiet https://github.com/olivecasazza/panel-kit.git "$CLONE" 2>"$STAGE/clone.log"; then
+  if ! git clone --quiet "$URL" "$CLONE" 2>"$STAGE/clone.log"; then
     echo "fetch-panel-kit: clone failed:" >&2
     cat "$STAGE/clone.log" >&2
     exit 1

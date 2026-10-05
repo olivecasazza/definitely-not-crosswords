@@ -284,6 +284,13 @@ jobs:
       # credentials — the shallow single-rev fetch is ~1s and ~11 MB, which is
       # why it is affordable on every PR. Nothing in it builds: the cargo it runs
       # is a stub that snapshots the manifest.
+      #
+      # DEF-330 moved the revision the runner checks out from client/flake.nix to
+      # client/Cargo.lock — the file cargo itself resolves — and deleted the flake
+      # input that carried the third copy. This step is now the only thing that
+      # can see the pin move, so it is where a pin bump is verified: the runner
+      # and the build cannot check out different commits any more, because they
+      # read the same line.
       - name: Guard the panel-kit repoint
         run: bash scripts/runner-toolchain/test-panel-kit.sh
 

@@ -824,11 +824,38 @@ pub fn GamePlay(id: String) -> Element {
             Some((n, d)) => json!({ "id": id_for_presence, "number": n, "direction": dir_str(d) }),
             None => json!({ "id": id_for_presence, "number": null }),
         };
-        // Fire-and-forget from the event handler, but ordered by the one
-        // presence writer above. A dropped receiver only means the page is
+        // Fire-and-forget from the event handler, but ordered/coalesced by the
+        // one presence writer above. A dropped receiver only means the page is
         // unmounting; there is nobody left to observe its presence.
         let _ = presence_tx_for_publish.unbounded_send(input);
     };
+
+    // Refresh the current focus before its 45s TTL expires.
+    //
+    // Presence is ephemeral and intentionally not persisted. One missed
+    // websocket delta therefore leaves a peer missing forever if the player
+    // keeps working the same clue: no selection change produces another event.
+    // A 10s heartbeat makes the latest state self-healing (and repairs a
+    // reconnect that missed the original focus) without turning presence into
+    // durable history. The coalescing writer ensures a clear still wins — this
+    // only sends while a selection actually exists.
+    let heartbeat_tx = presence_tx.clone();
+    let heartbeat_id = id.clone();
+    let heartbeat_selected = selected;
+    use_hook(move || {
+        spawn_local(async move {
+            let mut ticks = IntervalStream::new(10_000);
+            while ticks.next().await.is_some() {
+                if let Some((number, direction)) = *heartbeat_selected.peek() {
+                    let _ = heartbeat_tx.unbounded_send(json!({
+                        "id": heartbeat_id,
+                        "number": number,
+                        "direction": dir_str(direction),
+                    }));
+                }
+            }
+        });
+    });
 
     // Snapshot the in-progress word for a question, pre-filling current letters.
     let publish_for_select = publish_presence.clone();

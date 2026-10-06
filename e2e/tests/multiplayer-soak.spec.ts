@@ -649,16 +649,6 @@ test.describe("four-player multiplayer soak", () => {
         3,
       );
       expect(picks.length, "enough distinct open clues for players 2–4").toBe(3);
-      // A SECOND clue per player, used only to alternate selections during the
-      // presence step. Selecting the same clue twice is a client-side no-op and
-      // emits no new publishPresence, so a retry needs a real change to retry.
-      // These are never solved — the presence step only selects them.
-      const alternates = pickDistinct(
-        open.filter((c) => !taken.has(clueKey(c)) && !picks.includes(c)),
-        3,
-      );
-      const altClue =
-        open.find((c) => c !== firstClue && !picks.includes(c)) ?? firstClue;
       console.log(
         `player 1 takes ${clueKey(firstClue)}; players 2-4 take ${picks
           .map((c) => clueKey(c))
@@ -810,24 +800,39 @@ test.describe("four-player multiplayer soak", () => {
         // presence is live, so every other player has to select a clue of their
         // own. Presence entries expire after 45s, so re-select on each tick:
         // a dropped publish is recovered rather than waited out.
-        await selectClue(pages[0], firstClue);
-        // Alternate each player's selection between two of their own clues on
-        // every tick. Re-selecting the SAME clue is often a client-side no-op —
-        // the component short-circuits when the key is unchanged — so a
-        // "republish" that re-picks the identical clue emits no new
-        // `publishPresence` at all, and a publish that landed on the wrong pod
-        // is never actually retried. Alternating guarantees a genuine change
-        // (and therefore a genuine publish) each time.
-        let tick = 0;
+        const selectFreshPresenceClues = async () => {
+          await refreshOpen();
+          const available = open.filter((c) => !taken.has(clueKey(c)) && c.answer);
+          expect(available.length, "open clues for presence labels").toBeGreaterThanOrEqual(
+            ACCOUNTS.length * 2,
+          );
+          const primary = pickDistinct(available, ACCOUNTS.length);
+          const primaryKeys = new Set(primary.map(clueKey));
+          const alternate = pickDistinct(
+            available.filter((c) => !primaryKeys.has(clueKey(c))),
+            ACCOUNTS.length,
+          );
+          expect(primary.length, "primary presence clues").toBe(ACCOUNTS.length);
+          expect(alternate.length, "alternate presence clues").toBe(ACCOUNTS.length);
+          return { primary, alternate };
+        };
         const spin = async () => {
-          const t = tick++;
-          await selectClue(pages[0], t % 2 === 0 ? firstClue : altClue);
+          const presence = await selectFreshPresenceClues();
           await Promise.all(
-            picks.map(async (c, n) => {
+            pages.map(async (p, n) => {
               try {
-                await selectClue(pages[n + 1], t % 2 === 0 ? c : alternates[n]);
+                await selectClue(p, presence.primary[n]);
               } catch (err) {
-                console.log(`republish for player ${n + 2} failed: ${String(err).split("\n")[0]}`);
+                console.log(`publish for player ${n + 1} failed: ${String(err).split("\n")[0]}`);
+              }
+            }),
+          );
+          await Promise.all(
+            pages.map(async (p, n) => {
+              try {
+                await selectClue(p, presence.alternate[n]);
+              } catch (err) {
+                console.log(`republish for player ${n + 1} failed: ${String(err).split("\n")[0]}`);
               }
             }),
           );

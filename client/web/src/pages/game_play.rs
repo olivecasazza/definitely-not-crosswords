@@ -17,7 +17,8 @@ use crossword_core::game::{
     Cell, Direction, GameAction, Question, QuestionWithAnswerMap,
 };
 use dioxus::prelude::*;
-use futures::StreamExt;
+use futures::channel::mpsc;
+use futures::{StreamExt, TryStreamExt};
 use gloo_timers::future::{IntervalStream, TimeoutFuture};
 use panel_kit::loading::ProgressBar;
 use serde_json::{json, Value};
@@ -450,6 +451,33 @@ pub fn GamePlay(id: String) -> Element {
     let mut joining = use_signal(|| false);
     let mut join_error = use_signal(String::new);
 
+    // One ordered, coalescing writer for ephemeral presence state.
+    //
+    // Two independent fire-and-forget mutations originally raced: a direction
+    // toggle queued clear(None), then clue selection queued focus(Some), and a
+    // stale clear could arrive last. Serialising removed the reorder, but
+    // replaying every historical focus/clear after 24 UI solves built a queue
+    // of stale states; the final focus could sit behind them for 90s.
+    //
+    // Presence is STATE, not an audit log. Drain everything already pending
+    // and send only the newest state. A clear immediately followed by focus
+    // becomes focus; a user who genuinely clears and stops still sends clear.
+    // One request remains in flight at a time, so wire order stays defined.
+    let presence_tx = use_hook(|| {
+        let (tx, mut rx) = mpsc::unbounded::<Value>();
+        spawn_local(async move {
+            while let Some(mut latest) = rx.next().await {
+                // VUs/components share no state, but one component owns this
+                // receiver; draining here is the single coalescing point.
+                while let Ok(Some(newer)) = rx.try_next() {
+                    latest = newer;
+                }
+                let _ = net::mutation("activeGame.publishPresence", Some(latest)).await;
+            }
+        });
+        tx
+    });
+
     // per-letter input mount handles, so we can drive focus without web-sys.
     let mut input_refs = use_signal(Vec::<Option<Rc<MountedData>>>::new);
 
@@ -783,6 +811,7 @@ pub fn GamePlay(id: String) -> Element {
 
     // Broadcast our selection to the other members (no-op until we join).
     let id_for_presence = id.clone();
+    let presence_tx_for_publish = presence_tx.clone();
     let publish_presence = move |selection: Option<QKey>| {
         let joined = state
             .user()
@@ -795,10 +824,38 @@ pub fn GamePlay(id: String) -> Element {
             Some((n, d)) => json!({ "id": id_for_presence, "number": n, "direction": dir_str(d) }),
             None => json!({ "id": id_for_presence, "number": null }),
         };
-        spawn_local(async move {
-            let _ = net::mutation("activeGame.publishPresence", Some(input)).await;
-        });
+        // Fire-and-forget from the event handler, but ordered/coalesced by the
+        // one presence writer above. A dropped receiver only means the page is
+        // unmounting; there is nobody left to observe its presence.
+        let _ = presence_tx_for_publish.unbounded_send(input);
     };
+
+    // Refresh the current focus before its 45s TTL expires.
+    //
+    // Presence is ephemeral and intentionally not persisted. One missed
+    // websocket delta therefore leaves a peer missing forever if the player
+    // keeps working the same clue: no selection change produces another event.
+    // A 10s heartbeat makes the latest state self-healing (and repairs a
+    // reconnect that missed the original focus) without turning presence into
+    // durable history. The coalescing writer ensures a clear still wins — this
+    // only sends while a selection actually exists.
+    let heartbeat_tx = presence_tx.clone();
+    let heartbeat_id = id.clone();
+    let heartbeat_selected = selected;
+    use_hook(move || {
+        spawn_local(async move {
+            let mut ticks = IntervalStream::new(10_000);
+            while ticks.next().await.is_some() {
+                if let Some((number, direction)) = *heartbeat_selected.peek() {
+                    let _ = heartbeat_tx.unbounded_send(json!({
+                        "id": heartbeat_id,
+                        "number": number,
+                        "direction": dir_str(direction),
+                    }));
+                }
+            }
+        });
+    });
 
     // Snapshot the in-progress word for a question, pre-filling current letters.
     let publish_for_select = publish_presence.clone();

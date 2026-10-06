@@ -17,6 +17,7 @@ use crossword_core::game::{
     Cell, Direction, GameAction, Question, QuestionWithAnswerMap,
 };
 use dioxus::prelude::*;
+use futures::channel::mpsc;
 use futures::StreamExt;
 use gloo_timers::future::{IntervalStream, TimeoutFuture};
 use panel_kit::loading::ProgressBar;
@@ -450,6 +451,28 @@ pub fn GamePlay(id: String) -> Element {
     let mut joining = use_signal(|| false);
     let mut join_error = use_signal(String::new);
 
+    // One ordered writer for ephemeral presence mutations.
+    //
+    // `publish_presence` used to `spawn_local` every clear/focus mutation
+    // independently. A direction change does clear(None) and then immediately
+    // select(Some); those HTTP requests could arrive focus-then-clear, leaving
+    // the roster with no live clue even though the player was focused. The
+    // server relay was proven healthy (four direct publishes reached 4/4
+    // sockets); this was client-side request reordering.
+    //
+    // A single queue preserves UI event order: clear is acknowledged before
+    // the following focus is sent. Presence is low-volume, so backpressure is
+    // preferable to coalescing away an ordering edge.
+    let presence_tx = use_hook(|| {
+        let (tx, mut rx) = mpsc::unbounded::<Value>();
+        spawn_local(async move {
+            while let Some(input) = rx.next().await {
+                let _ = net::mutation("activeGame.publishPresence", Some(input)).await;
+            }
+        });
+        tx
+    });
+
     // per-letter input mount handles, so we can drive focus without web-sys.
     let mut input_refs = use_signal(Vec::<Option<Rc<MountedData>>>::new);
 
@@ -783,6 +806,7 @@ pub fn GamePlay(id: String) -> Element {
 
     // Broadcast our selection to the other members (no-op until we join).
     let id_for_presence = id.clone();
+    let presence_tx_for_publish = presence_tx.clone();
     let publish_presence = move |selection: Option<QKey>| {
         let joined = state
             .user()
@@ -795,9 +819,10 @@ pub fn GamePlay(id: String) -> Element {
             Some((n, d)) => json!({ "id": id_for_presence, "number": n, "direction": dir_str(d) }),
             None => json!({ "id": id_for_presence, "number": null }),
         };
-        spawn_local(async move {
-            let _ = net::mutation("activeGame.publishPresence", Some(input)).await;
-        });
+        // Fire-and-forget from the event handler, but ordered by the one
+        // presence writer above. A dropped receiver only means the page is
+        // unmounting; there is nobody left to observe its presence.
+        let _ = presence_tx_for_publish.unbounded_send(input);
     };
 
     // Snapshot the in-progress word for a question, pre-filling current letters.

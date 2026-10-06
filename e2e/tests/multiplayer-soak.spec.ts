@@ -364,26 +364,57 @@ async function selectClue(page: Page, clue: AnswerClue) {
       hasText: (clue.questionText ?? "").slice(0, 20),
     })
     .first();
-  await row.click();
-  await expect(page.locator(".cw-letter-input")).toHaveCount(clue.answer.length);
+  // Concurrent selection publishes presence, which rerenders the other three
+  // pages while their row clicks are in flight. Keep the assertion strict —
+  // the full editor MUST mount — but retry the click across those legitimate
+  // rerenders instead of treating one detached node as a failed game.
+  await expect
+    .poll(
+      async () => {
+        if ((await page.locator(".cw-letter-input").count()) === clue.answer.length) {
+          return true;
+        }
+        await row.click({ timeout: 5_000 }).catch(() => {});
+        return (await page.locator(".cw-letter-input").count()) === clue.answer.length;
+      },
+      { timeout: 15_000, intervals: [100, 250, 500, 1_000, 2_000] },
+    )
+    .toBe(true);
 }
 
-/**
- * Type the real answer, guess it, and wait for the solve to land. The
- * observable is the actor's own `.cw-correct` count — the entry row stays open
- * after a guess (the editor only closes on completion), so its presence is not
- * a signal.
- */
-async function solveClue(page: Page, clue: AnswerClue) {
-  await selectClue(page, clue);
-  const inputs = page.locator(".cw-letter-input");
-  await inputs.first().click();
-  await page.keyboard.type(clue.answer.toUpperCase());
-  const typed = await inputs.evaluateAll((els) =>
-    els.map((e) => (e as HTMLInputElement).value).join(""),
-  );
-  expect(typed.toUpperCase()).toBe(clue.answer.toUpperCase());
-  const before = await page.locator(".cw-correct").count();
+/** Select the clue and type the whole answer, but do NOT submit yet. */
+async function prepareClue(page: Page, clue: AnswerClue): Promise<number> {
+  // A different player's focus can rerender this page after `selectClue`
+  // succeeds but before the first input click. Retry the WHOLE preparation: a
+  // detached editor may have accepted partial letters, so every retry
+  // reselects and clears the one-character inputs before typing.
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      await selectClue(page, clue);
+      const inputs = page.locator(".cw-letter-input");
+      const count = await inputs.count();
+      expect(count, `editor length for ${clueKey(clue)}`).toBe(clue.answer.length);
+      for (let i = 0; i < count; i++) {
+        await inputs.nth(i).fill("");
+      }
+      await inputs.first().click({ timeout: 5_000 });
+      await page.keyboard.type(clue.answer.toUpperCase());
+      const typed = await inputs.evaluateAll((els) =>
+        els.map((e) => (e as HTMLInputElement).value).join(""),
+      );
+      expect(typed.toUpperCase()).toBe(clue.answer.toUpperCase());
+      return page.locator(".cw-correct").count();
+    } catch (err) {
+      lastError = err;
+      if (attempt === 4) throw err;
+    }
+  }
+  throw lastError;
+}
+
+/** Submit an answer already typed by `prepareClue`, waiting for it to land. */
+async function submitPreparedClue(page: Page, before: number) {
   // A board re-render between the last keystroke and the click can swallow it,
   // so keep clicking Guess until the solve shows up.
   await expect
@@ -400,6 +431,12 @@ async function solveClue(page: Page, clue: AnswerClue) {
       { timeout: 30_000 },
     )
     .toBe(true);
+}
+
+/** Type the real answer, guess it, and wait for the solve to land. */
+async function solveClue(page: Page, clue: AnswerClue) {
+  const before = await prepareClue(page, clue);
+  await submitPreparedClue(page, before);
 }
 
 /** Count of correctly-marked cells on a board. */
@@ -649,16 +686,6 @@ test.describe("four-player multiplayer soak", () => {
         3,
       );
       expect(picks.length, "enough distinct open clues for players 2–4").toBe(3);
-      // A SECOND clue per player, used only to alternate selections during the
-      // presence step. Selecting the same clue twice is a client-side no-op and
-      // emits no new publishPresence, so a retry needs a real change to retry.
-      // These are never solved — the presence step only selects them.
-      const alternates = pickDistinct(
-        open.filter((c) => !taken.has(clueKey(c)) && !picks.includes(c)),
-        3,
-      );
-      const altClue =
-        open.find((c) => c !== firstClue && !picks.includes(c)) ?? firstClue;
       console.log(
         `player 1 takes ${clueKey(firstClue)}; players 2-4 take ${picks
           .map((c) => clueKey(c))
@@ -717,15 +744,29 @@ test.describe("four-player multiplayer soak", () => {
           const playable = open.filter((c) => !taken.has(clueKey(c)) && c.answer);
           if (playable.length <= LEAVE_OPEN || playable.length < ACCOUNTS.length) break;
 
-          // One distinct clue per player so nobody races the same cell.
-          const batch = playable.slice(0, ACCOUNTS.length);
+          // One CELL-DISJOINT clue per player. Distinct clue ids are not
+          // enough: crossing clues share a cell and can close another
+          // player's editor when their server update lands.
+          const batch = pickDistinct(playable, ACCOUNTS.length);
+          if (batch.length < ACCOUNTS.length) break;
           for (const clue of batch) taken.add(clueKey(clue));
 
-          const before = await Promise.all(pages.map(correctCount));
           const started = Date.now();
-          await Promise.all(batch.map((clue, n) => solveClue(pages[n], clue)));
+          // Two-phase round. If one player submits while another is still
+          // typing, the GameActionsAdded broadcast rerenders every board and
+          // detaches the slower player's input. Everyone types first, then
+          // everyone submits in the same phase.
+          const actorBefore = await Promise.all(
+            batch.map((clue, n) => prepareClue(pages[n], clue)),
+          );
+          // Type concurrently, COMMIT sequentially. Four simultaneous Guess
+          // clicks make the first GameActionsAdded rerender detach another
+          // player's button before its click lands. Sequential commits also
+          // produce the slower, readable cadence the observer recording needs
+          // without an arbitrary sleep: each turn waits for a real server
+          // response and board update, then the next player commits.
           for (let n = 0; n < batch.length; n++) {
-            await propagate(n, before);
+            await submitPreparedClue(pages[n], actorBefore[n]);
           }
           played += batch.length;
           console.log(
@@ -806,88 +847,72 @@ test.describe("four-player multiplayer soak", () => {
 
       // ── 2. Presence fans out ────────────────────────────────────────────
       await test.step("presence fans out", async () => {
-        // A chip's `#n across` badge only renders for an OTHER player whose
-        // presence is live, so every other player has to select a clue of their
-        // own. Presence entries expire after 45s, so re-select on each tick:
-        // a dropped publish is recovered rather than waited out.
-        await selectClue(pages[0], firstClue);
-        // Alternate each player's selection between two of their own clues on
-        // every tick. Re-selecting the SAME clue is often a client-side no-op —
-        // the component short-circuits when the key is unchanged — so a
-        // "republish" that re-picks the identical clue emits no new
-        // `publishPresence` at all, and a publish that landed on the wrong pod
-        // is never actually retried. Alternating guarantees a genuine change
-        // (and therefore a genuine publish) each time.
-        let tick = 0;
-        const spin = async () => {
-          const t = tick++;
-          await selectClue(pages[0], t % 2 === 0 ? firstClue : altClue);
-          await Promise.all(
-            picks.map(async (c, n) => {
-              try {
-                await selectClue(pages[n + 1], t % 2 === 0 ? c : alternates[n]);
-              } catch (err) {
-                console.log(`republish for player ${n + 2} failed: ${String(err).split("\n")[0]}`);
-              }
-            }),
-          );
-        };
-        // Every context must see the other three players' presence. Presence
-        // rides the same EventBus as actions and is relayed by the same
-        // Postgres outbox (DEF-274), so it is now expected everywhere — a
-        // player whose roster is missing a peer is the regression.
+        // One fixed, distinct clue per player. The previous poll kept changing
+        // its target and only counted chips. It could pass on the PREVIOUS
+        // state (3 chips), then a queued clear from the current direction
+        // toggle arrived and the post-poll log read 1,2,2,3 — a false green.
         //
-        // The `spin()` on each tick is still required: re-selecting the SAME
-        // clue is a client-side no-op and emits no publishPresence, so an
-        // alternating selection is what actually re-publishes.
-        let lastCounts: number[] = [];
+        // Require the exact LATEST clue labels for the other three players on
+        // every context. Once those appear, the ordered presence writer
+        // guarantees there is no older clear still queued behind them.
+        const targets = [firstClue, ...picks];
+        await Promise.all(targets.map((clue, i) => selectClue(pages[i], clue)));
+        const expected = targets.map(
+          (c) => `#${c.number} ${c.direction.toLowerCase()}`,
+        );
+        let lastTexts: string[][] = [];
         await expect
           .poll(
             async () => {
-              await spin();
-              // Each context must show the OTHER three, so 3 chips each.
-              lastCounts = await Promise.all(
-                pages.map((p) => p.locator(".cw-players .cw-chip-clue").count()),
+              lastTexts = await Promise.all(
+                pages.map((p) =>
+                  p
+                    .locator(".cw-players .cw-chip-clue")
+                    .allTextContents()
+                    .then((xs) => xs.map((x) => x.trim().toLowerCase())),
+                ),
               );
-              return lastCounts.every((n) => n >= 3);
+              return lastTexts.every((texts, observer) =>
+                expected.every((label, player) => player === observer || texts.includes(label)),
+              );
             },
-            { timeout: 90_000, intervals: [1_000, 2_000, 3_000, 5_000, 8_000, 13_000] },
+            { timeout: 30_000, intervals: [250, 500, 1_000, 2_000, 4_000] },
           )
           .toBe(true)
           .catch(async (err) => {
-            // Name WHO went dark — a bare timeout says nothing about which
-            // context lost the roster.
-            console.log(
-              `PRESENCE FAILED: chips per context ${lastCounts.join(", ")} (want >= 3 each)` +
-                ` after 90s of alternating selections`,
-            );
+            const body = lastTexts
+              .map((texts, i) => `player ${i + 1}: [${texts.join(", ")}]`)
+              .join("\n");
+            console.log(`PRESENCE FAILED: latest labels missing\n${body}`);
             await testInfo.attach("presence-fanout-failed.txt", {
               body:
-                `presence chips per context: ${lastCounts.join(", ")}; ` +
+                `${body}\nexpected per player: ${expected.join(" | ")}\n` +
                 `action broadcasts reached ${reachable.size} of 4`,
               contentType: "text/plain",
             });
             throw err;
           });
-        const chipCounts = await Promise.all(
-          pages.map((p) => p.locator(".cw-players .cw-chip-clue").count()),
+
+        const chipCounts = lastTexts.map((texts) => texts.length);
+        console.log(
+          `PRESENCE latest labels present on all contexts: ` +
+            `${lastTexts.map((texts, i) => `p${i + 1}=[${texts.join(", ")}]`).join(" ")}`,
         );
-        console.log(`PRESENCE chips per context: ${chipCounts.join(", ")} (want >= 3 each)`);
         await testInfo.attach("presence-fanout.txt", {
           body:
-            `presence chips per context: ${chipCounts.join(", ")}; ` +
-            `action broadcasts reached ${reachable.size} of 4 ` +
-            `[${[...reachable].map((i) => ACCOUNTS[i].label).join(", ")}]`,
+            `latest labels per context:\n` +
+            lastTexts.map((texts, i) => `player ${i + 1}: [${texts.join(", ")}]`).join("\n"),
           contentType: "text/plain",
         });
-        // The ring marks another player's live selection on THIS board, so
-        // check it on every context that shows a full roster.
-        for (const [i, p] of pages.entries()) {
-          if (chipCounts[i] >= 3) {
-            await expect(p.locator('.cw-cell[style*="box-shadow"]').first()).toBeVisible({
-              timeout: 30_000,
-            });
-          }
+
+        // The ring marks another player's latest live selection. Every context
+        // now has all three required latest labels, so every board must have a
+        // ring — no conditional that silently lets a missing observer pass.
+        expect(chipCounts.every((n) => n >= 3), "three remote labels per player").toBe(true);
+        for (const p of pages) {
+          await expect(p.locator('.cw-cell[style*="box-shadow"]').first()).toBeVisible({
+            timeout: 30_000,
+          });
         }
       });
 

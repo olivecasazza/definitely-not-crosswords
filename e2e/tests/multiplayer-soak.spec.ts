@@ -847,15 +847,20 @@ test.describe("four-player multiplayer soak", () => {
 
       // ── 2. Presence fans out ────────────────────────────────────────────
       await test.step("presence fans out", async () => {
-        // One fixed, distinct clue per player. The previous poll kept changing
-        // its target and only counted chips. It could pass on the PREVIOUS
-        // state (3 chips), then a queued clear from the current direction
-        // toggle arrived and the post-poll log read 1,2,2,3 — a false green.
+        // Pick fixed, distinct clues at presence time. Earlier versions reused
+        // clues chosen before the play rounds, so a later presence target could
+        // already be solved and selectClue would publish no fresh label.
         //
         // Require the exact LATEST clue labels for the other three players on
         // every context. Once those appear, the ordered presence writer
         // guarantees there is no older clear still queued behind them.
-        const targets = [firstClue, ...picks];
+        await refreshOpen();
+        const available = open.filter((c) => !taken.has(clueKey(c)) && c.answer);
+        expect(available.length, "open clues for presence labels").toBeGreaterThanOrEqual(
+          ACCOUNTS.length,
+        );
+        const targets = pickDistinct(available, ACCOUNTS.length);
+        expect(targets.length, "presence clues").toBe(ACCOUNTS.length);
         await Promise.all(targets.map((clue, i) => selectClue(pages[i], clue)));
         const expected = targets.map(
           (c) => `#${c.number} ${c.direction.toLowerCase()}`,

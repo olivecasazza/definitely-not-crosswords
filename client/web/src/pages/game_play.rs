@@ -18,7 +18,7 @@ use crossword_core::game::{
 };
 use dioxus::prelude::*;
 use futures::channel::mpsc;
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use gloo_timers::future::{IntervalStream, TimeoutFuture};
 use panel_kit::loading::ProgressBar;
 use serde_json::{json, Value};
@@ -451,23 +451,28 @@ pub fn GamePlay(id: String) -> Element {
     let mut joining = use_signal(|| false);
     let mut join_error = use_signal(String::new);
 
-    // One ordered writer for ephemeral presence mutations.
+    // One ordered, coalescing writer for ephemeral presence state.
     //
-    // `publish_presence` used to `spawn_local` every clear/focus mutation
-    // independently. A direction change does clear(None) and then immediately
-    // select(Some); those HTTP requests could arrive focus-then-clear, leaving
-    // the roster with no live clue even though the player was focused. The
-    // server relay was proven healthy (four direct publishes reached 4/4
-    // sockets); this was client-side request reordering.
+    // Two independent fire-and-forget mutations originally raced: a direction
+    // toggle queued clear(None), then clue selection queued focus(Some), and a
+    // stale clear could arrive last. Serialising removed the reorder, but
+    // replaying every historical focus/clear after 24 UI solves built a queue
+    // of stale states; the final focus could sit behind them for 90s.
     //
-    // A single queue preserves UI event order: clear is acknowledged before
-    // the following focus is sent. Presence is low-volume, so backpressure is
-    // preferable to coalescing away an ordering edge.
+    // Presence is STATE, not an audit log. Drain everything already pending
+    // and send only the newest state. A clear immediately followed by focus
+    // becomes focus; a user who genuinely clears and stops still sends clear.
+    // One request remains in flight at a time, so wire order stays defined.
     let presence_tx = use_hook(|| {
         let (tx, mut rx) = mpsc::unbounded::<Value>();
         spawn_local(async move {
-            while let Some(input) = rx.next().await {
-                let _ = net::mutation("activeGame.publishPresence", Some(input)).await;
+            while let Some(mut latest) = rx.next().await {
+                // VUs/components share no state, but one component owns this
+                // receiver; draining here is the single coalescing point.
+                while let Ok(Some(newer)) = rx.try_next() {
+                    latest = newer;
+                }
+                let _ = net::mutation("activeGame.publishPresence", Some(latest)).await;
             }
         });
         tx

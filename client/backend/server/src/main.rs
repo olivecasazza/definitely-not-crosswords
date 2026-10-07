@@ -585,6 +585,7 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
                 name,
                 number,
                 direction,
+                sequence,
             },
         ) => Some(json!({
             "activeGameId": active_game_id,
@@ -592,6 +593,7 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
             "name": name,
             "number": number,
             "direction": direction,
+            "sequence": sequence,
         })),
         _ => None,
     }

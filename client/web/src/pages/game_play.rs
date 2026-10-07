@@ -92,6 +92,7 @@ struct PresenceEntry {
     name: String,
     selection: Option<QKey>,
     tick: u64,
+    sequence: i64,
 }
 
 /// A remote player's focused word, projected onto the board as a colored border.
@@ -668,12 +669,22 @@ pub fn GamePlay(id: String) -> Element {
                     .and_then(|x| x.as_str())
                     .unwrap_or("Anonymous Player")
                     .to_string();
+                let sequence = data.get("sequence").and_then(|x| x.as_i64()).unwrap_or(0);
+                if presence
+                    .peek()
+                    .get(&uid)
+                    .map(|e| sequence < e.sequence)
+                    .unwrap_or(false)
+                {
+                    return;
+                }
                 presence.write().insert(
                     uid,
                     PresenceEntry {
                         name,
                         selection,
                         tick: *clock.peek(),
+                        sequence,
                     },
                 );
             },

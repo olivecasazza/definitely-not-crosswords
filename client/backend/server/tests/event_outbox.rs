@@ -21,6 +21,7 @@ async fn outbox_event_reaches_separate_bus() {
         name: "Ada".into(),
         number: Some(3),
         direction: Some("across".into()),
+        sequence: 1,
     };
     let id = insert_row(&pool, sender_origin, &event).await;
 
@@ -465,6 +466,7 @@ fn presence(n: i32) -> AppEvent {
         name: "Ada".into(),
         number: Some(n),
         direction: Some("across".into()),
+        sequence: n.into(),
     }
 }
 

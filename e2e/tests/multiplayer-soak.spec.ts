@@ -399,7 +399,7 @@ async function prepareClue(page: Page, clue: AnswerClue): Promise<number> {
         await inputs.nth(i).fill("");
       }
       await inputs.first().click({ timeout: 5_000 });
-      await page.keyboard.type(clue.answer.toUpperCase());
+      await page.keyboard.type(clue.answer.toUpperCase(), RECORD ? { delay: 120 } : undefined);
       const typed = await inputs.evaluateAll((els) =>
         els.map((e) => (e as HTMLInputElement).value).join(""),
       );
@@ -608,17 +608,36 @@ test.describe("four-player multiplayer soak", () => {
         await Promise.all(
           rest.map(async (p, n) => {
             await p.goto(gameUrl);
-            // "Join game" is optional — members of this active game don't see it.
             const join = p.getByRole("button", { name: /^join game$/i });
-            const joined = await join
-              .waitFor({ state: "visible", timeout: 30_000 })
+            const visible = await join
+              .waitFor({ state: "visible", timeout: 10_000 })
               .then(() => true)
               .catch(() => false);
-            if (joined) {
+            if (visible) {
               await join.click();
               console.log(`clicked "Join game" for player ${n + 2}`);
-            } else {
-              console.log(`no "Join game" button for player ${n + 2} — already a member`);
+            }
+
+            // Absence of the button does NOT prove membership — one observer
+            // recording left a player on the lobby/how-to-play screen after a
+            // swallowed join. The board is the proof. If the UI route did not
+            // land, reconcile membership over the same authenticated context,
+            // navigate again, and require the board now.
+            const board = p.locator(".cw-letter").first();
+            const landed = await board
+              .waitFor({ state: "visible", timeout: 10_000 })
+              .then(() => true)
+              .catch(() => false);
+            if (!landed) {
+              const repaired = await trpcPost(p.request, "activeGame.join", {
+                id: activeGameId,
+              });
+              expect(repaired.ok, `fallback join for player ${n + 2}: ${repaired.error}`).toBe(true);
+              await p.goto(gameUrl);
+              await expect(board, `${ACCOUNTS[n + 1].label} board after fallback join`).toBeVisible({
+                timeout: 30_000,
+              });
+              console.log(`reconciled membership and reopened board for player ${n + 2}`);
             }
           }),
         );

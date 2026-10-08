@@ -200,6 +200,100 @@ jobs:
             ./client#checks.x86_64-linux.cargo-test \
             ./client#checks.x86_64-linux.cargo-test-server
 
+  # The `scripts/` guard suites encode the rules that keep a bad send, a wrong
+  # release, or a rotted deploy from being reported as a success, and until now
+  # nothing in any workflow executed them: 84 assertions across
+  # alpha-invite-send.sh (DEF-120, DEF-228) and verify-release-copy.sh
+  # (DEF-199, DEF-110) had no runner at all. They were not run by buildbot-nix
+  # either — see the enrolment note on `build-and-push`.
+  #
+  # They need no Nix and no toolchain, which is what makes them a real gate: the
+  # only network client either script can reach for is `curl`, and each suite
+  # installs its own `curl` stub at the front of PATH (and points the host at
+  # `https://stub.invalid`), so no case can touch a real host and this job needs
+  # no credentials and no network. That hermeticity is what keeps it cheap
+  # enough to run on every event instead of on main alone.
+  guards:
+    name: Script Guard Suites
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # actions/checkout
+    # Same condition as `rust-test`: the suites must gate a PR before merge, and
+    # must still run on a direct push/dispatch to main so a hand-merged or
+    # bot-dispatched commit is checked the same way.
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'pull_request_review' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Sequential, not a matrix: both suites share a repo checkout and the
+      # alpha-invite one creates a throwaway git repo under $TMPDIR. `set -e`
+      # is the failure gate — either script exiting non-zero fails the step, and
+      # therefore the job and the `auto-merge` that waits on it.
+      - name: Run the scripts/ guard suites
+        run: |
+          bash scripts/test-alpha-invite-send.sh
+          bash scripts/test-verify-release-copy.sh
+
+  # The `cc` wrapper is the fix for DEF-325: the runner's default `cc` appended
+  # link flags unconditionally, so zig linked even for `-c` and every C build
+  # dependency in the workspace failed. `test-cc.sh` is what keeps that fixed —
+  # that `-c` does not link, that a real link still works (i.e. the fix was not
+  # just "drop the flags", which links clean and fails at runtime), and that the
+  # host and wasm target triples map onto ones zig accepts.
+  #
+  # It needs zig, which the runner image has and ubuntu-latest does not, so it
+  # cannot join the hermetic `guards` job above. It runs in the nix-backed jobs
+  # instead, where zig is already present. `--check` additionally asserts the
+  # runner's *installed* `cc` is not zigcc, which is what actually stops the
+  # regression reaching agents; it is allowed to pass when nothing is installed
+  # yet (a stock CI box is not the runner), so it reports rather than blocks.
+  runner-toolchain-cc:
+    name: Runner cc Wrapper
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # actions/checkout
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'pull_request_review' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - name: Guard the wrapper
+        run: |
+          bash scripts/runner-toolchain/test-cc.sh
+          # Non-fatal here: this only has teeth on the runner itself.
+          bash scripts/runner-toolchain/install-runner-cc.sh --check || \
+            echo "note: this runner has no /paperclip/bin, so the default cc is not under test"
+
+      # The other half of this job's subject: with-cargo.sh rewrites the web
+      # crate's panel-kit git deps into path deps at the checkout
+      # fetch-panel-kit.sh materialises, so `crossword-web` is compiled against
+      # the revision this repo pins instead of whatever cargo fetches on its own.
+      #
+      # DEF-244 replaced those path deps with a git dep and the repoint sed kept
+      # matching the old shape, so it silently became a no-op and the whole
+      # real-panel-kit mechanism was inert on main — and nothing noticed for
+      # weeks, because this test was not CI-gated anywhere. It lives here rather
+      # than in `guards` for one reason: unlike those suites it must reach
+      # github.com to clone panel-kit. panel-kit is public, so that needs no
+      # credentials — the shallow single-rev fetch is ~1s and ~11 MB, which is
+      # why it is affordable on every PR. Nothing in it builds: the cargo it runs
+      # is a stub that snapshots the manifest.
+      #
+      # DEF-330 moved the revision the runner checks out from client/flake.nix to
+      # client/Cargo.lock — the file cargo itself resolves — and deleted the flake
+      # input that carried the third copy. This step is now the only thing that
+      # can see the pin move, so it is where a pin bump is verified: the runner
+      # and the build cannot check out different commits any more, because they
+      # read the same line.
+      - name: Guard the panel-kit repoint
+        run: bash scripts/runner-toolchain/test-panel-kit.sh
+
   conventional-commits-check:
     name: Conventional Commits Check
     runs-on: ubuntu-latest
@@ -274,12 +368,26 @@ jobs:
     # not a gate. This job is the thing that actually lands commits, so a red
     # suite must stop it here.
     #
+    # `guards` is here for the same reason and it is cheap enough to cost
+    # nothing: the scripts/ suites run in seconds on a stock runner with no Nix
+    # and no credentials, and they are the only thing standing between a PR that
+    # silently rots `alpha-invite-send.sh` / `verify-release-copy.sh` and a
+    # release that reports a send or a deploy that never happened. Since this
+    # job calls `gh pr merge --auto` and then dispatches the main build that
+    # deploys to staging, a rotted guard must not be able to ride that path.
+    #
     # `Rust Test Suite` is ALSO a required status check on `main`
     # (branch protection, applied 2026-10-03 under DEF-220), which is the
     # backstop for merges that never reach this job — a maintainer merging
     # from the UI. Keep both: `needs` fails closed inside the workflow, and the
     # required check fails closed server-side.
-    needs: [ conventional-commits-check, approval-check, rust-test ]
+    #
+    # `runner-toolchain-cc` joins for the same reason DEF-325's guard exists at
+    # all: without it in `needs`, the check that the runner's compiler still
+    # compiles without linking would be advice, not a gate — and the regression it
+    # guards is silent, because every Rust-only crate builds fine on a broken `cc`
+    # and the failure only shows up as an opaque lld error inside a C dependency.
+    needs: [ conventional-commits-check, approval-check, rust-test, guards, runner-toolchain-cc ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
       - name: Enable Auto-Merge

@@ -75,6 +75,7 @@ mod tests {
             name: "Partner".into(),
             number: Some(3),
             direction: Some("ACROSS".into()),
+            sequence: 1,
         }
     }
 

@@ -537,6 +537,7 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .await
     .map_err(|e| sanitised_db_error("load the user", &e))?;
     let name: String = name_row.get("name");
+    let sequence = chrono::Utc::now().timestamp_millis();
 
     ctx.events.publish(crossword_db::AppEvent::GamePresence {
         active_game_id: id.to_string(),
@@ -544,6 +545,7 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         name,
         number,
         direction,
+        sequence,
     });
     Ok(json!({ "ok": true }))
 }

@@ -52,14 +52,28 @@ export async function humanType(page: Page, target: Locator, text: string) {
 }
 
 /**
- * Type letters one-by-one into an already-focused input (the crossword clue
- * inputs auto-advance, so we never click between letters).
+ * Type letters one-by-one into the focused crossword editor.
+ *
+ * Auto-advance focuses a new one-character input after every key. Browser
+ * focus scrolling inside the clue panel is unreliable in the recording — it
+ * can move the active editor below the viewport while letters continue to
+ * appear off-camera. Re-center the first editor input after every advance so
+ * the demo actually shows what is being typed.
+ *
+ * Deliberately slower than normal form typing: this helper exists for the
+ * recorded product tour, not the correctness gate.
  */
 export async function humanTypeLetters(page: Page, letters: string) {
+  const editor = page.locator(".cw-letter-input").first();
   for (const ch of letters) {
+    if (await editor.count()) {
+      await editor.evaluate((el) =>
+        el.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" }),
+      );
+    }
     await page.keyboard.type(ch.toUpperCase());
-    let delay = rand(70, 210);
-    if (Math.random() < 0.06) delay += rand(200, 500);
+    let delay = rand(140, 300);
+    if (Math.random() < 0.08) delay += rand(350, 800);
     await page.waitForTimeout(delay);
   }
 }

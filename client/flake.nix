@@ -1,9 +1,9 @@
 {
   description = "definitely-not-crosswords Rust/Dioxus frontend: crossword-core + crossword-web (wasm), built reproducibly with crane; omnix CI.";
 
-  # NOTE: `src` is a derivation (it vendors panel-kit in), so crane reads its
-  # Cargo manifests via import-from-derivation. `nix build`/Hydra allow IFD by
-  # default; only `nix flake check`'s pure-eval mode blocks it — run it with
+  # NOTE: `src` is a derivation (a `lib.fileset.toSource` store path), so crane
+  # reads its Cargo manifests via import-from-derivation. `nix build`/Hydra allow
+  # IFD by default; only `nix flake check`'s pure-eval mode blocks it — run it with
   # `--option allow-import-from-derivation true` locally.
 
   nixConfig = {
@@ -30,14 +30,25 @@
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     omnix.url = "github:juspay/omnix";
 
-    # The web crate depends on panel-kit and panel-kit-core by the absolute
-    # release-plz host path, which isn't reachable in the Nix sandbox. Pull the
-    # repository in as one input (pinned only to a pushed rev so Hydra can fetch
-    # it) and rewrite both path deps at build time (see `src` below). Local macOS
-    # verification uses the synced fork without changing this committed pin:
-    #   --override-input panel-kit path:/Users/casazza/Repositories/olivecasazza/panel-kit
-    panel-kit.url = "github:olivecasazza/panel-kit/4aad83c86285c83706e380c054a2b317ff8c6f69";
-    panel-kit.flake = false;
+    # DEF-330: there is deliberately NO `panel-kit` input here any more.
+    #
+    # It was a third copy of one revision, alongside `web/Cargo.toml`'s tag and
+    # the `rev` in `Cargo.lock`, and nothing reconciled them. It was also inert:
+    # `flake = false`, and DEF-324 had already removed the only consumer — the
+    # `vendor-panel-kit` copy in `src` below. Its last reader was
+    # `scripts/runner-toolchain/fetch-panel-kit.sh`, which sedded the rev out of
+    # this line to decide what the runner checks out, which is precisely how the
+    # runner came to check out a different commit than cargo compiled.
+    #
+    # `client/Cargo.lock` is now the single source of truth, and it is the file
+    # cargo actually resolves, so the revision the runner checks out and the
+    # revision the build compiles cannot be two different facts. Nothing in this
+    # flake reads a panel-kit revision: `cargoVendorDir` vendors the dep from
+    # the lock.
+    #
+    # TO BUMP panel-kit: change the `tag` in `web/Cargo.toml` and re-resolve the
+    # lock. There is no nix side to keep in step, which is the point — that side
+    # is what silently rotted.
   };
 
   outputs =
@@ -127,19 +138,27 @@
           };
           craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-          # Workspace source. `web/Cargo.toml` pins panel-kit and its core crate
-          # by the absolute release-plz host path, unreachable in the sandbox.
-          # Vendor the one `panel-kit` input INTO the source at a relative path
-          # and exclude it from this workspace (it's its own workspace —
-          # excluding avoids a nested-workspace clash), then rewrite both deps
-          # to point there. A relative path keeps Cargo.toml free of store-path
-          # string references (which crane rejects). No working-tree edit — the
-          # committed Cargo.toml keeps the release-plz-compatible absolute path.
+          # Workspace source. Plain fileset — no `runCommand` wrapper, no seds.
+          #
+          # It used to copy a `panel-kit` flake input in as `vendor-panel-kit`,
+          # inject `exclude = ["vendor-panel-kit"]` into the workspace manifest,
+          # and `sed` the web crate's absolute `/home/olive/Repositories/...`
+          # path deps onto it. DEF-244 replaced those path deps with an ordinary
+          # `git = ... tag = "v1.1.1"` dep, at which point the repoint `sed`
+          # matched nothing (a silent no-op), the `exclude` protected a directory
+          # cargo never looked at, and a full panel-kit checkout was still copied
+          # into every build. crane vendors the git dep from Cargo.lock via
+          # `cargoVendorDir` below, which is the supported path and the one the
+          # CI build log shows being used. The `panel-kit` input itself stays
+          # declared (repinned to the lock's commit) because the runner toolchain
+          # reads it — but this build no longer dereferences it. See the note at
+          # the input list.
+          #
           # Ship every workspace member so cargo can resolve the workspace; each
           # nix build below compiles just one crate (-p ...). All of web, desktop,
           # server, and tools are built as packages; backend/desktop must be
           # present for workspace resolution regardless.
-          rawSrc = lib.fileset.toSource {
+          src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
               ./Cargo.toml
@@ -153,23 +172,14 @@
               ./backend
             ];
           };
-          src = pkgs.runCommand "crossword-client-src" { } ''
-            cp -r ${rawSrc} $out
-            chmod -R +w $out
-            cp -r ${inputs.panel-kit} $out/vendor-panel-kit
-            chmod -R +w $out/vendor-panel-kit
-            # exclude the vendored copy from this workspace
-            sed -i -E 's#(members = \[.*\])#\1\nexclude = ["vendor-panel-kit"]#' $out/Cargo.toml
-            # repoint both panel-kit path deps at the vendored copy
-            sed -i -E 's#/home/olive/Repositories/panel-kit#../vendor-panel-kit#g' \
-              $out/web/Cargo.toml
-          '';
 
           # Vendor deps from the plain lockfile (a real path), NOT from the
-          # runCommand-built `src` derivation — reading the lock out of a
-          # derivation at eval time is import-from-derivation, which pure eval
-          # (the github panel-kit input) forbids. Explicit pname/version below
-          # keep crane from import-from-deriving the crate name out of `src` too.
+          # fileset `src` derivation — reading the lock out of a derivation at
+          # eval time is import-from-derivation, which pure eval forbids.
+          # Explicit pname/version below keep crane from import-from-deriving
+          # the crate name out of `src` too. This is also what pins panel-kit:
+          # the lock resolves `tag = "v1.1.1"` to
+          # 503f46c32a1c2410aa4e15b2b3bf725207068906.
           cargoVendorDir = craneLib.vendorCargoDeps { src = ./.; };
 
           # onnxruntime for the generator's `ort` crate. ort rc.12's pregenerated

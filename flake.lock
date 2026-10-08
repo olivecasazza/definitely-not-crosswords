@@ -12,7 +12,7 @@
       },
       "locked": {
         "lastModified": 1,
-        "narHash": "sha256-4IbXrNLDFEMEP4SCntxg6KgtXngJNk6g+NrAn10FybQ=",
+        "narHash": "sha256-tbPZSehdBZ/bTXh1PWK4NG7+HLPy2FiW6/PgHt+vfKc=",
         "path": "./client",
         "type": "path"
       },
@@ -345,17 +345,17 @@
     "panel-kit": {
       "flake": false,
       "locked": {
-        "lastModified": 1789619199,
-        "narHash": "sha256-CgwnUIA9FfQhRCi4itT7lSBQixvwyRqoj+z/zSzYd8g=",
+        "lastModified": 1789619170,
+        "narHash": "sha256-Im1A2LIjBWDnK5pfF7Asy7nOrDC8qYFeh1HsdRLef0k=",
         "owner": "olivecasazza",
         "repo": "panel-kit",
-        "rev": "4aad83c86285c83706e380c054a2b317ff8c6f69",
+        "rev": "503f46c32a1c2410aa4e15b2b3bf725207068906",
         "type": "github"
       },
       "original": {
         "owner": "olivecasazza",
         "repo": "panel-kit",
-        "rev": "4aad83c86285c83706e380c054a2b317ff8c6f69",
+        "rev": "503f46c32a1c2410aa4e15b2b3bf725207068906",
         "type": "github"
       }
     },

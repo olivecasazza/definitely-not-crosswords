@@ -678,19 +678,29 @@ test.describe("four-player multiplayer soak", () => {
         }
         return picks;
       };
+
+      // Strict version for parallel UI rounds: NEVER fill the quota with
+      // crossing clues. Late in a board there may not be four disjoint clues,
+      // so the caller reduces the active player count 4→3→2→1 instead.
+      const pickCellDisjoint = (candidates: AnswerClue[], n: number) => {
+        const picks: AnswerClue[] = [];
+        const occupied = new Set<string>();
+        for (const clue of candidates) {
+          if (picks.length >= n) break;
+          const cells = clueCells(clue).map(([x, y]) => `${x},${y}`);
+          if (cells.some((cell) => occupied.has(cell))) continue;
+          picks.push(clue);
+          for (const cell of cells) occupied.add(cell);
+        }
+        return picks;
+      };
       expect(open.length, "at least four open clues to play").toBeGreaterThanOrEqual(4);
-      const firstClue = open[0];
-      taken.add(clueKey(firstClue));
-      const picks = pickDistinct(
-        open.filter((c) => !taken.has(clueKey(c))),
-        3,
-      );
-      expect(picks.length, "enough distinct open clues for players 2–4").toBe(3);
-      console.log(
-        `player 1 takes ${clueKey(firstClue)}; players 2-4 take ${picks
-          .map((c) => clueKey(c))
-          .join(", ")}`,
-      );
+      // Chosen AFTER visible play. A clue id cannot be "reserved" up front:
+      // crossing answers can fill every cell and solve it indirectly even when
+      // nobody selected that clue. Recording mode leaves four current open
+      // clues, then this array is populated for the exact-label probe and
+      // played visibly after presence + contention.
+      let presenceTargets: AnswerClue[] = [];
 
       const propagate = async (actor: number, before: number[]) => {
         const peers = [0, 1, 2, 3].filter((i) => i !== actor);
@@ -735,20 +745,32 @@ test.describe("four-player multiplayer soak", () => {
       // contention probe and the completion race still have open cells to work
       // with. Concurrent per round, never serialised — that was the same
       // `await`-inside-a-`for` defect, three times over.
-      const ROUNDS_MAX = 12;
-      const LEAVE_OPEN = 18; // clues still open for contention + completion
+      // The correctness soak stays short. Recording mode is a WATCHABLE game:
+      // play through the UI until one clue remains, then let the protocol fill
+      // only that final sliver so the exactly-once completion race still runs.
+      const ROUNDS_MAX = RECORD ? 50 : 12;
+      const LEAVE_OPEN = RECORD ? ACCOUNTS.length : 18;
       await test.step("the four players play together", async () => {
         let played = 0;
         for (let round = 0; round < ROUNDS_MAX; round++) {
           await refreshOpen();
           const playable = open.filter((c) => !taken.has(clueKey(c)) && c.answer);
-          if (playable.length <= LEAVE_OPEN || playable.length < ACCOUNTS.length) break;
+          if (playable.length <= LEAVE_OPEN) break;
 
-          // One CELL-DISJOINT clue per player. Distinct clue ids are not
-          // enough: crossing clues share a cell and can close another
-          // player's editor when their server update lands.
-          const batch = pickDistinct(playable, ACCOUNTS.length);
-          if (batch.length < ACCOUNTS.length) break;
+          // Use as many simultaneous players as the remaining geometry allows.
+          // Near the end, crossing clues make four disjoint selections
+          // impossible; reduce 4→3→2→1 rather than stopping early or allowing
+          // overlapping editors to race the same cell.
+          const maxPlayers = Math.min(
+            ACCOUNTS.length,
+            Math.max(1, playable.length - LEAVE_OPEN),
+          );
+          let batch: AnswerClue[] = [];
+          for (let count = maxPlayers; count >= 1; count--) {
+            batch = pickCellDisjoint(playable, count);
+            if (batch.length === count) break;
+          }
+          if (batch.length === 0) break;
           for (const clue of batch) taken.add(clueKey(clue));
 
           const started = Date.now();
@@ -847,22 +869,21 @@ test.describe("four-player multiplayer soak", () => {
 
       // ── 2. Presence fans out ────────────────────────────────────────────
       await test.step("presence fans out", async () => {
-        // Pick fixed, distinct clues at presence time. Earlier versions reused
-        // clues chosen before the play rounds, so a later presence target could
-        // already be solved and selectClue would publish no fresh label.
-        //
-        // Require the exact LATEST clue labels for the other three players on
-        // every context. Once those appear, the ordered presence writer
-        // guarantees there is no older clear still queued behind them.
+        // Pick the CURRENT open clues after visible play. Up-front reservations
+        // are not reliable in a crossword: crossing answers can solve a clue
+        // indirectly even when nobody selected it.
         await refreshOpen();
-        const available = open.filter((c) => !taken.has(clueKey(c)) && c.answer);
-        expect(available.length, "open clues for presence labels").toBeGreaterThanOrEqual(
+        presenceTargets = pickDistinct(
+          open.filter((c) => c.answer),
           ACCOUNTS.length,
         );
-        const targets = pickDistinct(available, ACCOUNTS.length);
-        expect(targets.length, "presence clues").toBe(ACCOUNTS.length);
-        await Promise.all(targets.map((clue, i) => selectClue(pages[i], clue)));
-        const expected = targets.map(
+        expect(presenceTargets.length, "four current open presence clues").toBe(
+          ACCOUNTS.length,
+        );
+        await Promise.all(
+          presenceTargets.map((clue, i) => selectClue(pages[i], clue)),
+        );
+        const expected = presenceTargets.map(
           (c) => `#${c.number} ${c.direction.toLowerCase()}`,
         );
         let lastTexts: string[][] = [];
@@ -1035,6 +1056,26 @@ test.describe("four-player multiplayer soak", () => {
         // step's job is to make it observable, not to fail the soak.
       });
 
+      // ── 6. Play the four clues reserved for presence ───────────────────
+      // They stayed open so the exact-label probe had stable targets. Once
+      // presence and contention are proven, play them visibly instead of
+      // leaving their ~20-30 cells for the protocol fill — that was the last
+      // large board jump in the observer recording.
+      await test.step("the reserved presence clues are played", async () => {
+        const actorBefore = await Promise.all(
+          presenceTargets.map((clue, n) => prepareClue(pages[n], clue)),
+        );
+        for (let n = 0; n < presenceTargets.length; n++) {
+          await submitPreparedClue(pages[n], actorBefore[n]);
+        }
+        console.log(
+          `PLAY: reserved presence clues solved through UI: ${presenceTargets
+            .map(clueKey)
+            .join(", ")}`,
+        );
+      });
+
+
       // ── 6. Completion happens exactly once ─────────────────────────────
       // Completion has to be DRIVEN, not waited for. A 42-clue grid is far too
       // big for four browsers to solve a clue at a time, and the old "DEGRADED"
@@ -1055,53 +1096,94 @@ test.describe("four-player multiplayer soak", () => {
           .map((c: Clue) => ({ ...c, answer: answers.get(clueKey(c)) }))
           .filter((c: Clue & { answer?: string }): c is AnswerClue => Boolean(c.answer));
 
-        // Cells the key says should hold a letter that are not correct yet.
-        // Deduped by coordinate because a crossing cell belongs to both an
-        // ACROSS and a DOWN clue.
-        const done = solvedClues(all, data?.actions ?? []);
-        const already = new Set(
-          all.filter((c) => done.has(clueKey(c))).flatMap(clueCells).map(([x, y]) => `${x},${y}`),
-        );
+        // Only submit cells whose LATEST verdict is not correct.
+        //
+        // The old code worked at clue granularity: one intentionally-wrong
+        // crossing cell made the whole ACROSS and DOWN clues "unsolved", so it
+        // resubmitted every already-correct cell in both clues. The fan-out
+        // probe plus contention probe could therefore report 42 \"cells left\"
+        // after all 42 clues were visibly played, producing the apparent board
+        // jump the observer review caught.
+        //
+        // Completion is a cell invariant. Deduplicate crossing coordinates and
+        // repair only cells whose newest GameAction is not correctGuess.
+        const latest = latestStates(data?.actions ?? []);
         const wanted = new Map<string, string>();
-        for (const c of all) {
-          clueCells(c).forEach(([x, y], i) => {
+        for (const clue of all) {
+          clueCells(clue).forEach(([x, y], i) => {
             const key = `${x},${y}`;
-            if (!already.has(key)) wanted.set(key, (c.answer ?? "")[i] ?? "");
+            if (latest.get(key)?.actionType !== "correctGuess") {
+              wanted.set(key, (clue.answer ?? "")[i] ?? "");
+            }
           });
         }
         console.log(`COMPLETION: ${wanted.size} cells left of ${all.length} clues`);
 
         if (wanted.size > 0) {
-          // Round-robin across the four players so the final writes overlap.
-          const perPlayer: Array<Array<{ cordX: number; cordY: number; state: string }>> = [
-            [],
-            [],
-            [],
-            [],
-          ];
-          let turn = 0;
-          for (const [key, letter] of wanted) {
-            const [cordX, cordY] = key.split(",").map(Number);
-            perPlayer[turn % 4].push({ cordX, cordY, state: letter });
-            turn++;
+          let solved = false;
+          if (RECORD) {
+            // A watchable completion: one cell per real mutation, and do not
+            // send the next until the board visibly marks this one correct.
+            // This removes the last \"large area appears at once\" burst without
+            // an arbitrary sleep — pace comes from server + websocket + render
+            // acknowledgement.
+            let turn = 0;
+            for (const [key, letter] of wanted) {
+              const [cordX, cordY] = key.split(",").map(Number);
+              const actor = turn % pages.length;
+              const result = await trpcPost(pages[actor].request, "activeGame.addActions", {
+                id: activeGameId,
+                actions: [{ cordX, cordY, state: letter }],
+              });
+              expect(result.ok, `paced fill cell ${key}: ${result.error}`).toBe(true);
+              solved ||= result.data?.solved === true;
+              await expect
+                .poll(
+                  async () =>
+                    (
+                      (await pages[0]
+                        .locator(`.cw-cell[data-x="${cordX}"][data-y="${cordY}"]`)
+                        .first()
+                        .getAttribute("class")) ?? ""
+                    ).includes("cw-correct"),
+                  { timeout: 15_000, intervals: [100, 250, 500, 1_000, 2_000] },
+                )
+                .toBe(true);
+              turn++;
+            }
+            console.log(`COMPLETION: ${wanted.size} cells repaired visibly, one at a time`);
+          } else {
+            // Fast correctness mode: batch the remaining cells across players.
+            const perPlayer: Array<Array<{ cordX: number; cordY: number; state: string }>> = [
+              [],
+              [],
+              [],
+              [],
+            ];
+            let turn = 0;
+            for (const [key, letter] of wanted) {
+              const [cordX, cordY] = key.split(",").map(Number);
+              perPlayer[turn % 4].push({ cordX, cordY, state: letter });
+              turn++;
+            }
+            const filled = await Promise.all(
+              perPlayer.map((actions, n) =>
+                trpcPost(pages[n].request, "activeGame.addActions", { id: activeGameId, actions }),
+              ),
+            );
+            filled.forEach((r, n) =>
+              console.log(
+                `  player ${n + 1}: ${perPlayer[n].length} cells -> ok=${r.ok}` +
+                  (r.ok
+                    ? ` solved=${r.data?.solved} filled=${r.data?.filled}/${r.data?.total}`
+                    : ` err=${r.error}`),
+              ),
+            );
+            const failures = filled.filter((r) => !r.ok);
+            expect(failures.map((f) => f.error), "every fill batch was accepted").toEqual([]);
+            solved = filled.some((r) => r.data?.solved === true);
           }
-          const filled = await Promise.all(
-            perPlayer.map((actions, n) =>
-              trpcPost(pages[n].request, "activeGame.addActions", { id: activeGameId, actions }),
-            ),
-          );
-          filled.forEach((r, n) =>
-            console.log(
-              `  player ${n + 1}: ${perPlayer[n].length} cells -> ok=${r.ok}` +
-                (r.ok ? ` solved=${r.data?.solved} filled=${r.data?.filled}/${r.data?.total}` : ` err=${r.error}`),
-            ),
-          );
-          const failures = filled.filter((r) => !r.ok);
-          expect(failures.map((f) => f.error), "every fill batch was accepted").toEqual([]);
-          expect(
-            filled.some((r) => r.data?.solved === true),
-            "the board reports solved after the final fill",
-          ).toBe(true);
+          expect(solved, "the board reports solved after the final fill").toBe(true);
         }
 
         // The race: four members call complete() in one tick.

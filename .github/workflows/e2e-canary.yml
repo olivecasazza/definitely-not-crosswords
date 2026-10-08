@@ -590,16 +590,20 @@ jobs:
           phone=$(find results -path '*phone*' -name '*.webm' | head -1)
           # yuv420p is load-bearing for Safari/Discord/Slack playback.
           if [ -n "$phone" ]; then
-            # Split-screen dock: the main recording scaled onto a dark 1920x1080
-            # canvas (the app's own bg color) at the left, and the second
-            # player's phone docked at the right — nothing gets covered.
+            # Split-screen dock: main recording on the left, phone on the
+            # right. A full-timeline visual review found both clips open on a
+            # blank white browser surface for their first ~1s; trim that exact
+            # lead-in from BOTH inputs so sync is preserved and the published
+            # demo begins on the app, not a browser boot flash.
             # Output length follows the main recording; the phone freezes on
             # its last frame if its clip ends first.
             ffmpeg -y -i "$v" -i "$phone" -filter_complex \
-              "[0:v]scale=1450:-2,pad=1920:1080:20:-1:color=0x121212[canvas];[1:v]scale=410:-2[phone];[canvas][phone]overlay=W-w-20:(H-h)/2:eof_action=repeat" \
-              -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+              "[0:v]trim=start=1,setpts=PTS-STARTPTS,scale=1450:-2,pad=1920:1080:20:-1:color=0x121212[canvas];[1:v]trim=start=1,setpts=PTS-STARTPTS,scale=410:-2[phone];[canvas][phone]overlay=W-w-20:(H-h)/2:eof_action=repeat,crop=1920:1080[out]" \
+              -map "[out]" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
           else
-            ffmpeg -y -i "$v" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+            # Same 1s browser-boot trim for the single-stream fallback.
+            ffmpeg -y -i "$v" -vf "trim=start=1,setpts=PTS-STARTPTS" \
+              -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
           fi
           echo "MP4=1" >> "$GITHUB_ENV"
       - name: Publish demo.mp4

@@ -483,7 +483,7 @@
                  above / 533px below at a 720px viewport). Full-bleed flex centring; the
                  card keeps its own max-width:26rem above. */
               .boot-noscript{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:1.5rem}
-              .boot-mark{margin:0;font:700 .625rem/1.2 Inconsolata,ui-monospace,monospace;
+              .boot-mark{margin:0;font:700 .6875rem/1.2 Inconsolata,ui-monospace,monospace;
                 letter-spacing:.05em;text-transform:uppercase;color:var(--b-dim)}
               .boot-title{margin:0;font-size:1rem;font-weight:700}
               .boot-title:focus{outline:none}

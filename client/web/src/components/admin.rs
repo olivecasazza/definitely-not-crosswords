@@ -115,7 +115,7 @@ pub fn env_badge(environment: &str) -> Element {
 pub fn table_head(cols: Vec<&'static str>) -> Element {
     rsx! {
         thead {
-            tr { style: "font-size:0.75rem;text-transform:uppercase;font-family:monospace",
+            tr { style: "font-size: var(--fs-xs);text-transform:uppercase;font-family:monospace",
                 for col in cols {
                     th { class: "muted", style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app)", {col} }
                 }
@@ -136,7 +136,7 @@ pub fn table_status_row(colspan: &'static str, text: String) -> Element {
 /// Mobile read-only banner shared by the admin write surfaces.
 pub fn mobile_banner() -> Element {
     rsx! {
-        div { class: "muted", style: "font-size:0.75rem;padding:0.5rem 1rem;border-bottom:1px solid var(--border-app)",
+        div { class: "muted", style: "font-size: var(--fs-xs);padding:0.5rem 1rem;border-bottom:1px solid var(--border-app)",
             "Editing requires a desktop viewport."
         }
     }

@@ -295,10 +295,10 @@ fn upgrade_card() -> Element {
     let pro_checkout = use_app_state().feature(|f| f.pro_checkout);
     rsx! {
         div { class: "app-card", style: "padding: 1rem; display: flex; flex-direction: column; gap: .625rem; align-items: flex-start; flex-shrink: 0;",
-            p { style: "font-size: .875rem; font-weight: 600; margin: 0; color: var(--text-primary);",
+            p { style: "font-size: var(--fs-sm); font-weight: 600; margin: 0; color: var(--text-primary);",
                 "You've used all your puzzle generations this month."
             }
-            p { class: "muted", style: "font-size: .75rem; margin: 0;",
+            p { class: "muted", style: "font-size: var(--fs-xs); margin: 0;",
                 "Pro members generate unlimited puzzles."
             }
             if pro_checkout {
@@ -396,8 +396,8 @@ pub fn GameNew(id: String) -> Element {
                         style: "font-size: 1.125rem; font-weight: 700; font-family: monospace; text-transform: uppercase; color: var(--pastel-red); margin: 0;",
                         "Game Unavailable"
                     }
-                    p { class: "muted", style: "font-size: .875rem;", "This puzzle could not be found or is not available to start." }
-                    p { class: "error", style: "font-size: .75rem; font-family: monospace;", "{e}" }
+                    p { class: "muted", style: "font-size: var(--fs-sm);", "This puzzle could not be found or is not available to start." }
+                    p { class: "error", style: "font-size: var(--fs-xs); font-family: monospace;", "{e}" }
                     div { class: "row",
                         button { class: "app-btn", onclick: move |_| details_res.restart(), "Retry" }
                         Link { to: Route::Games {}, class: "app-btn", "Back to Games" }
@@ -440,10 +440,10 @@ pub fn GameNew(id: String) -> Element {
                     None => status("muted", "Loading…", true),
                     Some(None) => rsx! {
                         div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: .75rem; align-items: flex-start;",
-                            p { style: "font-size: .875rem; font-weight: 600; margin: 0; color: var(--text-primary);",
+                            p { style: "font-size: var(--fs-sm); font-weight: 600; margin: 0; color: var(--text-primary);",
                                 "Sign in to create puzzles"
                             }
-                            p { class: "muted", style: "font-size: .75rem; margin: 0;",
+                            p { class: "muted", style: "font-size: var(--fs-xs); margin: 0;",
                                 "Generate a custom crossword from any topic you like."
                             }
                             Link { to: Route::Login {}, class: "app-btn app-btn-active", "Sign in" }
@@ -471,7 +471,7 @@ pub fn GameNew(id: String) -> Element {
                                 label {
                                     r#for: "gn-topic",
                                     class: "muted",
-                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;",
+                                    style: "font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em;",
                                     "Topic"
                                 }
                                 input {
@@ -488,7 +488,7 @@ pub fn GameNew(id: String) -> Element {
                             div { style: "display: flex; flex-direction: column; gap: .375rem;",
                                 span {
                                     class: "muted",
-                                    style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;",
+                                    style: "font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em;",
                                     "Size"
                                 }
                                 SectionTabs {
@@ -514,11 +514,11 @@ pub fn GameNew(id: String) -> Element {
                                         ("Max word len", *max_len.read(), 2, 50, 1),
                                         ("Answers", *answers.read(), 1, 250, 2),
                                     ] {
-                                        label { class: "muted", style: "display: flex; flex-direction: column; gap: .25rem; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;",
+                                        label { class: "muted", style: "display: flex; flex-direction: column; gap: .25rem; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .05em;",
                                             {lbl}
                                             input {
                                                 class: "app-input",
-                                                style: "padding: .375rem .5rem; font-size: .875rem;",
+                                                style: "padding: .375rem .5rem; font-size: var(--fs-md);",
                                                 r#type: "number",
                                                 min: "{min_v}",
                                                 max: "{max_v}",
@@ -626,7 +626,7 @@ pub fn GameNew(id: String) -> Element {
                 let status_now = gen.status.read().clone();
                 if status_now == "idle" {
                     rsx! {
-                        div { class: "muted", style: "font-size: .875rem; text-align: center; padding: 2rem 0;",
+                        div { class: "muted", style: "font-size: var(--fs-sm); text-align: center; padding: 2rem 0;",
                             "Your puzzle will build here."
                         }
                     }
@@ -662,7 +662,7 @@ pub fn GameNew(id: String) -> Element {
                                     {upgrade_card()}
                                 } else {
                                     div { class: "app-card", style: "padding: 1rem; display: flex; flex-direction: column; gap: .75rem; border-color: var(--color-error); flex-shrink: 0;",
-                                        p { class: "error", style: "font-size: .875rem; margin: 0;", "{gen.error}" }
+                                        p { class: "error", style: "font-size: var(--fs-sm); margin: 0;", "{gen.error}" }
                                         button {
                                             class: "app-btn",
                                             style: "justify-content: center;",
@@ -691,7 +691,7 @@ pub fn GameNew(id: String) -> Element {
                                         "{gtitle}"
                                     }
                                     if !gen.publish_error.read().is_empty() {
-                                        p { class: "error", style: "font-size: .75rem; margin: 0;", "{gen.publish_error}" }
+                                        p { class: "error", style: "font-size: var(--fs-xs); margin: 0;", "{gen.publish_error}" }
                                     }
                                     button {
                                         class: "app-btn app-btn-active",
@@ -806,7 +806,7 @@ pub fn GameNew(id: String) -> Element {
                 rsx! {
                     div { style: "display: flex; flex-direction: column; gap: 1rem;",
                         if !start_error.read().is_empty() {
-                            p { class: "error", style: "font-size: .875rem;", "{start_error}" }
+                            p { class: "error", style: "font-size: var(--fs-sm);", "{start_error}" }
                         }
                         button {
                             class: "app-btn app-btn-active",

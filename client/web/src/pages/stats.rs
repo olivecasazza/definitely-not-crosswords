@@ -544,9 +544,9 @@ pub fn Stats() -> Element {
                     div { style: "display: flex; flex-direction: column; gap: 1.5rem; height: 100%; overflow-y: auto;",
                         match &*leaderboard_res.read_unchecked() {
                             None => rsx! { div { class: "muted st-loading", "Fetching rankings..." } },
-                            Some(Err(e)) => rsx! { div { class: "error", style: "padding: 1rem; font-size: .75rem; font-family: monospace;", "{e}" } },
+                            Some(Err(e)) => rsx! { div { class: "error", style: "padding: 1rem; font-size: var(--fs-xs); font-family: monospace;", "{e}" } },
                             Some(Ok(entries)) if entries.is_empty() => rsx! {
-                                div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: .75rem; color: var(--text-secondary);",
+                                div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: var(--fs-xs); color: var(--text-secondary);",
                                     "No completed games or player statistics available yet."
                                 }
                             },
@@ -559,25 +559,25 @@ pub fn Stats() -> Element {
                                             if entries.len() >= 2 {
                                                 div { class: "app-card st-podium-card",
                                                     div { class: "st-podium-badge", style: "background: var(--podium-silver); color: var(--contrast-ink); border-color: var(--podium-silver);", "2" }
-                                                    span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary);", "{entries[1].name}" }
-                                                    span { style: "font-size: .625rem; color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[1].total_score} pts" }
-                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "{entries[1].games_played} games · {entries[1].accuracy}% Acc" }
+                                                    span { style: "font-size: var(--fs-sm); font-weight: 700; color: var(--text-primary);", "{entries[1].name}" }
+                                                    span { style: "font-size: var(--fs-2xs); color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[1].total_score} pts" }
+                                                    span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "{entries[1].games_played} games · {entries[1].accuracy}% Acc" }
                                                 }
                                             }
                                             // 1st (bigger)
                                             div { class: "app-card st-podium-card st-podium-first",
                                                 div { class: "st-podium-badge", style: "background: var(--pastel-yellow); color: var(--contrast-ink); border-color: var(--pastel-yellow); width: 3rem; height: 3rem; font-size: 1.25rem;", "👑" }
                                                 span { style: "font-size: 1rem; font-weight: 900; color: var(--text-primary);", "{entries[0].name}" }
-                                                span { style: "font-size: .875rem; color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[0].total_score} pts" }
-                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "{entries[0].games_played} games · {entries[0].accuracy}% Acc" }
+                                                span { style: "font-size: var(--fs-sm); color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[0].total_score} pts" }
+                                                span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "{entries[0].games_played} games · {entries[0].accuracy}% Acc" }
                                             }
                                             // 3rd
                                             if entries.len() >= 3 {
                                                 div { class: "app-card st-podium-card",
                                                     div { class: "st-podium-badge", style: "background: var(--podium-bronze); color: var(--contrast-ink); border-color: var(--podium-bronze);", "3" }
-                                                    span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary);", "{entries[2].name}" }
-                                                    span { style: "font-size: .625rem; color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[2].total_score} pts" }
-                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "{entries[2].games_played} games · {entries[2].accuracy}% Acc" }
+                                                    span { style: "font-size: var(--fs-sm); font-weight: 700; color: var(--text-primary);", "{entries[2].name}" }
+                                                    span { style: "font-size: var(--fs-2xs); color: var(--pastel-yellow); font-weight: 900; text-transform: uppercase;", "{entries[2].total_score} pts" }
+                                                    span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "{entries[2].games_played} games · {entries[2].accuracy}% Acc" }
                                                 }
                                             }
                                         }
@@ -620,7 +620,7 @@ pub fn Stats() -> Element {
                                                                             Identicon { seed: entry.id.clone(), size: 20 }
                                                                             "{entry.name}"
                                                                             if is_me {
-                                                                                span { style: "font-size: .5rem; font-weight: 900; border: 1px solid color-mix(in srgb, var(--pastel-yellow) 30%, transparent); color: var(--pastel-yellow); padding: 0 .25rem; text-transform: uppercase;", "YOU" }
+                                                                                span { style: "font-size: var(--fs-2xs); font-weight: 900; border: 1px solid color-mix(in srgb, var(--pastel-yellow) 30%, transparent); color: var(--pastel-yellow); padding: 0 .25rem; text-transform: uppercase;", "YOU" }
                                                                             }
                                                                         }
                                                                     }
@@ -628,7 +628,7 @@ pub fn Stats() -> Element {
                                                                     td { style: "text-align: center;",
                                                                         span { style: "{acc_color}", "{entry.accuracy}%" }
                                                                     }
-                                                                    td { style: "text-align: right; font-weight: 900; color: var(--pastel-yellow); font-size: .875rem;", "{entry.total_score}" }
+                                                                    td { style: "text-align: right; font-weight: 900; color: var(--pastel-yellow); font-size: var(--fs-sm);", "{entry.total_score}" }
                                                                 }
                                                             }
                                                         }
@@ -648,9 +648,9 @@ pub fn Stats() -> Element {
                     match &*career_res.read_unchecked() {
                         None => rsx! { div { class: "muted st-loading", "Compiling career file..." } },
                         Some(None) => rsx! { div { class: "muted st-loading", "Sign in to view career stats." } },
-                        Some(Some(Err(e))) => rsx! { div { class: "error", style: "padding: 1rem; font-size: .75rem; font-family: monospace;", "{e}" } },
+                        Some(Some(Err(e))) => rsx! { div { class: "error", style: "padding: 1rem; font-size: var(--fs-xs); font-family: monospace;", "{e}" } },
                         Some(Some(Ok(stats))) if stats.games_played == 0 => rsx! {
-                            div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: .75rem; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 1rem;",
+                            div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: var(--fs-xs); color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 1rem;",
                                 span { "No games played yet on this profile." }
                                 Link { to: Route::Games {}, class: "app-btn", style: "font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-yellow);", "Launch a Game" }
                             }
@@ -667,12 +667,12 @@ pub fn Stats() -> Element {
                     // Selector
                     div { class: "app-card", style: "padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;",
                         div { style: "display: flex; flex-direction: column;",
-                            span { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-family: monospace;", "Select Opponent" }
-                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; margin-top: .125rem;", "Compare your career performance side-by-side" }
+                            span { style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-family: monospace;", "Select Opponent" }
+                            span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; margin-top: .125rem;", "Compare your career performance side-by-side" }
                         }
                         select {
                             class: "app-input",
-                            style: "padding: .5rem .75rem; font-size: .75rem; font-family: monospace; text-transform: uppercase; font-weight: 700; max-width: 20rem;",
+                            style: "padding: .5rem .75rem; font-size: var(--fs-md); font-family: monospace; text-transform: uppercase; font-weight: 700; max-width: 20rem;",
                             value: "{selected_opponent_id}",
                             onchange: move |e| selected_opponent_id.clone().set(e.value()),
                             option { value: "", disabled: true, "-- CHOOSE PLAYER --" }
@@ -694,7 +694,7 @@ pub fn Stats() -> Element {
                     }
 
                     if selected_opponent_id.read().is_empty() {
-                        div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: .75rem; color: var(--text-secondary);",
+                        div { class: "app-card", style: "padding: 3rem; text-align: center; font-size: var(--fs-xs); color: var(--text-secondary);",
                             "Select another player from the dropdown to unlock head-to-head comparison records."
                         }
                     } else {
@@ -702,14 +702,14 @@ pub fn Stats() -> Element {
                             None => rsx! { div { class: "muted st-loading", "Computing combat records..." } },
                             Some(None) => rsx! {},
                             Some(Some(Err(e))) => rsx! {
-                                div { class: "error", style: "padding: 1rem; font-size: .75rem; font-family: monospace;", "{e}" }
+                                div { class: "error", style: "padding: 1rem; font-size: var(--fs-xs); font-family: monospace;", "{e}" }
                             },
                             Some(Some(Ok(h2h))) => rsx! {
                                 div { style: "display: flex; flex-direction: column; gap: 2rem;",
 
                                     // Record banner
                                     div { class: "app-card", style: "padding: 1.5rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: .75rem; border-color: color-mix(in srgb, var(--pastel-yellow) 20%, transparent);",
-                                        h3 { class: "muted", style: "font-size: .625rem; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; margin: 0;", "CO-OP MATCH RECORD" }
+                                        h3 { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .1em; font-weight: 700; margin: 0;", "CO-OP MATCH RECORD" }
                                         div { style: "display: flex; align-items: center; gap: 1rem; font-size: 1.5rem; font-weight: 900;",
                                             span { style: "color: var(--pastel-green);", "{h2h.record.wins} W" }
                                             span { class: "muted", style: "font-size: 1rem; font-weight: 400; opacity: .3;", "—" }
@@ -717,7 +717,7 @@ pub fn Stats() -> Element {
                                             span { class: "muted", style: "font-size: 1rem; font-weight: 400; opacity: .3;", "—" }
                                             span { class: "muted", "{h2h.record.ties} T" }
                                         }
-                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; border-top: 1px solid var(--border-app); padding-top: .625rem; width: 100%; max-width: 20rem;",
+                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .05em; border-top: 1px solid var(--border-app); padding-top: .625rem; width: 100%; max-width: 20rem;",
                                             "Total Shared Matches: "
                                             span { style: "color: var(--text-primary); font-weight: 700;", "{h2h.games_played}" }
                                         }
@@ -725,8 +725,8 @@ pub fn Stats() -> Element {
 
                                     // Stat comparison
                                     div { style: "display: flex; flex-direction: column; gap: 1rem;",
-                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Stat Comparison" }
-                                        div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; font-family: monospace; font-size: .75rem;",
+                                        span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Stat Comparison" }
+                                        div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; font-family: monospace; font-size: var(--fs-xs);",
 
                                             // Total score
                                             div { class: "st-stat-row",
@@ -746,7 +746,7 @@ pub fn Stats() -> Element {
                                                         }
                                                     }
                                                 }
-                                                span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;",
+                                                span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;",
                                                     "Yellow: You ({h2h.scores.user_total}) · Grey: Opponent ({h2h.scores.opponent_total})"
                                                 }
                                             }
@@ -795,10 +795,10 @@ pub fn Stats() -> Element {
 
                                     // Match log
                                     div { style: "display: flex; flex-direction: column; gap: 1rem;",
-                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Combat Match Log" }
+                                        span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Combat Match Log" }
 
                                         if h2h.matches.is_empty() {
-                                            div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: .75rem; color: var(--text-secondary);",
+                                            div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: var(--fs-xs); color: var(--text-secondary);",
                                                 "You haven't played any co-op crossword games with this player yet."
                                             }
                                         } else {
@@ -813,13 +813,13 @@ pub fn Stats() -> Element {
                                                         rsx! {
                                                             div { class: "app-card", style: "padding: 1rem 1.25rem; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-family: monospace;",
                                                                 div { style: "display: flex; flex-direction: column; min-width: 0;",
-                                                                    span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{m.title}" }
-                                                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {format_date(&m.created_at)}" }
+                                                                    span { style: "font-size: var(--fs-sm); font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{m.title}" }
+                                                                    span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {format_date(&m.created_at)}" }
                                                                 }
                                                                 div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0;",
                                                                     div { style: "display: flex; flex-direction: column;",
-                                                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Match Scores" }
-                                                                        span { style: "font-size: .75rem; font-weight: 700; color: var(--text-primary);",
+                                                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "Match Scores" }
+                                                                        span { style: "font-size: var(--fs-xs); font-weight: 700; color: var(--text-primary);",
                                                                             "You "
                                                                             span { style: "color: var(--pastel-yellow);", "{m.user_score}" }
                                                                             " — "
@@ -828,13 +828,13 @@ pub fn Stats() -> Element {
                                                                         }
                                                                     }
                                                                     div { style: "display: flex; flex-direction: column; min-width: 4.375rem;",
-                                                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Outcome" }
-                                                                        span { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; {outcome_color}", "{m.result}" }
+                                                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "Outcome" }
+                                                                        span { style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; {outcome_color}", "{m.result}" }
                                                                     }
                                                                     Link {
                                                                         to: Route::GameCompleted { id: m.game_id.clone() },
                                                                         class: "app-btn",
-                                                                        style: "font-size: .625rem; padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
+                                                                        style: "font-size: var(--fs-md); padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
                                                                         "Stats"
                                                                     }
                                                                 }
@@ -868,22 +868,22 @@ pub fn Stats() -> Element {
 
                         // Create a team (anyone; size is Pro-tiered)
                         div { style: "display: flex; flex-direction: column; gap: .6rem;",
-                            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Create a Team" }
+                            span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Create a Team" }
                             if !signed_in {
-                                p { class: "muted", style: "font-size: .75rem; margin: 0;", "Sign in to create or join teams." }
+                                p { class: "muted", style: "font-size: var(--fs-xs); margin: 0;", "Sign in to create or join teams." }
                             } else {
                                 div { style: "display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;",
                                     input {
-                                        class: "app-input", style: "flex: 1; min-width: 8rem; padding: .5rem .75rem; font-size: .75rem;",
+                                        class: "app-input", style: "flex: 1; min-width: 8rem; padding: .5rem .75rem; font-size: var(--fs-md);",
                                         placeholder: "Team name", value: "{team_name}",
                                         oninput: move |e| team_name.set(e.value()),
                                     }
-                                    label { class: "muted", style: "font-size: .65rem; display: flex; align-items: center; gap: .3rem; text-transform: uppercase; white-space: nowrap;",
+                                    label { class: "muted", style: "font-size: var(--fs-2xs); display: flex; align-items: center; gap: .3rem; text-transform: uppercase; white-space: nowrap;",
                                         input { r#type: "checkbox", checked: "{team_private}", onchange: move |e| team_private.set(e.checked()) }
                                         "Private"
                                     }
                                     button {
-                                        class: "app-btn app-btn-active", style: "font-size: .75rem;",
+                                        class: "app-btn app-btn-active", style: "font-size: var(--fs-md);",
                                         onclick: move |_| {
                                             let name = team_name.peek().clone();
                                             if name.trim().len() < 2 {
@@ -905,7 +905,7 @@ pub fn Stats() -> Element {
                                         "Create"
                                     }
                                 }
-                                p { class: "muted", style: "font-size: .625rem; margin: 0;", "Free teams hold 4 · Pro teams hold 10." }
+                                p { class: "muted", style: "font-size: var(--fs-2xs); margin: 0;", "Free teams hold 4 · Pro teams hold 10." }
                             }
                         }
 
@@ -914,13 +914,13 @@ pub fn Stats() -> Element {
                             match &*my_invites_res.read_unchecked() {
                                 Some(Some(Err(e))) => rsx! {
                                     div { style: "display: flex; flex-direction: column; gap: .5rem;",
-                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Invitations" }
+                                        span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Invitations" }
                                         {error_status(&trpc_err(e), move |_| my_invites_res.restart())}
                                     }
                                 },
                                 Some(Some(Ok(invites))) if !invites.is_empty() => rsx! {
                                     div { style: "display: flex; flex-direction: column; gap: .5rem;",
-                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Invitations" }
+                                        span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Invitations" }
                                         for inv in invites.clone() {
                                             {
                                                 let iid_a = inv.id.clone();
@@ -929,12 +929,12 @@ pub fn Stats() -> Element {
                                                 rsx! {
                                                     div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem;",
                                                         div { style: "display: flex; flex-direction: column;",
-                                                            span { style: "font-weight: 700; font-size: .8rem;", "{inv.team_name}" }
-                                                            span { class: "muted", style: "font-size: .6rem;", "invited by {inv.invited_by}" }
+                                                            span { style: "font-weight: 700; font-size: var(--fs-sm);", "{inv.team_name}" }
+                                                            span { class: "muted", style: "font-size: var(--fs-2xs);", "invited by {inv.invited_by}" }
                                                         }
                                                         div { style: "display: flex; gap: .4rem;",
                                                             button {
-                                                                class: "app-btn app-btn-active", style: "font-size: .65rem;",
+                                                                class: "app-btn app-btn-active", style: "font-size: var(--fs-md);",
                                                                 onclick: move |_| {
                                                                     let id = iid_a.clone();
                                                                     let nm = tname.clone();
@@ -948,7 +948,7 @@ pub fn Stats() -> Element {
                                                                 "Accept"
                                                             }
                                                             button {
-                                                                class: "app-btn", style: "font-size: .65rem;",
+                                                                class: "app-btn", style: "font-size: var(--fs-md);",
                                                                 onclick: move |_| {
                                                                     let id = iid_d.clone();
                                                                     spawn_local(async move {
@@ -976,13 +976,13 @@ pub fn Stats() -> Element {
                             match &*my_teams_res.read_unchecked() {
                                 Some(Some(Err(e))) => rsx! {
                                     div { style: "display: flex; flex-direction: column; gap: .5rem;",
-                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "My Teams" }
+                                        span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "My Teams" }
                                         {error_status(&trpc_err(e), move |_| my_teams_res.restart())}
                                     }
                                 },
                                 Some(Some(Ok(teams))) if !teams.is_empty() => rsx! {
                                     div { style: "display: flex; flex-direction: column; gap: .5rem;",
-                                        span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "My Teams" }
+                                        span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "My Teams" }
                                         for t in teams.clone() {
                                             {
                                                 let owner_tag = if t.is_owner { " · owner" } else { "" };
@@ -999,13 +999,13 @@ pub fn Stats() -> Element {
                                                     div { class: "app-card", style: "padding: .6rem .9rem; display: flex; flex-direction: column; gap: .5rem;",
                                                         div { style: "display: flex; align-items: center; justify-content: space-between; gap: .5rem;",
                                                             div { style: "display: flex; flex-direction: column;",
-                                                                span { style: "font-weight: 700; font-size: .8rem;", "{t.name}" }
-                                                                span { class: "muted", style: "font-size: .6rem; text-transform: uppercase;", "{t.member_count}/{t.max_size} · {vis}{owner_tag}" }
+                                                                span { style: "font-weight: 700; font-size: var(--fs-sm);", "{t.name}" }
+                                                                span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "{t.member_count}/{t.max_size} · {vis}{owner_tag}" }
                                                             }
                                                             div { style: "display: flex; gap: .4rem;",
                                                                 if t.is_owner {
                                                                     button {
-                                                                        class: "app-btn", style: "font-size: .6rem;",
+                                                                        class: "app-btn", style: "font-size: var(--fs-md);",
                                                                         onclick: move |_| {
                                                                             let id = tid_vis.clone();
                                                                             spawn_local(async move {
@@ -1019,7 +1019,7 @@ pub fn Stats() -> Element {
                                                                     }
                                                                 }
                                                                 button {
-                                                                    class: "app-btn", style: "font-size: .65rem;",
+                                                                    class: "app-btn", style: "font-size: var(--fs-md);",
                                                                     onclick: move |_| {
                                                                         let id = tid.clone();
                                                                         let nm = tname.clone();
@@ -1037,12 +1037,12 @@ pub fn Stats() -> Element {
                                                         if !full {
                                                             div { style: "display: flex; gap: .4rem;",
                                                                 input {
-                                                                    class: "app-input", style: "flex: 1; padding: .35rem .6rem; font-size: .7rem;",
+                                                                    class: "app-input", style: "flex: 1; padding: .35rem .6rem; font-size: var(--fs-md);",
                                                                     placeholder: "invite by username or email", value: "{cur_input}",
                                                                     oninput: move |e| { invite_inputs.write().insert(tid_input.clone(), e.value()); },
                                                                 }
                                                                 button {
-                                                                    class: "app-btn", style: "font-size: .65rem;",
+                                                                    class: "app-btn", style: "font-size: var(--fs-md);",
                                                                     onclick: move |_| {
                                                                         let id = tid_inv.clone();
                                                                         let who = invite_inputs.peek().get(&id).cloned().unwrap_or_default();
@@ -1070,12 +1070,12 @@ pub fn Stats() -> Element {
 
                         // Team leaderboard
                         div { style: "display: flex; flex-direction: column; gap: .5rem;",
-                            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Team Leaderboard" }
+                            span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Team Leaderboard" }
                             match &*teams_board_res.read_unchecked() {
                                 None => rsx! { div { class: "muted st-loading", "Loading teams..." } },
-                                Some(Err(e)) => rsx! { div { class: "error", style: "font-size: .75rem;", "{e}" } },
+                                Some(Err(e)) => rsx! { div { class: "error", style: "font-size: var(--fs-xs);", "{e}" } },
                                 Some(Ok(teams)) if teams.is_empty() => rsx! {
-                                    div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: .75rem; color: var(--text-secondary);", "No teams yet — create the first one!" }
+                                    div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: var(--fs-xs); color: var(--text-secondary);", "No teams yet — create the first one!" }
                                 },
                                 Some(Ok(teams)) => rsx! {
                                     for (i, t) in teams.iter().enumerate() {
@@ -1086,15 +1086,15 @@ pub fn Stats() -> Element {
                                             let is_private = t.visibility == "PRIVATE";
                                             rsx! {
                                                 div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; gap: .75rem;",
-                                                    span { style: "{badge} display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; font-size: .7rem; font-weight: 700; font-family: monospace; border: 1px solid;", "{i + 1}" }
+                                                    span { style: "{badge} display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; font-size: var(--fs-2xs); font-weight: 700; font-family: monospace; border: 1px solid;", "{i + 1}" }
                                                     div { style: "flex: 1; display: flex; flex-direction: column; min-width: 0;",
-                                                        span { style: "font-weight: 700; font-size: .8rem;", "{t.name}" }
-                                                        span { class: "muted", style: "font-size: .6rem; text-transform: uppercase;", "{t.member_count}/{t.max_size} · {t.games_played} games · {t.accuracy}% acc" }
+                                                        span { style: "font-weight: 700; font-size: var(--fs-sm);", "{t.name}" }
+                                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "{t.member_count}/{t.max_size} · {t.games_played} games · {t.accuracy}% acc" }
                                                     }
                                                     span { style: "font-weight: 700; font-family: monospace; color: var(--pastel-yellow);", "{t.total_score}" }
                                                     if joinable {
                                                         button {
-                                                            class: "app-btn", style: "font-size: .6875rem;",
+                                                            class: "app-btn", style: "font-size: var(--fs-md);",
                                                             onclick: move |_| {
                                                                 let id = t.id.clone();
                                                                 let nm = t.name.clone();
@@ -1111,7 +1111,7 @@ pub fn Stats() -> Element {
                                                             "Join"
                                                         }
                                                     } else if is_private {
-                                                        span { class: "muted", style: "font-size: .58rem; text-transform: uppercase;", "private" }
+                                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "private" }
                                                     }
                                                 }
                                             }
@@ -1123,12 +1123,12 @@ pub fn Stats() -> Element {
 
                         // Browse teams — public directory (team.list), joinable when open
                         div { style: "display: flex; flex-direction: column; gap: .5rem;",
-                            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Browse Teams" }
+                            span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Browse Teams" }
                             match &*team_list_res.read_unchecked() {
                                 None => rsx! { div { class: "muted st-loading", "Loading team directory..." } },
                                 Some(Err(e)) => rsx! { {error_status(&trpc_err(e), move |_| team_list_res.restart())} },
                                 Some(Ok(teams)) if teams.is_empty() => rsx! {
-                                    div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: .75rem; color: var(--text-secondary);", "No public teams to browse yet." }
+                                    div { class: "app-card", style: "padding: 2rem; text-align: center; font-size: var(--fs-xs); color: var(--text-secondary);", "No public teams to browse yet." }
                                 },
                                 Some(Ok(teams)) => rsx! {
                                     for t in teams.iter() {
@@ -1140,17 +1140,17 @@ pub fn Stats() -> Element {
                                             rsx! {
                                                 div { class: "app-card", style: "padding: .6rem .9rem; display: flex; align-items: center; gap: .75rem;",
                                                     div { style: "flex: 1; display: flex; flex-direction: column; min-width: 0;",
-                                                        span { style: "font-weight: 700; font-size: .8rem;", "{t.name}" }
-                                                        span { class: "muted", style: "font-size: .6rem; text-transform: uppercase;", "{t.member_count}/{t.max_size} members" }
+                                                        span { style: "font-weight: 700; font-size: var(--fs-sm);", "{t.name}" }
+                                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "{t.member_count}/{t.max_size} members" }
                                                     }
-                                                    span { class: "muted", style: "font-size: .58rem; text-transform: uppercase; border: 1px solid var(--border-app); padding: 0 .3rem;", "{t.visibility}" }
+                                                    span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; border: 1px solid var(--border-app); padding: 0 .3rem;", "{t.visibility}" }
                                                     if is_member {
-                                                        span { class: "muted", style: "font-size: .58rem; text-transform: uppercase;", "member" }
+                                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "member" }
                                                     } else if full {
-                                                        span { class: "muted", style: "font-size: .58rem; text-transform: uppercase;", "full" }
+                                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "full" }
                                                     } else if joinable {
                                                         button {
-                                                            class: "app-btn", style: "font-size: .6875rem;",
+                                                            class: "app-btn", style: "font-size: var(--fs-md);",
                                                             onclick: move |_| {
                                                                 let id = t.id.clone();
                                                                 let nm = t.name.clone();
@@ -1284,9 +1284,9 @@ fn career_body(
 
             // Accuracy breakdown bar
             div { class: "app-card", style: "padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;",
-                span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase;", "Accuracy Breakdown" }
+                span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase;", "Accuracy Breakdown" }
                 div { style: "display: flex; flex-direction: column; gap: .5rem;",
-                    div { style: "display: flex; justify-content: space-between; font-size: .625rem; color: var(--text-secondary); text-transform: uppercase;",
+                    div { style: "display: flex; justify-content: space-between; font-size: var(--fs-2xs); color: var(--text-secondary); text-transform: uppercase;",
                         span { "Correct: {stats.total_correct}" }
                         span { "Incorrect: {stats.total_incorrect}" }
                     }
@@ -1294,7 +1294,7 @@ fn career_body(
                         div { class: "st-bar-segment", style: "width: {stats.accuracy}%; background: var(--pastel-green);" }
                         div { class: "st-bar-segment", style: "width: {100 - stats.accuracy}%; background: var(--pastel-red);" }
                     }
-                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; line-height: 1.6;",
+                    span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; line-height: 1.6;",
                         "Your overall ratio is "
                         span { style: "color: var(--pastel-green); font-weight: 700;", "{stats.total_correct} correct guesses" }
                         " out of "
@@ -1536,7 +1536,7 @@ fn match_log_section(rows: &[HistoryRow], mut page: Signal<usize>) -> Element {
             div { style: "display: flex; align-items: center; justify-content: space-between; gap: .75rem;",
                 button {
                     class: "app-btn",
-                    style: "font-size: .65rem;",
+                    style: "font-size: var(--fs-md);",
                     disabled: at_start,
                     onclick: move |_| {
                         let cur = *page.peek();
@@ -1546,12 +1546,12 @@ fn match_log_section(rows: &[HistoryRow], mut page: Signal<usize>) -> Element {
                     },
                     "Prev"
                 }
-                span { class: "muted", style: "font-size: .625rem; font-family: monospace; text-transform: uppercase;",
+                span { class: "muted", style: "font-size: var(--fs-2xs); font-family: monospace; text-transform: uppercase;",
                     "{from}–{end} of {total}"
                 }
                 button {
                     class: "app-btn",
-                    style: "font-size: .65rem;",
+                    style: "font-size: var(--fs-md);",
                     disabled: at_end,
                     onclick: move |_| {
                         let cur = *page.peek();
@@ -1569,40 +1569,40 @@ fn match_log_section(rows: &[HistoryRow], mut page: Signal<usize>) -> Element {
 fn legacy_match_log(stats: &CareerStats) -> Element {
     rsx! {
         div { style: "display: flex; flex-direction: column; gap: .75rem;",
-            span { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Match Log History" }
+            span { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;", "Match Log History" }
             div { style: "display: flex; flex-direction: column; gap: .75rem;",
                 for game_opt in stats.recent_games.iter() {
                     if let Some(game) = game_opt {
                         div { class: "app-card", style: "padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: .75rem;",
                             div { style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem;",
                                 div { style: "display: flex; flex-direction: column; min-width: 0;",
-                                    span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{game.title}" }
-                                    span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {format_date(&game.created_at)}" }
+                                    span { style: "font-size: var(--fs-sm); font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{game.title}" }
+                                    span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .05em; margin-top: .25rem;", "Played on {format_date(&game.created_at)}" }
                                 }
                                 div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0; font-family: monospace;",
                                     div { style: "display: flex; flex-direction: column;",
-                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Guesses" }
-                                        span { style: "font-size: .75rem; font-weight: 600; color: var(--text-primary);",
+                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "Guesses" }
+                                        span { style: "font-size: var(--fs-xs); font-weight: 600; color: var(--text-primary);",
                                             span { style: "color: var(--pastel-green);", "{game.correct_guesses}" }
                                             " / "
                                             span { style: "color: var(--pastel-red);", "{game.incorrect_guesses}" }
                                         }
                                     }
                                     div { style: "display: flex; flex-direction: column;",
-                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Place" }
-                                        span { style: "font-size: .75rem; font-weight: 700; color: var(--text-primary);",
+                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "Place" }
+                                        span { style: "font-size: var(--fs-xs); font-weight: 700; color: var(--text-primary);",
                                             "#{game.rank} "
-                                            span { class: "muted", style: "font-size: .5625rem; font-weight: 400; text-transform: uppercase;", "of {game.total_participants}" }
+                                            span { class: "muted", style: "font-size: var(--fs-2xs); font-weight: 400; text-transform: uppercase;", "of {game.total_participants}" }
                                         }
                                     }
                                     div { style: "display: flex; flex-direction: column; border-left: 1px solid var(--border-app); padding-left: 1rem; min-width: 3.125rem;",
-                                        span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase;", "Score" }
-                                        span { style: "font-size: .875rem; font-weight: 900; color: var(--pastel-yellow);", "{game.score}" }
+                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "Score" }
+                                        span { style: "font-size: var(--fs-sm); font-weight: 900; color: var(--pastel-yellow);", "{game.score}" }
                                     }
                                     Link {
                                         to: Route::GameCompleted { id: game.id.clone() },
                                         class: "app-btn",
-                                        style: "font-size: .625rem; padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
+                                        style: "font-size: var(--fs-md); padding: .25rem .625rem; text-transform: uppercase; font-weight: 700;",
                                         "Review"
                                     }
                                 }
@@ -1620,7 +1620,7 @@ const STATS_CSS: &str = r#"
     padding: 2rem;
     text-align: center;
     font-family: monospace;
-    font-size: .75rem;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: .05em;
 }
@@ -1653,7 +1653,7 @@ const STATS_CSS: &str = r#"
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: .875rem;
+    font-size: var(--fs-sm);
 }
 .st-table {
     width: 100%;
@@ -1666,7 +1666,7 @@ const STATS_CSS: &str = r#"
 }
 .st-thead-row th {
     padding: .875rem 1rem;
-    font-size: .625rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: .05em;
     font-weight: 700;
@@ -1675,7 +1675,7 @@ const STATS_CSS: &str = r#"
 }
 .st-table-row {
     border-bottom: 1px solid color-mix(in srgb, var(--border-hover) 50%, transparent);
-    font-size: .75rem;
+    font-size: var(--fs-xs);
     font-family: monospace;
     transition: all .15s ease;
 }
@@ -1691,7 +1691,7 @@ const STATS_CSS: &str = r#"
     gap: .25rem;
 }
 .st-stat-label {
-    font-size: .5625rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: .05em;
 }
@@ -1730,7 +1730,7 @@ const STATS_CSS: &str = r#"
     gap: 1rem;
 }
 .st-section-label {
-    font-size: .75rem;
+    font-size: var(--fs-xs);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .05em;
@@ -1771,7 +1771,7 @@ a.st-best-card:hover { border-color: var(--border-hover); }
     color: var(--pastel-yellow);
 }
 .st-best-sub {
-    font-size: .5625rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: .05em;
     overflow: hidden;
@@ -1780,12 +1780,12 @@ a.st-best-card:hover { border-color: var(--border-hover); }
 }
 .st-chart-label {
     fill: var(--text-secondary);
-    font-size: 9px;
+    font-size: var(--fs-2xs);
     font-family: monospace;
     text-anchor: end;
 }
 .st-chip {
-    font-size: .5625rem;
+    font-size: var(--fs-2xs);
     font-family: monospace;
     text-transform: uppercase;
     border: 1px solid var(--border-app);
@@ -1804,7 +1804,7 @@ a.st-best-card:hover { border-color: var(--border-hover); }
 }
 .st-mlog-row:hover { border-color: var(--border-hover); }
 .st-mlog-title {
-    font-size: .8rem;
+    font-size: var(--fs-sm);
     font-weight: 700;
     color: var(--text-primary);
     overflow: hidden;
@@ -1812,20 +1812,20 @@ a.st-best-card:hover { border-color: var(--border-hover); }
     white-space: nowrap;
 }
 .st-mlog-date {
-    font-size: .5625rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: .05em;
     margin-top: .125rem;
 }
 .st-mlog-time {
-    font-size: .6875rem;
+    font-size: var(--fs-2xs);
     color: var(--text-secondary);
     min-width: 2.75rem;
     text-align: right;
     flex-shrink: 0;
 }
 .st-mlog-score {
-    font-size: .875rem;
+    font-size: var(--fs-sm);
     font-weight: 900;
     color: var(--pastel-yellow);
     min-width: 2.25rem;

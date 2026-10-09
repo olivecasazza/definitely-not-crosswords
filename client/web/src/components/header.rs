@@ -89,7 +89,7 @@ pub fn AppHeader() -> Element {
                 if show_beta_chip {
                     div { class: "beta-wrap",
                         button {
-                            class: "beta-chip",
+                            class: "beta-chip tap-44",
                             onclick: move |_| {
                                 let next = !beta_open();
                                 beta_open.set(next);
@@ -99,7 +99,7 @@ pub fn AppHeader() -> Element {
                         if beta_open() {
                             div { class: "beta-pop app-card",
                                 p { class: "muted",
-                                    "Staging environment — Pro is $1 here, but expect occasional data loss and unexpected changes. You're a beta tester. 🎈"
+                                    "Staging environment — beta price: Pro is $1 here (production is $10/year). Expect occasional data loss and unexpected changes. You're a beta tester. 🎈"
                                 }
                                 a {
                                     href: REPORT_BUG_URL,
@@ -113,6 +113,11 @@ pub fn AppHeader() -> Element {
                 }
                 button {
                     class: "app-btn",
+                    // Icon-only control: the glyph is the whole content, so
+                    // without a name a screen reader announces "sun" or
+                    // "moon" (or nothing) and never the action.
+                    aria_label: if light() { "Switch to light theme" } else { "Switch to dark theme" },
+                    title: if light() { "Switch to light theme" } else { "Switch to dark theme" },
                     onclick: move |_| {
                         let next = !light();
                         light.set(next);
@@ -123,8 +128,12 @@ pub fn AppHeader() -> Element {
                 if let Some((used, limit)) = quota {
                     Link {
                         to: Route::Profile {},
-                        class: if used >= limit - 1 { "quota-chip quota-chip-warn" } else { "quota-chip" },
+                        class: if used >= limit - 1 { "quota-chip quota-chip-warn tap-44" } else { "quota-chip tap-44" },
                         title: "Puzzle generations this month",
+                        // "GEN" is the compact visual; the accessible name
+                        // spells the noun out — an abbreviation with only a
+                        // title leaves screen readers announcing "gen".
+                        aria_label: "Puzzle generations: {used} of {limit} used this month",
                         "GEN {used}/{limit}"
                     }
                 }
@@ -159,7 +168,7 @@ const HEADER_CSS: &str = "
   display: flex; align-items: center; justify-content: space-between;
   padding: .35rem 1rem;
   background: var(--bg); border-bottom: 1px solid var(--line);
-  font-family: var(--mono); font-size: .8rem; letter-spacing: .01em;
+  font-family: var(--mono); font-size: var(--fs-sm); letter-spacing: .01em;
 }
 .site-header .brand {
   font-weight: 700; display: inline-flex; align-items: center; gap: .45rem;

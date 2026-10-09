@@ -4,7 +4,6 @@ pub mod admin;
 pub mod auth_layout;
 pub mod brand;
 pub mod footer;
-pub mod footer_dock;
 pub mod game_list;
 pub mod generation_progress;
 pub mod header;

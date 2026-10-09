@@ -18,7 +18,7 @@ use crossword_core::game::{
 };
 use dioxus::prelude::*;
 use futures::channel::mpsc;
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use gloo_timers::future::{IntervalStream, TimeoutFuture};
 use panel_kit::loading::ProgressBar;
 use serde_json::{json, Value};
@@ -175,6 +175,97 @@ fn build_action_batch(
         })
         .collect();
     (json!({ "id": game_id, "actions": payload }), local)
+}
+
+/// Write feedback for typed letters. Both writers (placeholder saves and
+/// guesses) were optimistic with no visible pending/failed state, so a
+/// dropped packet read exactly like "my partner just hasn't answered yet".
+/// `Saved` carries the server's per-letter verdict count for the word when
+/// the reply has one — the textual answer to "did this land?", which the
+/// board's red/green wash alone left to inference.
+#[derive(Clone, PartialEq)]
+pub(crate) enum SyncState {
+    Idle,
+    Saving,
+    /// (letters the server agreed with, letters in the word)
+    Saved(Option<(usize, usize)>),
+    Failed,
+}
+
+/// The one writer for typed letters. The wire action type is `placeholder`
+/// either way — a guess is a placeholder save the server answers with
+/// verdicts (DEF-243) — so `guess` only decides whether the saved line
+/// reports the verdict count. Owns the sync lifecycle and the retry batch,
+/// writes the optimistic local letters (so an unsaved word no longer vanishes
+/// from the clue bubbles until the event lands), and reconciles the server's
+/// verdicts on reply. Returns the reply plus this word's verdict map so the
+/// caller can decide word-solved and grid-complete.
+async fn commit_actions(
+    game_id: &str,
+    slots: &[ActionSlot],
+    guess: bool,
+    mut actions: Signal<Vec<GameAction>>,
+    mut sync: Signal<SyncState>,
+    mut failed_batch: Signal<Option<(Vec<ActionSlot>, bool)>>,
+) -> Option<(Value, HashMap<(i32, i32), bool>)> {
+    let (input, new_local) = build_action_batch(slots, game_id, ActionType::Placeholder);
+    let mut next_actions = actions.peek().clone();
+    next_actions.extend(new_local);
+    actions.set(next_actions);
+    sync.set(SyncState::Saving);
+
+    let res = match net::mutation("activeGame.addActions", Some(input)).await {
+        Ok(res) => res,
+        Err(_) => {
+            sync.set(SyncState::Failed);
+            failed_batch.set(Some((slots.to_vec(), guess)));
+            return None;
+        }
+    };
+
+    // Adopt the server's verdicts in place of the optimistic placeholder
+    // batch, so the grid colours from what the server actually decided.
+    let mut from_reply: HashMap<(i32, i32), bool> = HashMap::new();
+    if let Some(returned) = res.get("actions").and_then(|v| v.as_array()) {
+        let reconciled: Vec<GameAction> = returned
+            .iter()
+            .filter_map(|a| serde_json::from_value::<GameAction>(a.clone()).ok())
+            .collect();
+        for a in &reconciled {
+            from_reply.insert(
+                (a.cord_x, a.cord_y),
+                a.action_type == ActionType::CorrectGuess,
+            );
+        }
+        if !reconciled.is_empty() {
+            let mut merged = actions.peek().clone();
+            merged.retain(|a| {
+                !reconciled
+                    .iter()
+                    .any(|r| (r.cord_x, r.cord_y) == (a.cord_x, a.cord_y))
+            });
+            merged.extend(reconciled);
+            actions.set(merged);
+        }
+    }
+
+    let verdicts = if guess {
+        let right = slots
+            .iter()
+            .filter(|s| from_reply.get(&(s.cord_x, s.cord_y)) == Some(&true))
+            .count();
+        Some((right, slots.len()))
+    } else {
+        None
+    };
+    sync.set(SyncState::Saved(verdicts));
+    failed_batch.set(None);
+    // The saved line answers "did that land?" — once answered it is history,
+    // and the board already shows the letters. Two and a half seconds is
+    // about how long it takes to glance at it after clicking Guess.
+    let mut sync_clear = sync;
+    gloo_timers::callback::Timeout::new(2_500, move || sync_clear.set(SyncState::Idle)).forget();
+    Some((res, from_reply))
 }
 
 /// Parse the `gameMembers` array from `activeGame.get`. `userName` is absent
@@ -464,7 +555,7 @@ fn PlayStatusError(message: String) -> Element {
 pub fn GamePlay(id: String) -> Element {
     // --- source-of-truth state ---
     let questions = use_signal(Vec::<Question>::new);
-    let mut actions = use_signal(Vec::<GameAction>::new);
+    let actions = use_signal(Vec::<GameAction>::new);
     let loading = use_signal(|| true);
     let load_error = use_signal(|| Option::<String>::None);
 
@@ -551,6 +642,11 @@ pub fn GamePlay(id: String) -> Element {
 
     // per-letter input mount handles, so we can drive focus without web-sys.
     let mut input_refs = use_signal(Vec::<Option<Rc<MountedData>>>::new);
+
+    // Write feedback for the last placeholder save / guess (audit P1), plus
+    // the batch a failed write kept so the Retry control can resend it.
+    let sync = use_signal(|| SyncState::Idle);
+    let failed_batch = use_signal(|| Option::<(Vec<ActionSlot>, bool)>::None);
 
     // keep subscription handles alive for the component lifetime.
     let _subs =
@@ -954,6 +1050,8 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     // Submit the current word as a placeholder save (used by unselect).
+    // Write feedback, retry batch and the optimistic local letters live in
+    // `commit_actions` — shared with the guess path.
     let id_for_save = id.clone();
     let submit_placeholder = move || {
         // Only persist letters the player actually changed. Saving the whole
@@ -968,13 +1066,13 @@ pub fn GamePlay(id: String) -> Element {
         if slots.is_empty() {
             return;
         }
-        let (input, local) = build_action_batch(&slots, &id_for_save, ActionType::Placeholder);
-        // optimistic local merge so the board updates immediately
-        let mut cur = actions.peek().clone();
-        cur.extend(local);
-        actions.set(cur);
+        // commit_actions already merges the optimistic local letters. The id
+        // is cloned into a local: an `async move` block that borrows a
+        // capture moves it, which would make this closure FnOnce and break
+        // every caller that unselects twice.
+        let game_id = id_for_save.clone();
         spawn_local(async move {
-            let _ = net::mutation("activeGame.addActions", Some(input)).await;
+            commit_actions(&game_id, &slots, false, actions, sync, failed_batch).await;
         });
     };
 
@@ -982,7 +1080,7 @@ pub fn GamePlay(id: String) -> Element {
     // broadcasting presence. `save_progress` first persists the typed letters
     // as a placeholder (unselect / direction-toggle); a correct guess already
     // persisted its letters, so it clears without saving.
-    let mut submit_placeholder_for_clear = submit_placeholder.clone();
+    let submit_placeholder_for_clear = submit_placeholder.clone();
     let publish_for_clear = publish_presence.clone();
     let clear_selection = move |save_progress: bool| {
         let was_selected = selected.peek().is_some();
@@ -1379,18 +1477,10 @@ pub fn GamePlay(id: String) -> Element {
         // whether this word is right or whether the grid is finished. It sends
         // the letters and lets the server say: `addActions` returns each
         // action with the verdict *it* derived, plus the grid's real
-        // `solved`/`correct`/`total`. The optimistic local batch is therefore
-        // stamped `placeholder` — a guess in flight — and is replaced by the
-        // server's copy on the way back.
-        let (add_input, new_local) =
-            build_action_batch(&slots, &id_for_guess, ActionType::Placeholder);
-
-        let mut next_actions = actions.peek().clone();
-        next_actions.extend(new_local);
-        actions.set(next_actions);
-
+        // `solved`/`correct`/`total`. `commit_actions` owns that exchange —
+        // optimistic local write, sync feedback, retry batch, verdict merge —
+        // and hands back the reply plus this word's verdict map.
         let id_complete = id_for_guess.clone();
-        let mut actions_for_reply = actions;
         let mut clear_for_guess = clear_selection.clone();
         // The word this guess is about, snapshotted now. A `QKey` would be
         // wrong: the player can select another clue while the request is in
@@ -1401,50 +1491,25 @@ pub fn GamePlay(id: String) -> Element {
             .map(|s| (s.cord_x, s.cord_y))
             .collect();
         let nav = navigator();
+        let game_id = id_for_guess.clone();
         // Dioxus `spawn`: `nav.push` below needs the runtime scope (raw
         // spawn_local panics resolving the history context).
         spawn(async move {
-            let Ok(res) = net::mutation("activeGame.addActions", Some(add_input)).await else {
+            let Some((res, from_reply)) =
+                commit_actions(&game_id, &slots, true, actions, sync, failed_batch).await
+            else {
                 return;
             };
-            // Adopt the server's verdicts in place of the optimistic guess, so
-            // the grid colours from what the server actually decided.
-            if let Some(returned) = res.get("actions").and_then(|v| v.as_array()) {
-                let reconciled: Vec<GameAction> = returned
-                    .iter()
-                    .filter_map(|a| serde_json::from_value::<GameAction>(a.clone()).ok())
-                    .collect();
-                if !reconciled.is_empty() {
-                    // What the server said about this word, and only this word.
-                    let mut from_reply: HashMap<(i32, i32), bool> = HashMap::new();
-                    for a in &reconciled {
-                        from_reply.insert(
-                            (a.cord_x, a.cord_y),
-                            a.action_type == ActionType::CorrectGuess,
-                        );
-                    }
-
-                    let mut merged = actions_for_reply.peek().clone();
-                    merged.retain(|a| {
-                        !reconciled
-                            .iter()
-                            .any(|r| (r.cord_x, r.cord_y) == (a.cord_x, a.cord_y))
-                    });
-                    merged.extend(reconciled);
-                    actions_for_reply.set(merged);
-
-                    // A right guess ends the word, so the editor closes. This is
-                    // what `a46ff5c` (DEF-243) dropped: it computed `is_correct`
-                    // against an answer the client was still being sent, and
-                    // when the answer moved to the server the clear went with it
-                    // and nothing replaced it. A correct word in a puzzle with
-                    // others left therefore kept its entry row, and the letters
-                    // the player had just submitted stayed editable over the
-                    // now-green cells. Only the server's verdict can say this.
-                    if word_solved(&word_for_reply, &from_reply) {
-                        clear_for_guess(false);
-                    }
-                }
+            // A right guess ends the word, so the editor closes. This is what
+            // `a46ff5c` (DEF-243) dropped: it computed `is_correct` against an
+            // answer the client was still being sent, and when the answer moved
+            // to the server the clear went with it and nothing replaced it. A
+            // correct word in a puzzle with others left therefore kept its
+            // entry row, and the letters the player had just submitted stayed
+            // editable over the now-green cells. Only the server's verdict can
+            // say this.
+            if word_solved(&word_for_reply, &from_reply) {
+                clear_for_guess(false);
             }
             if !res.get("solved").and_then(|v| v.as_bool()).unwrap_or(false) {
                 return;
@@ -1461,6 +1526,24 @@ pub fn GamePlay(id: String) -> Element {
                     });
                 }
             }
+        });
+    };
+
+    // Retry the last failed write. The batch remembers its intent so a failed
+    // GUESS retries as a guess (with the verdict line), not a silent save.
+    let id_for_retry = id.clone();
+    let retry_failed = move || {
+        let Some((slots, guess)) = failed_batch.peek().clone() else {
+            return;
+        };
+        // The closure's own copy — `Signal::set` routes through DerefMut, so
+        // it needs a mutable binding here even though the outer `sync` is
+        // only ever read.
+        let mut sync = sync;
+        sync.set(SyncState::Saving);
+        let game_id = id_for_retry.clone();
+        spawn_local(async move {
+            commit_actions(&game_id, &slots, guess, actions, sync, failed_batch).await;
         });
     };
 
@@ -1665,6 +1748,8 @@ pub fn GamePlay(id: String) -> Element {
                 editor_focus,
                 unselect.clone(),
                 submit_guess.clone(),
+                sync.read().clone(),
+                retry_failed.clone(),
             ),
         }
     };
@@ -2090,27 +2175,66 @@ fn render_clues(
     editor_focus: impl FnMut() + Clone + 'static,
     unselect: impl FnMut(Event<MouseData>) + Clone + 'static,
     submit_guess: impl FnMut() + Clone + 'static,
+    sync: SyncState,
+    on_retry: impl FnMut() + Clone + 'static,
 ) -> Element {
     let mut toggle_a = toggle_dir.clone();
+    let mut retry = on_retry.clone();
     let across_active = selected_direction == Some(Direction::Across);
     let down_active = selected_direction == Some(Direction::Down);
+    // The saved line. Keyed off the write state, so what a screen reader
+    // hears and what the panel shows cannot disagree. A failed write keeps
+    // the retry affordance beside it; everything else is text only.
+    let (sync_text, sync_cls): (&str, &str) = match &sync {
+        SyncState::Saving => ("Saving…", "cw-sync cw-sync-saving"),
+        SyncState::Saved(None) => ("Saved", "cw-sync cw-sync-saved"),
+        SyncState::Saved(Some((right, total))) => {
+            if right == total {
+                ("Word solved", "cw-sync cw-sync-saved")
+            } else {
+                ("Not yet", "cw-sync cw-sync-saved")
+            }
+        }
+        SyncState::Failed => ("Not saved", "cw-sync cw-sync-failed"),
+        SyncState::Idle => ("", "cw-sync"),
+    };
+    let count_line: Option<String> = match &sync {
+        SyncState::Saved(Some((right, total))) if right != total => {
+            Some(format!("{right} of {total} letters correct"))
+        }
+        _ => None,
+    };
+    let sync_line = match &count_line {
+        Some(line) => format!("{sync_text} — {line}"),
+        None => sync_text.to_string(),
+    };
 
     rsx! {
         div { class: "cw-clues",
             div { class: "cw-clues-head",
                 h2 { "Clues" }
-                div { class: "cw-tabs",
-                    button {
-                        class: if across_active { "cw-tab cw-tab-active-across" } else { "cw-tab" },
-                        onclick: move |_| toggle_a(Direction::Across),
-                        "Across"
+                div { class: "cw-head-right",
+                    span { class: "{sync_cls}", role: "status", "{sync_line}" }
+                    if matches!(sync, SyncState::Failed) {
+                        button {
+                            class: "cw-sync-retry",
+                            onclick: move |_| retry(),
+                            "Retry"
+                        }
                     }
-                    button {
-                        class: if down_active { "cw-tab cw-tab-active-down" } else { "cw-tab" },
-                        onclick: move |_| toggle_dir(Direction::Down),
-                        "Down"
+                        div { class: "cw-tabs",
+                            button {
+                                class: if across_active { "cw-tab cw-tab-active-across" } else { "cw-tab" },
+                                onclick: move |_| toggle_a(Direction::Across),
+                                "Across"
+                            }
+                            button {
+                                class: if down_active { "cw-tab cw-tab-active-down" } else { "cw-tab" },
+                                onclick: move |_| toggle_dir(Direction::Down),
+                                "Down"
+                            }
+                        }
                     }
-                }
             }
             div { class: "cw-clue-list",
                 for m in filtered.iter().cloned() {
@@ -2225,6 +2349,24 @@ fn render_clues(
                     }
                 }
             }
+            // Progressive disclosure, native <details>: keyboard-operable and
+            // in the accessibility tree with no JS focus management. The
+            // audit's P1 — the play surface explained neither its controls
+            // nor its state colors, so a first-time solver had to infer both
+            // at the highest-stakes task.
+            details { class: "cw-help",
+                summary { "How to play" }
+                div { class: "cw-help-body",
+                    p { "Arrow keys move the cursor, typing advances to the next cell, Enter saves and checks the word, Escape clears it. The Across and Down tabs filter the list." }
+                    div { class: "cw-help-legend",
+                        span { class: "cw-legend-item cw-legend-editing", "Word you're editing" }
+                        span { class: "cw-legend-item cw-legend-wrong", "Wrong guess" }
+                        span { class: "cw-legend-item cw-legend-right", "Correct" }
+                        span { class: "cw-legend-item cw-legend-live", "Teammate typing here" }
+                        span { class: "cw-legend-item cw-legend-stale", "Teammate's last spot" }
+                    }
+                }
+            }
         }
     }
 }
@@ -2267,8 +2409,33 @@ fn render_players_strip(
     // pill reads one consistent value.
     let pill = render_conn_pill(conn, retry_now);
 
+    // Roster status in words, before anything goes wrong. Presence was
+    // invisible while healthy and appeared only when it broke, so a partner
+    // who is paused looked identical to one who is typing. Live count
+    // excludes the local player — they are trivially live.
+    let live_now = chips
+        .iter()
+        .filter(|(uid, ..)| Some(uid.as_str()) != my_id)
+        .filter(|(uid, ..)| {
+            presence
+                .get(uid)
+                .is_some_and(|e| tick.saturating_sub(e.tick) <= PRESENCE_TTL_SECS)
+        })
+        .count();
+    let others = chips.len().saturating_sub(1);
+    let roster_line = if others == 0 {
+        "Only you here — copy the invite link to play together".to_string()
+    } else if live_now == 0 {
+        "Waiting for teammates".to_string()
+    } else if stale {
+        format!("{live_now} of {others} live — positions last known")
+    } else {
+        format!("{live_now} of {others} live now")
+    };
+
     rsx! {
         div { class: "cw-players",
+            span { class: "cw-roster-line", "{roster_line}" }
             for (uid, name, is_owner, sel) in chips {
                 {
                     let color = player_color(&uid, my_id);
@@ -2292,7 +2459,7 @@ fn render_players_strip(
                     };
                     rsx! {
                         span {
-                            class: if stale { "cw-chip cw-chip-stale" } else { "cw-chip" },
+                            class: "cw-chip",
                             key: "{uid}",
                             // The underline correlates the chip with that
                             // player's focus ring on the board.
@@ -2315,8 +2482,11 @@ fn render_players_strip(
                             // `description` on a nameless `generic`, which no
                             // screen reader announces. A real StaticText in the
                             // content flow is announced in browse mode instead.
+                            // Visible now, not screen-reader-only: a dashed
+                            // underline is the one cue a sighted player had, and
+                            // it does not survive a glance or a screenshot.
                             if stale {
-                                span { class: "cw-sr-only", "last known position, reconnecting" }
+                                span { class: "cw-chip-tag cw-chip-stale-tag", "last seen" }
                             }
                         }
                     }
@@ -2456,10 +2626,16 @@ const GAME_CSS: &str = r#"
 .cw-board-col { display: flex; flex-direction: column; height: 100%; width: 100%; }
 .cw-board-area { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 4px; box-sizing: border-box; container-type: size; }
 .cw-players { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--border-app); }
+/* The roster's status in words — takes its own row (flex-basis 100%) above the
+   chips so "who is actually here" is answered before anything goes wrong. */
+.cw-roster-line { flex-basis: 100%; font-family: var(--font-sans); font-size: var(--fs-2xs);
+  font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
+/* Stale presence as a tag, not only a dashed underline. */
+.cw-chip-stale-tag { border-style: dashed; }
 .cw-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border-app); border-bottom-width: 2px; font-size: var(--fs-xs); font-family: var(--font-sans); color: var(--text-primary); background: var(--bg-card); }
 .cw-chip-tag { font-size: var(--fs-2xs); font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); border: 1px solid var(--border-app); padding: 0 4px; }
 .cw-chip-clue { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
-.cw-invite-btn { margin-left: auto; padding: 4px 12px; font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
+.cw-invite-btn { margin-left: auto; padding: 4px 12px; position: relative; font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .cw-invite-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
 /* The co-op socket's status pill (DEF-175 §5). Rendered in the roster bar, which
    is the co-op surface: always visible, already carrying per-player live state,
@@ -2492,7 +2668,7 @@ const GAME_CSS: &str = r#"
 .cw-join-card { display: flex; flex-direction: column; gap: 12px; max-width: 22rem; padding: 24px 28px; text-align: center; background: var(--bg-card); border: 1px solid var(--border-app); }
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
 .cw-join-card p { margin: 0; font-size: 12px; }
-.cw-join-card .error { font-size: 11px; font-family: var(--mono); }
+.cw-join-card .error { font-size: var(--fs-2xs); font-family: var(--mono); }
 .cw-board { display: grid; gap: var(--cw-gap, 3px); max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; }
 /* min-width/min-height:0 is load-bearing: grid items default to `auto`, whose
    automatic minimum size floors each 1fr track at the cell's content size. The
@@ -2598,8 +2774,15 @@ const GAME_CSS: &str = r#"
    would make the one cell the player is looking at a black hole among white
    ones. The fill tokens stay pale with dark ink in both themes (styles.rs). */
 .cw-focused { --cw-wash: var(--fill-yellow); --cw-ink: var(--fill-ink); transform: scale(1.05); z-index: 2; }
-.cw-incorrect { --cw-wash: color-mix(in srgb, var(--pastel-red) 15%, transparent); --cw-ink: var(--pastel-red); }
-.cw-correct { --cw-wash: color-mix(in srgb, var(--pastel-green) 15%, transparent); --cw-ink: var(--pastel-green); }
+/* Ink is --text-primary on BOTH outcome washes. The old per-outcome inks put
+   the same hue's dark form on top of its own 15% wash: red-on-red measured
+   4.45:1 in light mode (AA wants 4.5) and green-on-green sat at 4.93 — the
+   outcome was carried by the letters instead of the wash, exactly what the
+   two-channel split below exists to prevent. The wash and the border still
+   read red/green; the letters just stop competing with them. Same rule the
+   clue bubbles and .cw-selected already follow. */
+.cw-incorrect { --cw-wash: color-mix(in srgb, var(--pastel-red) 15%, transparent); --cw-ink: var(--text-primary); }
+.cw-correct { --cw-wash: color-mix(in srgb, var(--pastel-green) 15%, transparent); --cw-ink: var(--text-primary); }
 /* Border channel, lowest precedence first. The outcome classes set their own
    border colour so a wrong cell that is NOT selected still reads as wrong from
    the outline alone; selection then overrides it, which is what makes a
@@ -2616,7 +2799,7 @@ const GAME_CSS: &str = r#"
 .cw-correct .cw-num { color: var(--text-primary); }
 .cw-char { pointer-events: none; line-height: 1; }
 
-.cw-link-btn { margin-left: auto; background: none; border: none; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
+.cw-link-btn { margin-left: auto; background: none; border: none; color: var(--text-secondary); font-size: var(--fs-2xs); cursor: pointer; position: relative; }
 .cw-link-btn:hover { color: var(--text-primary); }
 /* The inline editor, inside the selected clue row. `.cw-clue-actions` used to
    sit at `margin-top: auto` in a full-height panel; in a content-sized row that
@@ -2639,15 +2822,58 @@ const GAME_CSS: &str = r#"
    both themes, and squares off with the input instead of feathering. */
 .cw-input-focused { border-color: var(--pastel-yellow); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pastel-yellow) 35%, transparent); }
 .cw-clue-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
-.cw-btn-cancel { font-family: var(--font-sans); padding: 8px 16px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; }
+.cw-btn-cancel { font-family: var(--font-sans); padding: 8px 16px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; min-height: 44px; }
 .cw-btn-cancel:hover { color: var(--text-primary); border-color: var(--border-hover); }
-.cw-btn-guess { font-family: var(--font-sans); padding: 8px 20px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--pastel-yellow); background: var(--pastel-yellow); color: var(--contrast-ink); cursor: pointer; }
+.cw-btn-guess { font-family: var(--font-sans); padding: 8px 20px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--pastel-yellow); background: var(--pastel-yellow); color: var(--contrast-ink); cursor: pointer; min-height: 44px; }
 
 .cw-clues { display: flex; flex-direction: column; gap: 10px; height: 100%; }
-.cw-clues-head { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-app); padding-bottom: 8px; }
+/* The head's padding is deliberately ABOVE-heavier: the h2 sits in a flex row
+   beside the tabs, and the detector reads a heading with more space below it
+   than above as bound to the block beneath it. 12px above vs 2px below (plus
+   the panel's own top inset) keeps it reading as the panel's title. */
+.cw-clues-head { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-app); padding: 12px 0 2px; gap: .5rem; }
 .cw-clues-head h2 { font-size: 14px; color: var(--text-secondary); margin: 0; }
+/* Write feedback (saving / saved-with-verdict / not-saved + Retry). The
+   severity colour is the same pastel pair the cells use, and the text says
+   the state outright, so the line never rests on hue alone. */
+.cw-head-right { display: flex; align-items: center; gap: .5rem; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.cw-sync { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary);
+  display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
+.cw-sync-saved { color: var(--pastel-green); }
+.cw-sync-failed { color: var(--pastel-red); }
+.cw-sync-retry { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-red);
+  background: transparent; border: 1px solid var(--pastel-red); border-radius: 0;
+  padding: .125rem .375rem; cursor: pointer; position: relative; }
+.cw-sync-retry:hover { color: var(--text-primary); border-color: var(--text-primary); }
+/* How-to-play disclosure. Sits at the bottom of the panel, below the
+   scrolling list, so it is always reachable without scrolling to the end. */
+.cw-help { border-top: 1px solid var(--border-app); padding-top: 6px; }
+.cw-help summary { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary);
+  cursor: pointer; padding: .125rem 0; }
+.cw-help summary:hover { color: var(--text-primary); }
+.cw-help-body { display: flex; flex-direction: column; gap: .5rem; padding: .25rem 0 .125rem;
+  font-size: var(--fs-xs); line-height: 1.5; color: var(--text-secondary); }
+.cw-help-body p { margin: 0; max-width: 42ch; }
+.cw-help-legend { display: flex; flex-wrap: wrap; gap: .25rem .875rem; }
+.cw-legend-item { display: inline-flex; align-items: center; gap: .3rem; }
+/* The swatch reuses the exact state channel it names — border colour for the
+   outline states, solid ring for live presence, dashed for stale — so the
+   legend key and the board read as the same system. */
+.cw-legend-item::before { content: ""; width: 10px; height: 10px; flex-shrink: 0;
+  border: 2px solid var(--text-secondary); box-sizing: border-box; }
+.cw-legend-editing::before { border-color: var(--pastel-yellow); }
+.cw-legend-wrong::before { border-color: var(--pastel-red); }
+.cw-legend-right::before { border-color: var(--pastel-green); }
+.cw-legend-live::before { border-color: var(--presence-2); border-radius: 50%; }
+.cw-legend-stale::before { border-color: var(--presence-2); border-radius: 50%; border-style: dashed; }
 .cw-tabs { display: flex; gap: 4px; }
-.cw-tab { font-family: var(--font-sans); padding: 4px 12px; font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.cw-tab { font-family: var(--font-sans); padding: 4px 12px; font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; position: relative; }
+.cw-tab::after, .cw-invite-btn::after, .cw-link-btn::after, .cw-sync-retry::after {
+  content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: max(100%, 44px); height: max(100%, 44px); }
 .cw-tab:hover { border-color: var(--border-hover); }
 /* Active direction tab: same reasoning as .cw-focused. "Active" is read against
    the other tab, so the filled one has to be the lighter of the pair in both
@@ -2663,10 +2889,15 @@ const GAME_CSS: &str = r#"
 .cw-clue-body { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .cw-clue-row-text { font-size: 13px; color: var(--text-secondary); line-height: 1.4; }
 .cw-bubbles { display: flex; flex-wrap: wrap; gap: 4px; }
-.cw-bubble { width: 20px; height: 20px; border-radius: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.cw-bubble { width: 20px; height: 20px; border-radius: 0; display: flex; align-items: center; justify-content: center; font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; }
 .cw-bubble-empty { background: var(--bg-cell-empty); border: 1px solid var(--border-app); opacity: 0.3; }
 .cw-bubble.cw-placeholder { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--pastel-yellow); }
-.cw-bubble.cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 18%, transparent); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
+/* Ink is --text-primary, not --pastel-red: red letters on the 18% red wash
+   measured 4.45:1 in light mode — under AA on the smallest text in the app.
+   The hue still reads from the border and the wash; the letters just stop
+   being the same colour as their own background's pigment. Same ink-on-wash
+   rule the board cells use (--cw-ink). */
+.cw-bubble.cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 18%, transparent); color: var(--text-primary); border: 1px solid var(--pastel-red); }
 .cw-bubble.cw-correct { background: color-mix(in srgb, var(--pastel-green) 18%, transparent); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
 
 /* Desktop tiling stretches every panel to the full workspace height, which left

@@ -193,9 +193,9 @@ pub fn GameCompleted(id: String) -> Element {
                     Some(Err(e)) => rsx! {
                         div { style: "display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem;",
                             div { class: "app-card", style: "max-width: 28rem; width: 100%; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; font-family: monospace;",
-                                span { class: "error", style: "font-size: .875rem; font-weight: 700; text-transform: uppercase;", "Error Loading Match Details" }
-                                p { class: "muted", style: "font-size: .75rem;", "The requested game could not be found." }
-                                p { class: "error", style: "font-size: .75rem;", "{e}" }
+                                span { class: "error", style: "font-size: var(--fs-sm); font-weight: 700; text-transform: uppercase;", "Error Loading Match Details" }
+                                p { class: "muted", style: "font-size: var(--fs-xs);", "The requested game could not be found." }
+                                p { class: "error", style: "font-size: var(--fs-xs);", "{e}" }
                                 div { class: "row",
                                     button { class: "app-btn", onclick: move |_| data_res.restart(), "Retry" }
                                     Link { to: Route::Games {}, class: "app-btn", "Back to Lobby" }
@@ -206,8 +206,8 @@ pub fn GameCompleted(id: String) -> Element {
                     Some(Ok(None)) => rsx! {
                         div { style: "display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem;",
                             div { class: "app-card", style: "max-width: 28rem; width: 100%; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; font-family: monospace;",
-                                span { class: "error", style: "font-size: .875rem; font-weight: 700; text-transform: uppercase;", "Game Not Found" }
-                                p { class: "muted", style: "font-size: .75rem;", "This completed game could not be found." }
+                                span { class: "error", style: "font-size: var(--fs-sm); font-weight: 700; text-transform: uppercase;", "Game Not Found" }
+                                p { class: "muted", style: "font-size: var(--fs-xs);", "This completed game could not be found." }
                                 Link { to: Route::Games {}, class: "app-btn", style: "text-align: center; margin-top: .5rem;", "Back to Lobby" }
                             }
                         }
@@ -263,13 +263,13 @@ pub fn GameCompleted(id: String) -> Element {
                                     }
                                     p {
                                         class: "muted",
-                                        style: "font-size: .75rem; font-family: monospace; text-transform: uppercase; margin: 0;",
+                                        style: "font-size: var(--fs-xs); font-family: monospace; text-transform: uppercase; margin: 0;",
                                         "Game Room: "
                                         span { style: "color: var(--text-primary); font-weight: 700;", "{data.game.title}" }
                                     }
                                     span {
                                         class: "muted",
-                                        style: "font-size: .625rem; font-family: monospace; text-transform: uppercase; border-top: 1px solid var(--border-app); padding-top: .75rem; width: 100%; max-width: 20rem;",
+                                        style: "font-size: var(--fs-2xs); font-family: monospace; text-transform: uppercase; border-top: 1px solid var(--border-app); padding-top: .75rem; width: 100%; max-width: 20rem;",
                                         "COMPLETED: "
                                         span { style: "color: var(--text-primary); font-weight: 700;", "{format_date(&data.created_at)}" }
                                     }
@@ -279,7 +279,7 @@ pub fn GameCompleted(id: String) -> Element {
                                 // banner (which already carries title + date).
                                 if let Some((place, score, accuracy, time)) = my_result {
                                     div { style: "display: flex; flex-direction: column; gap: .75rem; font-family: monospace;",
-                                        h2 { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: 0; padding: 0 .25rem;", "Your Result" }
+                                        h2 { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: 0; padding: 0 .25rem;", "Your Result" }
                                         div { style: "display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .75rem;",
                                             StatTile { label: "Score".to_string(), value: score.to_string() }
                                             StatTile { label: "Accuracy".to_string(), value: format!("{accuracy}%") }
@@ -293,7 +293,7 @@ pub fn GameCompleted(id: String) -> Element {
                                         div { style: "display: flex; gap: .75rem;",
                                             button {
                                                 class: "app-btn",
-                                                style: "flex: 1; justify-content: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
+                                                style: "flex: 1; justify-content: center; font-size: var(--fs-md); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
                                                 onclick: move |_| {
                                                     // This page is public, so the current URL is shareable as-is.
                                                     let url = web_sys::window()
@@ -307,7 +307,7 @@ pub fn GameCompleted(id: String) -> Element {
                                             if let Some(share_text) = share_text {
                                                 button {
                                                     class: "app-btn",
-                                                    style: "flex: 1; justify-content: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
+                                                    style: "flex: 1; justify-content: center; font-size: var(--fs-md); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
                                                     onclick: move |_| {
                                                         copy_to_clipboard(&share_text);
                                                         state.toast(crate::store::Severity::Success, "Copied");
@@ -321,8 +321,8 @@ pub fn GameCompleted(id: String) -> Element {
 
                                 // Standings header
                                 div { style: "display: flex; align-items: center; justify-content: space-between; font-family: monospace; padding: 0 .25rem;",
-                                    h2 { class: "muted", style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: 0;", "Match Standings" }
-                                    span { class: "muted", style: "font-size: .625rem; text-transform: uppercase;", "{rankings_len} Players" }
+                                    h2 { class: "muted", style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: 0;", "Match Standings" }
+                                    span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "{rankings_len} Players" }
                                 }
 
                                 // Rank cards
@@ -361,28 +361,28 @@ pub fn GameCompleted(id: String) -> Element {
                                                         }
                                                         div { style: "display: flex; flex-direction: column; min-width: 0;",
                                                             span {
-                                                                style: "font-size: .875rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: .375rem;",
+                                                                style: "font-size: var(--fs-sm); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: .375rem;",
                                                                 "{display_name}"
                                                                 if is_me {
-                                                                    span { style: "font-size: .5rem; font-weight: 700; letter-spacing: .1em; color: var(--pastel-yellow); border: 1px solid color-mix(in srgb, var(--pastel-yellow) 40%, transparent); padding: 0 .25rem; text-transform: uppercase;", "YOU" }
+                                                                    span { style: "font-size: var(--fs-2xs); font-weight: 700; letter-spacing: .1em; color: var(--pastel-yellow); border: 1px solid color-mix(in srgb, var(--pastel-yellow) 40%, transparent); padding: 0 .25rem; text-transform: uppercase;", "YOU" }
                                                                 }
                                                                 if score_record.member.is_owner {
-                                                                    span { style: "font-size: .5rem; color: var(--text-secondary); opacity: .6;", "👑" }
+                                                                    span { style: "font-size: var(--fs-2xs); color: var(--text-secondary); opacity: .6;", "👑" }
                                                                 }
                                                             }
-                                                            span { class: "muted", style: "font-size: .5625rem; text-transform: uppercase; letter-spacing: .05em;", "{rank_name(index)}" }
+                                                            span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .05em;", "{rank_name(index)}" }
                                                         }
                                                     }
 
                                                     // Scores
                                                     div { style: "display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0;",
                                                         div { style: "display: flex; flex-direction: column; text-align: right;",
-                                                            span { class: "muted", style: "font-size: .625rem; text-transform: uppercase;", "Accuracy" }
-                                                            span { style: "font-size: .75rem; font-weight: 700; color: var(--text-primary);", "{accuracy}%" }
+                                                            span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "Accuracy" }
+                                                            span { style: "font-size: var(--fs-xs); font-weight: 700; color: var(--text-primary);", "{accuracy}%" }
                                                         }
                                                         div { style: "display: flex; flex-direction: column; text-align: right;",
-                                                            span { class: "muted", style: "font-size: .625rem; text-transform: uppercase;", "Guesses" }
-                                                            span { style: "font-size: .75rem; font-weight: 700; display: flex; align-items: center; gap: .25rem;",
+                                                            span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "Guesses" }
+                                                            span { style: "font-size: var(--fs-xs); font-weight: 700; display: flex; align-items: center; gap: .25rem;",
                                                                 span { style: "color: var(--pastel-green);", "{score_record.correct_guesses}" }
                                                                 span { class: "muted", "/" }
                                                                 span { style: "color: var(--pastel-red);", "{score_record.incorrect_guesses}" }
@@ -391,7 +391,7 @@ pub fn GameCompleted(id: String) -> Element {
                                                         div {
                                                             style: "display: flex; flex-direction: column; text-align: right; border-left: 1px solid var(--border-app); padding-left: 1rem; min-width: 4.375rem;",
                                                             title: "Scoring: each correct guess gives +10 pts, every incorrect guess subtracts -2 pts.",
-                                                            span { class: "muted", style: "font-size: .625rem; text-transform: uppercase;", "Score" }
+                                                            span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase;", "Score" }
                                                             span { style: "font-size: 1rem; font-weight: 900; color: var(--pastel-yellow);", "{score_record.score}" }
                                                         }
                                                     }
@@ -412,8 +412,8 @@ pub fn GameCompleted(id: String) -> Element {
                     Some(Err(_)) | Some(Ok(None)) => rsx! {
                         div { style: "display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem;",
                             div { class: "app-card", style: "max-width: 28rem; width: 100%; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; font-family: monospace;",
-                                span { class: "error", style: "font-size: .875rem; font-weight: 700; text-transform: uppercase;", "Game Not Found" }
-                                p { class: "muted", style: "font-size: .75rem;", "This completed game could not be found." }
+                                span { class: "error", style: "font-size: var(--fs-sm); font-weight: 700; text-transform: uppercase;", "Game Not Found" }
+                                p { class: "muted", style: "font-size: var(--fs-xs);", "This completed game could not be found." }
                                 Link { to: Route::Games {}, class: "app-btn", style: "text-align: center; margin-top: .5rem;", "← Back to Lobby" }
                             }
                         }
@@ -447,9 +447,9 @@ pub fn GameCompleted(id: String) -> Element {
                                 // (older servers don't; hide rather than guess).
                                 if let Some(game_id) = rematch_id {
                                     div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: .75rem; font-family: monospace;",
-                                        h3 { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: 0;", "Rematch" }
+                                        h3 { style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: 0;", "Rematch" }
                                         if !start_error.read().is_empty() {
-                                            p { class: "error", style: "font-size: .75rem; margin: 0;", "{start_error}" }
+                                            p { class: "error", style: "font-size: var(--fs-xs); margin: 0;", "{start_error}" }
                                         }
                                         button {
                                             class: "app-btn app-btn-active",
@@ -494,8 +494,8 @@ pub fn GameCompleted(id: String) -> Element {
                                         to: Route::GameNew { id: next.id.clone() },
                                         class: "app-card",
                                         style: "padding: 1.25rem 1.5rem; display: flex; flex-direction: column; gap: .25rem; font-family: monospace; text-decoration: none; color: inherit;",
-                                        span { class: "muted", style: "font-size: .625rem; text-transform: uppercase; letter-spacing: .05em;", "Up Next" }
-                                        span { style: "font-size: .875rem; font-weight: 700; color: var(--text-primary);",
+                                        span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .05em;", "Up Next" }
+                                        span { style: "font-size: var(--fs-sm); font-weight: 700; color: var(--text-primary);",
                                             "{next.title} · {next.clues} clues"
                                         }
                                     }
@@ -503,7 +503,7 @@ pub fn GameCompleted(id: String) -> Element {
 
                                 // Metrics mini-card
                                 div { class: "app-card", style: "padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; font-family: monospace;",
-                                    h3 { style: "font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border-app); padding-bottom: .75rem; margin: 0;", "Crossword Metrics" }
+                                    h3 { style: "font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border-app); padding-bottom: .75rem; margin: 0;", "Crossword Metrics" }
                                     div { style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem;",
                                         StatTile { label: "Source".to_string(), value: data.game.source.clone() }
                                         StatTile { label: "Clues".to_string(), value: total_questions.to_string() }
@@ -516,13 +516,13 @@ pub fn GameCompleted(id: String) -> Element {
                                     Link {
                                         to: Route::Stats {},
                                         class: "app-btn",
-                                        style: "flex: 1; justify-content: center; text-align: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-yellow); border-color: color-mix(in srgb, var(--pastel-yellow) 30%, transparent);",
+                                        style: "flex: 1; justify-content: center; text-align: center; font-size: var(--fs-md); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-yellow); border-color: color-mix(in srgb, var(--pastel-yellow) 30%, transparent);",
                                         "Career Stats →"
                                     }
                                     Link {
                                         to: Route::Games {},
                                         class: "app-btn",
-                                        style: "flex: 1; justify-content: center; text-align: center; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
+                                        style: "flex: 1; justify-content: center; text-align: center; font-size: var(--fs-md); font-weight: 700; text-transform: uppercase; letter-spacing: .05em;",
                                         "← Back to Lobby"
                                     }
                                 }
@@ -562,7 +562,7 @@ const COMPLETED_CSS: &str = r#"
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: .75rem;
+    font-size: var(--fs-xs);
     font-weight: 700;
     color: var(--text-secondary);
     flex-shrink: 0;

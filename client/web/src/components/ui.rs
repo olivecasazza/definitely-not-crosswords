@@ -42,6 +42,7 @@ pub fn ConfirmModal(
     on_confirm: EventHandler<()>,
     on_cancel: EventHandler<()>,
 ) -> Element {
+    use_effect(|| focus_dialog(".confirm-modal", "#modal-cancel"));
     rsx! {
         div { class: "modal-scrim", onclick: move |_| on_cancel.call(()),
             div {
@@ -52,7 +53,7 @@ pub fn ConfirmModal(
                 h2 { class: "confirm-modal-title", "{title}" }
                 p { class: "muted confirm-modal-body", "{body}" }
                 div { class: "confirm-modal-actions",
-                    button { class: "app-btn", onclick: move |_| on_cancel.call(()), "Cancel" }
+                    button { id: "modal-cancel", class: "app-btn", onclick: move |_| on_cancel.call(()), "Cancel" }
                     button {
                         class: "app-btn confirm-modal-danger",
                         disabled: busy,
@@ -69,6 +70,7 @@ pub fn ConfirmModal(
 /// create forms). Scrim click or the ✕ closes; the caller owns open-state.
 #[component]
 pub fn Drawer(title: String, on_close: EventHandler<()>, children: Element) -> Element {
+    use_effect(|| focus_dialog(".drawer", "#drawer-close"));
     rsx! {
         div { class: "drawer-scrim", onclick: move |_| on_close.call(()),
             aside {
@@ -79,6 +81,7 @@ pub fn Drawer(title: String, on_close: EventHandler<()>, children: Element) -> E
                 div { class: "drawer-head",
                     span { class: "drawer-title", "{title}" }
                     button {
+                        id: "drawer-close",
                         class: "drawer-close",
                         aria_label: "Close",
                         onclick: move |_| on_close.call(()),
@@ -89,6 +92,51 @@ pub fn Drawer(title: String, on_close: EventHandler<()>, children: Element) -> E
             }
         }
     }
+}
+
+/// Dialog hardening shared by `ConfirmModal` and `Drawer`. `aria_modal="true"`
+/// alone tells assistive tech the rest of the page is inert, but a keyboard
+/// user can still Tab straight out of the dialog and has no Escape. This
+/// installs the missing halves: first control takes focus on open, Tab cycles
+/// inside the dialog, Escape clicks the dialog's own close control, and the
+/// listener detaches when the node leaves the DOM. Runs once per mount (the
+/// effect has no dependencies), through `eval` — the same deferred-to-after-
+/// flush mechanism main.rs's PageErrorPanel uses for its focus move.
+fn focus_dialog(dialog_sel: &'static str, close_sel: &'static str) {
+    let js = format!(
+        r#"
+      (() => {{
+        const dlg = document.querySelector('{dialog_sel}');
+        if (!dlg) return;
+        const focusables = () => dlg.querySelectorAll(
+          'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        const f0 = focusables()[0];
+        if (f0) f0.focus();
+        const onKey = (e) => {{
+          if (e.key === 'Escape') {{
+            e.preventDefault();
+            const c = document.querySelector('{close_sel}');
+            if (c) c.click();
+          }} else if (e.key === 'Tab') {{
+            const f = [...focusables()];
+            if (f.length === 0) return;
+            const first = f[0], last = f[f.length - 1];
+            if (e.shiftKey && document.activeElement === first) {{ e.preventDefault(); last.focus(); }}
+            else if (!e.shiftKey && document.activeElement === last) {{ e.preventDefault(); first.focus(); }}
+          }}
+        }};
+        document.addEventListener('keydown', onKey);
+        const obs = new MutationObserver(() => {{
+          if (!document.body.contains(dlg)) {{
+            document.removeEventListener('keydown', onKey);
+            obs.disconnect();
+          }}
+        }});
+        obs.observe(document.body, {{ childList: true, subtree: true }});
+      }})();
+    "#
+    );
+    dioxus::document::eval(&js);
 }
 
 /// Podium colours come from the palette tokens in `styles.rs` so they flip with

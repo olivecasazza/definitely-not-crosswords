@@ -76,13 +76,21 @@ pub const DESIGN: &str = r#"
   /* App fonts. --mono is defined in the panel-kit remap block below. */
   --font-sans: 'Bricolage Grotesque', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 
-  /* Type scale (rem) + weights are numeric. Inline font-sizes scattered across
-     components should adopt these vars over time; shared classes use them now. */
-  --fs-2xs: .625rem;
-  --fs-xs: .75rem;
-  --fs-sm: .8rem;
-  --fs-md: .875rem;
-  --fs-lg: 1rem;
+  /* Type scale (rem) + weights are numeric. The values are RENDERED px at the
+     13px root panel-kit sets on <html> (see the 44px note on .app-btn below:
+     every rem in the app resolves against 13px): .85rem=11, .95rem=12.4,
+     1rem=13, 1.08rem=14, 1.25rem=16.25, 1.5rem=19.5, 2rem=26.
+     THE FLOOR IS LOAD-BEARING. The old ladder rendered its three smallest
+     roles at 8.125/9.75/10.4px — measured in Chromium via getComputedStyle,
+     and the impeccable detector flags functional text below 11px and body
+     text below 12px, so every one of those sites was a WCAG-adjacent
+     legibility failure before this change. Keep new work on these vars; do
+     not re-introduce sub-12px literals. */
+  --fs-2xs: .85rem;
+  --fs-xs: .95rem;
+  --fs-sm: 1rem;
+  --fs-md: 1.08rem;
+  --fs-lg: 1.25rem;
   --fs-xl: 1.5rem;
   --fs-2xl: 2rem;
 }
@@ -254,9 +262,36 @@ a { color: inherit; text-decoration: none; }
    assumed the pre-boot root. Measured in Chromium: 2.75rem -> 35.75px, 44px ->
    44.0px. This is a house-atom change: every .app-btn in the app grows, including
    the header's theme toggle / Sign in / Sign out / Resume and the confirm modal. */
+/* 1.25rem = 16.25px at the 13px root — above 16px ON PURPOSE: iOS Safari
+   force-zooms the viewport when a focused input's text is under 16px, which
+   breaks the form layout exactly when the user tries to type. Buttons don't
+   zoom, so the 44px .app-btn keeps --fs-md; only inputs pay this. */
 .app-input { background-color: var(--bg-cell-empty); color: var(--text-primary); border: 1px solid var(--border-app);
-  border-radius: 0; outline: none; padding: .4rem .6rem; transition: border-color .15s ease; }
+  border-radius: 0; outline: none; padding: .4rem .6rem; font-size: var(--fs-lg);
+  transition: border-color .15s ease; }
 .app-input:focus { border-color: var(--color-primary); }
+/* The UA placeholder measured 4.3:1 on --bg-cell-empty (#757575 on #09090b in
+   Chromium) — below the 4.5:1 text floor. --text-secondary is the dimmest
+   token that clears it in BOTH themes (6.91:1 dark / 5.65:1 on the recessed
+   light fill), so the placeholder gives up the conventional "dimmer than the
+   value" look: every auth field pairs it with a visible label, so the value
+   needs no placeholder-based disambiguation. `opacity: 1` stops the UA
+   applying its own extra fade on top of the token. */
+.app-input::placeholder { color: var(--text-secondary); opacity: 1; }
+
+/* ── Touch-target expansion (WCAG 2.5.5 / 2.5.8) ────────────────────────────
+   Some controls must stay VISUALLY small — a BETA chip, a ✕, a direction
+   tab — but every interactive control needs a real target. Stretching the
+   box would reflow the rows they sit in, so the target is expanded with a
+   transparent ::after instead: same pixel look, 44×44 (or 24×24 for
+   low-stakes links) of clickable area, zero layout cost. Requires
+   position:relative on the control (set here so no call site forgets). */
+.tap-44, .tap-24 { position: relative; }
+.tap-44::after, .tap-24::after {
+  content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+}
+.tap-44::after { width: max(100%, 44px); height: max(100%, 44px); }
+.tap-24::after { width: max(100%, 24px); height: max(100%, 24px); }
 
 /* ── Post-mount render-error panel (PageErrorPanel, main.rs) ─────────────────
    Atoms rather than five inline `style` attributes: the panel is the one place
@@ -328,11 +363,16 @@ a { color: inherit; text-decoration: none; }
 .stat-tile-sub { font-size: var(--fs-2xs); }
 
 .section-tabs { display: flex; border: 1px solid var(--border-app); width: fit-content; max-width: 100%; }
-.section-tab { padding: .4rem .8rem; background: var(--bg-card); color: var(--text-secondary);
+.section-tab { padding: .4rem .8rem; background: var(--bg-card); color: var(--text-secondary); position: relative;
   border: none; cursor: pointer; font-family: var(--mono, monospace); font-size: var(--fs-2xs);
   text-transform: uppercase; letter-spacing: .05em; transition: color .15s ease, background .15s ease; }
 .section-tab:hover { color: var(--text-primary); }
 .section-tab + .section-tab { border-left: 1px solid var(--border-app); }
+/* The strip stays visually compact; each tab's clickable area is 44px tall.
+   The strip is one row at the top of its panel, so the expanded boxes reach
+   into panel padding, never into another control. */
+.section-tab::after { content: ""; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%); width: max(100%, 44px); height: max(100%, 44px); }
 /* Active tab is a selection fill, not an accent fill — same reason as
    .cw-focused: its meaning is "brighter than its siblings", so it takes
    --fill-yellow/--fill-ink rather than the pastel, which inverts in light. */
@@ -463,7 +503,8 @@ a { color: inherit; text-decoration: none; }
 .drawer-title { font-family: var(--mono, monospace); font-size: var(--fs-xs); font-weight: 700;
   text-transform: uppercase; letter-spacing: .06em; }
 .drawer-close { background: none; border: none; color: var(--text-secondary); cursor: pointer;
-  font-size: var(--fs-md); padding: .15rem .35rem; }
+  font-size: var(--fs-md); min-width: 44px; min-height: 44px; display: inline-flex;
+  align-items: center; justify-content: center; }
 .drawer-close:hover { color: var(--text-primary); }
 .drawer-body { padding: .9rem; overflow-y: auto; display: flex; flex-direction: column; gap: .75rem; }
 
@@ -525,7 +566,7 @@ a { color: inherit; text-decoration: none; }
    it a one-line "Game not found" would leave the card 28px shorter than the
    failure that carries a URL. */
 .gp-status-body { min-height: 3.6rem; display: flex; flex-direction: column; justify-content: center; }
-.gp-status-detail { margin: 0; font-size: .75rem; line-height: 1.6; color: var(--text-secondary);
+.gp-status-detail { margin: 0; font-size: var(--fs-xs); line-height: 1.6; color: var(--text-secondary);
   /* A network failure carries a URL, so it wraps; without this the card is
      wider than the viewport at 360px. The boot card's .boot-err rule. */
   overflow-wrap: anywhere; }

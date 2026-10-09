@@ -854,26 +854,26 @@ pub fn AdminIndex() -> Element {
                         // ── recent activity ────────────────────────────────
                         div { class: "app-card", style: "padding:0",
                             div { style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app)",
-                                h2 { class: "muted", style: "font-size:0.75rem;font-weight:bold;font-family:monospace;text-transform:uppercase;letter-spacing:0.05em",
+                                h2 { class: "muted", style: "font-size: var(--fs-xs);font-weight:bold;font-family:monospace;text-transform:uppercase;letter-spacing:0.05em",
                                     "Recent activity"
                                 }
                             }
                             if let Some(e) = jobs_err {
-                                div { class: "error", style: "padding:0.5rem 1rem;font-size:0.75rem;border-bottom:1px solid var(--border-app)",
+                                div { class: "error", style: "padding:0.5rem 1rem;font-size: var(--fs-xs);border-bottom:1px solid var(--border-app)",
                                     "Jobs unavailable: {e}"
                                 }
                             }
                             if let Some(e) = users_err {
-                                div { class: "error", style: "padding:0.5rem 1rem;font-size:0.75rem;border-bottom:1px solid var(--border-app)",
+                                div { class: "error", style: "padding:0.5rem 1rem;font-size: var(--fs-xs);border-bottom:1px solid var(--border-app)",
                                     "Users unavailable: {e}"
                                 }
                             }
                             if feed_loading {
-                                div { class: "muted", style: "padding:1.5rem 1rem;text-align:center;font-size:0.875rem",
+                                div { class: "muted", style: "padding:1.5rem 1rem;text-align:center;font-size: var(--fs-sm)",
                                     "Loading activity…"
                                 }
                             } else if items.is_empty() {
-                                div { class: "muted", style: "padding:1.5rem 1rem;text-align:center;font-size:0.875rem",
+                                div { class: "muted", style: "padding:1.5rem 1rem;text-align:center;font-size: var(--fs-sm)",
                                     "No recent activity."
                                 }
                             }
@@ -889,14 +889,14 @@ pub fn AdminIndex() -> Element {
                                                 button {
                                                     key: "{i}",
                                                     class: "row",
-                                                    style: "width:100%;gap:0.75rem;align-items:center;padding:0.625rem 1rem;border:none;border-bottom:1px solid var(--border-app);background:transparent;color:inherit;text-align:left;cursor:pointer;font-size:0.875rem",
+                                                    style: "width:100%;gap:0.75rem;align-items:center;padding:0.625rem 1rem;border:none;border-bottom:1px solid var(--border-app);background:transparent;color:inherit;text-align:left;cursor:pointer;font-size: var(--fs-sm)",
                                                     aria_label: "Open jobs: {topic}",
                                                     onclick: move |_| crate::workspace::restore_panel(&jobs_workspace, AdminPanel::Jobs),
                                                     {status_badge(status.clone(), job_status_accent(&status))}
                                                     span { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
                                                         {topic.clone()}
                                                     }
-                                                    span { class: "muted", style: "font-size:0.75rem;white-space:nowrap", {when} }
+                                                    span { class: "muted", style: "font-size: var(--fs-xs);white-space:nowrap", {when} }
                                                 }
                                             }
                                         }
@@ -904,15 +904,15 @@ pub fn AdminIndex() -> Element {
                                             div {
                                                 key: "{i}",
                                                 class: "row",
-                                                style: "gap:0.75rem;align-items:center;padding:0.625rem 1rem;border-bottom:1px solid var(--border-app);font-size:0.875rem",
+                                                style: "gap:0.75rem;align-items:center;padding:0.625rem 1rem;border-bottom:1px solid var(--border-app);font-size: var(--fs-sm)",
                                                 {tag_badge("user", "New user".to_string(), None)}
                                                 span { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
                                                     {display.clone()}
                                                     if !email.is_empty() && email != display {
-                                                        span { class: "muted", style: "font-size:0.75rem;margin-left:0.5rem", {email.clone()} }
+                                                        span { class: "muted", style: "font-size: var(--fs-xs);margin-left:0.5rem", {email.clone()} }
                                                     }
                                                 }
-                                                span { class: "muted", style: "font-size:0.75rem;white-space:nowrap", {when} }
+                                                span { class: "muted", style: "font-size: var(--fs-xs);white-space:nowrap", {when} }
                                             }
                                         },
                                     }
@@ -933,13 +933,13 @@ pub fn AdminIndex() -> Element {
                             label {
                                 r#for: "topic",
                                 class: "muted",
-                                style: "font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                                style: "font-size: var(--fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
                                 "Topic"
                             }
                             input {
                                 id: "topic",
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size:0.875rem;width:100%",
+                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);width:100%",
                                 r#type: "text",
                                 value: "{form.read().topic}",
                                 oninput: move |e| form.write().topic = e.value(),
@@ -1056,11 +1056,11 @@ pub fn AdminIndex() -> Element {
                             ("Runs", form.read().runs, 1, 100, 5),
                             ("Attempts", form.read().max_attempts, 1, 1000, 6),
                         ] {
-                            label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                            label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                                 {label}
                                 input {
                                     class: "app-input",
-                                    style: "padding:0.375rem 0.5rem;font-size:0.875rem",
+                                    style: "padding:0.375rem 0.5rem;font-size: var(--fs-md)",
                                     r#type: "number",
                                     min: "{min_val}",
                                     max: "{max_val}",
@@ -1097,7 +1097,7 @@ pub fn AdminIndex() -> Element {
                         // rsx (not CSS) so only one branch mounts the controls.
                         if mobile_ro {
                             details { style: "border:1px solid var(--border-app)",
-                                summary { class: "muted", style: "cursor:pointer;padding:0.75rem 1rem;font-size:0.75rem;font-weight:600;font-family:monospace;text-transform:uppercase;letter-spacing:0.05em",
+                                summary { class: "muted", style: "cursor:pointer;padding:0.75rem 1rem;font-size: var(--fs-xs);font-weight:600;font-family:monospace;text-transform:uppercase;letter-spacing:0.05em",
                                     "New generation (desktop recommended)"
                                 }
                                 div { class: "col", style: "gap:1.5rem;padding:1rem;border-top:1px solid var(--border-app)",
@@ -1140,17 +1140,17 @@ pub fn AdminIndex() -> Element {
                                 div { style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
                                     {line}
                                 }
-                                div { style: "font-size:0.875rem", "Generation output will appear here." }
+                                div { style: "font-size: var(--fs-sm)", "Generation output will appear here." }
                             }
                         } else {
-                            div { class: "muted", style: "font-size:0.875rem;text-align:center;padding:2rem 0",
+                            div { class: "muted", style: "font-size: var(--fs-sm);text-align:center;padding:2rem 0",
                                 "Generation output will appear here."
                             }
                         }
 
                         // ── gen error ─────────────────────────────────────────────
                         if !gen_error.read().is_empty() {
-                            div { class: "app-card error", style: "padding:1rem;font-size:0.875rem",
+                            div { class: "app-card error", style: "padding:1rem;font-size: var(--fs-sm)",
                                 {gen_error.read().clone()}
                             }
                         }
@@ -1160,9 +1160,9 @@ pub fn AdminIndex() -> Element {
                             div { class: "app-card", style: "padding:1rem;border-color:var(--color-success)",
                                 div { class: "row", style: "justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap",
                                     div { class: "col", style: "gap:0.25rem",
-                                        div { style: "font-size:0.875rem;font-weight:600", {gtitle.clone()} }
+                                        div { style: "font-size: var(--fs-sm);font-weight:600", {gtitle.clone()} }
                                         if !publish_error.read().is_empty() {
-                                            div { class: "error", style: "font-size:0.75rem", {publish_error.read().clone()} }
+                                            div { class: "error", style: "font-size: var(--fs-xs)", {publish_error.read().clone()} }
                                         }
                                     }
                                     div { class: "row", style: "gap:0.5rem",
@@ -1245,12 +1245,12 @@ pub fn AdminIndex() -> Element {
                 rsx! {
                     div { style: "overflow:hidden;height:100%;display:flex;flex-direction:column",
                         div { class: "row", style: "padding:1rem;border-bottom:1px solid var(--border-app);justify-content:space-between;align-items:center",
-                            h2 { style: "font-size:0.875rem;font-weight:bold;font-family:monospace;letter-spacing:0.05em",
+                            h2 { style: "font-size: var(--fs-sm);font-weight:bold;font-family:monospace;letter-spacing:0.05em",
                                 "GENERATION JOBS"
                             }
                             button {
                                 class: "app-btn",
-                                style: "font-size:0.75rem;font-family:monospace;text-transform:uppercase",
+                                style: "font-size: var(--fs-md);font-family:monospace;text-transform:uppercase",
                                 disabled: *jobs_loading.read(),
                                 onclick: move |_| do_load_jobs(jobs, jobs_loading, jobs_error, *jobs_take.peek()),
                                 if *jobs_loading.read() { "Refreshing" } else { "Refresh" }
@@ -1258,7 +1258,7 @@ pub fn AdminIndex() -> Element {
                         }
 
                         if !jobs_error.read().is_empty() {
-                            div { class: "error", style: "padding:0.75rem 1rem;font-size:0.875rem;border-bottom:1px solid var(--border-app)",
+                            div { class: "error", style: "padding:0.75rem 1rem;font-size: var(--fs-sm);border-bottom:1px solid var(--border-app)",
                                 {jobs_error.read().clone()}
                             }
                         }
@@ -1267,7 +1267,7 @@ pub fn AdminIndex() -> Element {
                         div { class: "row", style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app);gap:0.5rem;align-items:center;flex-wrap:wrap",
                             input {
                                 class: "app-input",
-                                style: "padding:0.375rem 0.5rem;font-size:0.875rem;flex:1;min-width:160px",
+                                style: "padding:0.375rem 0.5rem;font-size: var(--fs-md);flex:1;min-width:160px",
                                 r#type: "text",
                                 placeholder: "Search topics…",
                                 value: "{job_search}",
@@ -1294,15 +1294,15 @@ pub fn AdminIndex() -> Element {
                         }
 
                         div { style: "overflow-x:auto;flex:1",
-                            table { style: "width:100%;text-align:left;font-size:0.875rem;border-collapse:collapse",
+                            table { style: "width:100%;text-align:left;font-size: var(--fs-sm);border-collapse:collapse",
                                 {table_head(vec!["Status", "Topic", "Grid", "Game", "Created"])}
                                 tbody {
                                     for job in filtered.iter() {
-                                        tr { style: "border-bottom:1px solid var(--border-app);font-family:monospace;font-size:0.75rem",
+                                        tr { style: "border-bottom:1px solid var(--border-app);font-family:monospace;font-size: var(--fs-xs)",
                                             td { style: "padding:0.75rem 1rem",
                                                 {status_badge(job.status.clone(), job_status_accent(&job.status))}
                                             }
-                                            td { style: "padding:0.75rem 1rem;font-family:sans-serif;font-size:0.875rem;font-weight:500",
+                                            td { style: "padding:0.75rem 1rem;font-family:sans-serif;font-size: var(--fs-sm);font-weight:500",
                                                 {job.topic.clone()}
                                             }
                                             td { class: "muted", style: "padding:0.75rem 1rem",
@@ -1311,8 +1311,8 @@ pub fn AdminIndex() -> Element {
                                             td { style: "padding:0.75rem 1rem",
                                                 if let Some(rg) = &job.result_game {
                                                     div { class: "col", style: "gap:0.125rem",
-                                                        span { style: "font-family:sans-serif;font-size:0.875rem;font-weight:500", {rg.title.clone()} }
-                                                        span { class: "muted", style: "font-size:0.625rem;font-weight:bold;text-transform:uppercase",
+                                                        span { style: "font-family:sans-serif;font-size: var(--fs-sm);font-weight:500", {rg.title.clone()} }
+                                                        span { class: "muted", style: "font-size: var(--fs-2xs);font-weight:bold;text-transform:uppercase",
                                                             if rg.published { "published" } else { "draft" }
                                                         }
                                                     }
@@ -1342,7 +1342,7 @@ pub fn AdminIndex() -> Element {
                             div { style: "padding:0.75rem 1rem;border-top:1px solid var(--border-app)",
                                 button {
                                     class: "app-btn",
-                                    style: "width:100%;font-size:0.75rem;font-family:monospace;text-transform:uppercase",
+                                    style: "width:100%;font-size: var(--fs-md);font-family:monospace;text-transform:uppercase",
                                     disabled: *jobs_loading.read(),
                                     onclick: move |_| {
                                         let cur = *jobs_take.peek();
@@ -1358,12 +1358,12 @@ pub fn AdminIndex() -> Element {
 
             AdminPanel::AddUser if mobile_ro => rsx! {
                 div { class: "col", style: "gap:0.75rem;padding:1rem",
-                    div { class: "muted", style: "font-size:0.875rem",
+                    div { class: "muted", style: "font-size: var(--fs-sm)",
                         "Adding users requires a desktop viewport."
                     }
                     // fetch errors still surface on mobile (read-only display)
                     if !users_error.read().is_empty() {
-                        div { class: "app-card error", style: "padding:0.75rem;font-size:0.875rem",
+                        div { class: "app-card error", style: "padding:0.75rem;font-size: var(--fs-sm)",
                             {users_error.read().clone()}
                         }
                     }
@@ -1375,32 +1375,32 @@ pub fn AdminIndex() -> Element {
                     form {
                         style: "display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));align-items:end",
                         onsubmit: add_user,
-                        label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                        label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                             "Email"
                             input {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                                 r#type: "email",
                                 required: true,
                                 value: "{new_email}",
                                 oninput: move |e| new_email.set(e.value()),
                             }
                         }
-                        label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                        label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                             "Name"
                             input {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                                 r#type: "text",
                                 value: "{new_name}",
                                 oninput: move |e| new_name.set(e.value()),
                             }
                         }
-                        label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                        label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                             "Role"
                             select {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size:0.875rem",
+                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                                 value: "{new_role}",
                                 oninput: move |e| new_role.set(e.value()),
                                 for opt in role_options.read().iter() {
@@ -1419,12 +1419,12 @@ pub fn AdminIndex() -> Element {
 
                     // ── feedback ───────────────────────────────────────────────
                     if !user_message.read().is_empty() {
-                        div { class: "app-card success", style: "padding:0.75rem;font-size:0.875rem",
+                        div { class: "app-card success", style: "padding:0.75rem;font-size: var(--fs-sm)",
                             {user_message.read().clone()}
                         }
                     }
                     if !users_error.read().is_empty() {
-                        div { class: "app-card error", style: "padding:0.75rem;font-size:0.875rem",
+                        div { class: "app-card error", style: "padding:0.75rem;font-size: var(--fs-sm)",
                             {users_error.read().clone()}
                         }
                     }
@@ -1471,7 +1471,7 @@ pub fn AdminIndex() -> Element {
                 rsx! {
                     div { class: "col", style: "gap:0.75rem;height:100%",
                         if let Some(e) = fetch_err {
-                            div { class: "app-card error", style: "padding:0.75rem;font-size:0.875rem",
+                            div { class: "app-card error", style: "padding:0.75rem;font-size: var(--fs-sm)",
                                 {e}
                             }
                         }
@@ -1479,7 +1479,7 @@ pub fn AdminIndex() -> Element {
                         div { class: "row", style: "gap:0.75rem;align-items:center;flex-wrap:wrap",
                             input {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size:0.875rem;flex:1 1 200px;min-width:200px",
+                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);flex:1 1 200px;min-width:200px",
                                 r#type: "search",
                                 placeholder: "Search name, email, username…",
                                 aria_label: "Search users",
@@ -1488,7 +1488,7 @@ pub fn AdminIndex() -> Element {
                             }
                             span {
                                 aria_live: "polite",
-                                style: "border:1px solid var(--border-app);padding:0.25rem 0.625rem;font-family:monospace;font-size:0.6875rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);white-space:nowrap",
+                                style: "border:1px solid var(--border-app);padding:0.25rem 0.625rem;font-family:monospace;font-size: var(--fs-2xs);text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);white-space:nowrap",
                                 "{shown} / {total} users"
                             }
                         }
@@ -1530,7 +1530,7 @@ pub fn AdminIndex() -> Element {
                         }
                         // ── users table ────────────────────────────────────────
                         div { style: "overflow-x:auto;flex:1;min-height:0",
-                            table { style: "width:100%;text-align:left;font-size:0.875rem;border-collapse:collapse",
+                            table { style: "width:100%;text-align:left;font-size: var(--fs-sm);border-collapse:collapse",
                                 {table_head(vec!["User", "Username", "Verified", "Joined", "Role", "VIP Pass", "Capabilities"])}
                                 tbody {
                                     for user in filtered.iter() {
@@ -1569,7 +1569,7 @@ pub fn AdminIndex() -> Element {
                                                     },
                                                     td { style: "padding:0.75rem 1rem",
                                                         div { style: "font-weight:500", "{display_name}" }
-                                                        div { class: "muted", style: "font-size:0.75rem", {email_text} }
+                                                        div { class: "muted", style: "font-size: var(--fs-xs)", {email_text} }
                                                     }
                                                     td { class: "muted", style: "padding:0.75rem 1rem", {username_text} }
                                                     td { style: "padding:0.75rem 1rem", {verified_badge(verified)} }
@@ -1596,7 +1596,7 @@ pub fn AdminIndex() -> Element {
                                                                 rsx! {
                                                                     select {
                                                                         class: "app-input",
-                                                                        style: "padding:0.375rem 0.5rem;font-size:0.75rem",
+                                                                        style: "padding:0.375rem 0.5rem;font-size: var(--fs-md)",
                                                                         disabled: is_saving,
                                                                         value: "{user_role}",
                                                                         oninput: move |e| set_role(uid2.clone(), e.value()),
@@ -1631,7 +1631,7 @@ pub fn AdminIndex() -> Element {
                                                         div { class: "row", style: "gap:0.25rem;flex-wrap:wrap",
                                                             for cap in caps.iter() {
                                                                 span {
-                                                                    style: "border:1px solid var(--border-app);padding:0.125rem 0.5rem;font-size:0.625rem;color:var(--text-secondary)",
+                                                                    style: "border:1px solid var(--border-app);padding:0.125rem 0.5rem;font-size: var(--fs-2xs);color:var(--text-secondary)",
                                                                     {cap.clone()}
                                                                 }
                                                             }
@@ -1659,7 +1659,7 @@ pub fn AdminIndex() -> Element {
             }
 
             AdminPanel::Create if mobile_ro => rsx! {
-                div { class: "muted", style: "padding:1rem;font-size:0.875rem",
+                div { class: "muted", style: "padding:1rem;font-size: var(--fs-sm)",
                     "Creating discount codes requires a desktop viewport."
                 }
             },
@@ -1668,11 +1668,11 @@ pub fn AdminIndex() -> Element {
                     style: "display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));align-items:end;overflow-y:auto;padding:0.5rem",
                     onsubmit: create_code,
 
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                         "Code"
                         input {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;font-family:monospace;text-transform:uppercase",
+                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);font-family:monospace;text-transform:uppercase",
                             r#type: "text",
                             placeholder: "LAUNCH50",
                             minlength: "3",
@@ -1682,11 +1682,11 @@ pub fn AdminIndex() -> Element {
                             oninput: move |e| f_code.set(e.value()),
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                         "Name"
                         input {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                             r#type: "text",
                             placeholder: "Launch promo",
                             minlength: "2",
@@ -1696,23 +1696,23 @@ pub fn AdminIndex() -> Element {
                             oninput: move |e| f_name.set(e.value()),
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                         "Amount type"
                         select {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size:0.875rem",
+                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                             value: "{f_amount_type}",
                             oninput: move |e| f_amount_type.set(e.value()),
                             option { value: "PERCENT", "Percent" }
                             option { value: "FIXED", "Fixed" }
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                         "Amount"
                         div { class: "row", style: "gap:0.25rem;align-items:center",
                             input {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size:0.875rem;flex:1",
+                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);flex:1",
                                 r#type: "number",
                                 min: "1",
                                 step: "1",
@@ -1723,7 +1723,7 @@ pub fn AdminIndex() -> Element {
                                     f_amount_err.set(String::new());
                                 },
                             }
-                            span { class: "muted", style: "font-size:0.75rem;white-space:nowrap",
+                            span { class: "muted", style: "font-size: var(--fs-xs);white-space:nowrap",
                                 if f_amount_type.read().as_str() == "PERCENT" { "%" } else { "USD" }
                             }
                         }
@@ -1733,16 +1733,16 @@ pub fn AdminIndex() -> Element {
                             }
                         }
                         if f_amount_type.read().as_str() == "FIXED" {
-                            span { class: "muted", style: "font-size:0.625rem;text-transform:none", "Enter dollars (e.g. 10 = $10.00)" }
+                            span { class: "muted", style: "font-size: var(--fs-2xs);text-transform:none", "Enter dollars (e.g. 10 = $10.00)" }
                         } else {
-                            span { class: "muted", style: "font-size:0.625rem;text-transform:none", "1–100" }
+                            span { class: "muted", style: "font-size: var(--fs-2xs);text-transform:none", "1–100" }
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                         "Duration"
                         select {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size:0.875rem",
+                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                             value: "{f_duration}",
                             oninput: move |e| f_duration.set(e.value()),
                             option { value: "ONCE", "Once (first payment only)" }
@@ -1751,11 +1751,11 @@ pub fn AdminIndex() -> Element {
                         }
                     }
                     if f_duration.read().as_str() == "REPEATING" {
-                        label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                        label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                             "Duration in months"
                             input {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size:0.875rem",
+                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                                 r#type: "number",
                                 min: "1",
                                 step: "1",
@@ -1765,11 +1765,11 @@ pub fn AdminIndex() -> Element {
                             }
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                         "Max redemptions"
                         input {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                             r#type: "number",
                             min: "1",
                             step: "1",
@@ -1778,17 +1778,17 @@ pub fn AdminIndex() -> Element {
                             oninput: move |e| f_max_redemptions.set(e.value()),
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                         "Expires at"
                         input {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                             r#type: "date",
                             value: "{f_expires_at}",
                             oninput: move |e| f_expires_at.set(e.value()),
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                         "Test mode"
                         div { class: "row", style: "gap:0.5rem;align-items:center;padding:0.5rem 0",
                             input {
@@ -1797,7 +1797,7 @@ pub fn AdminIndex() -> Element {
                                 checked: *f_test_mode.read(),
                                 oninput: move |e| f_test_mode.set(e.value() == "true"),
                             }
-                            span { class: "muted", style: "font-size:0.625rem;text-transform:none",
+                            span { class: "muted", style: "font-size: var(--fs-2xs);text-transform:none",
                                 "Test-mode codes only work on test-mode checkouts."
                             }
                         }
@@ -1817,17 +1817,17 @@ pub fn AdminIndex() -> Element {
             AdminPanel::Discounts => rsx! {
                 div { class: "col", style: "gap:0.75rem;height:100%;overflow:hidden",
                     if !discount_message.read().is_empty() {
-                        div { class: "app-card success", style: "padding:0.75rem;font-size:0.875rem",
+                        div { class: "app-card success", style: "padding:0.75rem;font-size: var(--fs-sm)",
                             {discount_message.read().clone()}
                         }
                     }
                     if !discount_error.read().is_empty() {
-                        div { class: "app-card error", style: "padding:0.75rem;font-size:0.875rem",
+                        div { class: "app-card error", style: "padding:0.75rem;font-size: var(--fs-sm)",
                             {discount_error.read().clone()}
                         }
                     }
                     div { style: "overflow-x:auto;flex:1",
-                        table { style: "width:100%;text-align:left;font-size:0.875rem;border-collapse:collapse",
+                        table { style: "width:100%;text-align:left;font-size: var(--fs-sm);border-collapse:collapse",
                             {table_head(
                                 if mobile_ro {
                                     vec!["Code", "Name", "Amount", "Duration", "Redemptions", "Expires", "Test", "Status"]
@@ -1907,7 +1907,7 @@ pub fn AdminIndex() -> Element {
                                                                 div { class: "row", style: "gap:0.5rem",
                                                                     button {
                                                                         class: "app-btn",
-                                                                        style: "font-size:0.75rem;padding:0.25rem 0.5rem",
+                                                                        style: "font-size: var(--fs-md);padding:0.25rem 0.5rem",
                                                                         disabled: is_busy,
                                                                         onclick: move |_| {
                                                                             let id = did_active.clone();
@@ -1935,7 +1935,7 @@ pub fn AdminIndex() -> Element {
                                                                     }
                                                                     button {
                                                                         class: "app-btn error",
-                                                                        style: "font-size:0.75rem;padding:0.25rem 0.5rem",
+                                                                        style: "font-size: var(--fs-md);padding:0.25rem 0.5rem",
                                                                         disabled: is_busy,
                                                                         onclick: move |_| pending_delete.set(Some(d_for_delete.clone())),
                                                                         "Delete"
@@ -2016,36 +2016,36 @@ pub fn AdminIndex() -> Element {
                                 Identicon { seed: uid.clone(), size: 48 }
                                 div { class: "col", style: "gap:0.25rem;min-width:0",
                                     div { style: "font-weight:600", {display_name} }
-                                    div { class: "muted", style: "font-size:0.8125rem;overflow-wrap:anywhere", {email_text} }
+                                    div { class: "muted", style: "font-size: var(--fs-xs);overflow-wrap:anywhere", {email_text} }
                                     div { class: "row", style: "gap:0.5rem;align-items:center",
                                         {verified_badge(verified)}
-                                        span { class: "muted", style: "font-size:0.75rem", {username_text} }
+                                        span { class: "muted", style: "font-size: var(--fs-xs)", {username_text} }
                                     }
                                 }
                             }
                             // ── role + vip (read-only values on mobile) ────────
                             if mobile_ro {
                                 div { class: "col", style: "gap:0.25rem",
-                                    span { class: "muted", style: "font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em", "Role" }
+                                    span { class: "muted", style: "font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em", "Role" }
                                     {tag_badge("role", user_role.clone(), Some(role_accent(&user_role)))}
                                 }
                                 div { class: "col", style: "gap:0.25rem",
-                                    span { class: "muted", style: "font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em", "VIP pass" }
-                                    span { style: "font-size:0.875rem", if u.vip_pass { "Yes" } else { "No" } }
+                                    span { class: "muted", style: "font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em", "VIP pass" }
+                                    span { style: "font-size: var(--fs-sm)", if u.vip_pass { "Yes" } else { "No" } }
                                 }
                                 div { class: "col", style: "gap:0.25rem",
-                                    span { class: "muted", style: "font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em", "Joined" }
-                                    span { style: "font-size:0.875rem", {joined_text.clone()} }
+                                    span { class: "muted", style: "font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em", "Joined" }
+                                    span { style: "font-size: var(--fs-sm)", {joined_text.clone()} }
                                 }
-                                div { class: "muted", style: "font-size:0.75rem;border-top:1px solid var(--border-app);padding-top:1rem",
+                                div { class: "muted", style: "font-size: var(--fs-xs);border-top:1px solid var(--border-app);padding-top:1rem",
                                     "Editing requires a desktop viewport."
                                 }
                             } else {
-                                label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                                label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                                     "Role"
                                     select {
                                         class: "app-input",
-                                        style: "padding:0.5rem 0.75rem;font-size:0.875rem",
+                                        style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                                         disabled: role_saving,
                                         value: "{user_role}",
                                         oninput: move |e| set_role(uid_role.clone(), e.value()),
@@ -2062,7 +2062,7 @@ pub fn AdminIndex() -> Element {
                                         disabled: vip_saving,
                                         oninput: move |e| set_vip(uid_vip.clone(), e.value() == "true"),
                                     }
-                                    span { style: "font-size:0.875rem", "VIP pass" }
+                                    span { style: "font-size: var(--fs-sm)", "VIP pass" }
                                 }
                             }
                             // ── set password (desktop only) ────────────────────
@@ -2071,25 +2071,25 @@ pub fn AdminIndex() -> Element {
                                     class: "col",
                                     style: "gap:0.75rem;border-top:1px solid var(--border-app);padding-top:1rem",
                                     onsubmit: move |_| submit_password(uid_pw.clone()),
-                                    span { class: "muted", style: "font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;font-family:monospace",
+                                    span { class: "muted", style: "font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em;font-family:monospace",
                                         "Set password"
                                     }
-                                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                                         "New password"
                                         input {
                                             class: "app-input",
-                                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                                             r#type: "password",
                                             autocomplete: "new-password",
                                             value: "{pw}",
                                             oninput: move |e| pw.set(e.value()),
                                         }
                                     }
-                                    label { class: "col muted", style: "gap:0.25rem;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em",
+                                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
                                         "Confirm password"
                                         input {
                                             class: "app-input",
-                                            style: "padding:0.5rem 0.75rem;font-size:0.875rem;text-transform:none",
+                                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                                             r#type: "password",
                                             autocomplete: "new-password",
                                             value: "{pw_confirm}",
@@ -2097,7 +2097,7 @@ pub fn AdminIndex() -> Element {
                                         }
                                     }
                                     if !pw_error.read().is_empty() {
-                                        div { class: "app-card error", style: "padding:0.5rem 0.75rem;font-size:0.8125rem",
+                                        div { class: "app-card error", style: "padding:0.5rem 0.75rem;font-size: var(--fs-xs)",
                                             {pw_error.read().clone()}
                                         }
                                     }

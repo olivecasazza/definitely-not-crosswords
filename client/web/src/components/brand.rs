@@ -52,8 +52,8 @@ pub fn brand_panel(subtitle: &str) -> Element {
             BrandLogo { size: 72 }
             h1 { style: "font-family: var(--mono, monospace); font-size: 1.3rem; font-weight: 800; margin: 0;",
                 "definitely-not-crosswords" }
-            p { class: "muted", style: "font-size: .8rem; line-height: 1.6; max-width: 16rem;", "{subtitle}" }
-            div { style: "display:flex; flex-direction:column; gap:.375rem; max-width:18rem; font-family: var(--mono, monospace); font-size:.6875rem; line-height:1.6;",
+            p { class: "muted", style: "font-size: var(--fs-sm); line-height: 1.6; max-width: 16rem;", "{subtitle}" }
+            div { style: "display:flex; flex-direction:column; gap:.375rem; max-width:18rem; font-family: var(--mono, monospace); font-size: var(--fs-2xs); line-height:1.6;",
                 p { class: "muted", style: "margin:0;",
                     "Free — solve unlimited puzzles, generate 5 a month, teams of 4." }
                 p { class: "muted", style: "margin:0;",

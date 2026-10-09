@@ -65,9 +65,9 @@ fn proc_missing(msg: &str) -> bool {
 }
 
 const FIELD_ERR: &str =
-    "color: var(--pastel-red); font-size: .6875rem; font-family: monospace; margin: 0;";
-const INLINE_OK: &str = "font-size: .75rem; font-family: monospace; padding: .875rem; border: 1px solid color-mix(in srgb, var(--pastel-green) 20%, transparent); background: color-mix(in srgb, var(--pastel-green) 6%, transparent);";
-const INLINE_ERR: &str = "font-size: .75rem; font-family: monospace; padding: .875rem; border: 1px solid color-mix(in srgb, var(--pastel-red) 20%, transparent); background: color-mix(in srgb, var(--pastel-red) 6%, transparent);";
+    "color: var(--pastel-red); font-size: var(--fs-xs); font-family: monospace; margin: 0;";
+const INLINE_OK: &str = "font-size: var(--fs-xs); font-family: monospace; padding: .875rem; border: 1px solid color-mix(in srgb, var(--pastel-green) 20%, transparent); background: color-mix(in srgb, var(--pastel-green) 6%, transparent);";
+const INLINE_ERR: &str = "font-size: var(--fs-xs); font-family: monospace; padding: .875rem; border: 1px solid color-mix(in srgb, var(--pastel-red) 20%, transparent); background: color-mix(in srgb, var(--pastel-red) 6%, transparent);";
 
 #[component]
 pub fn Profile() -> Element {
@@ -200,7 +200,7 @@ pub fn Profile() -> Element {
                             Link {
                                 to: Route::Games {},
                                 class: "app-btn",
-                                style: "width: max-content; font-size: .75rem; font-family: monospace; text-transform: uppercase; letter-spacing: .05em;",
+                                style: "width: max-content; font-size: var(--fs-md); font-family: monospace; text-transform: uppercase; letter-spacing: .05em;",
                                 "← Back to Lobby"
                             }
                         }
@@ -223,22 +223,22 @@ pub fn Profile() -> Element {
                             div { style: "text-align: center;",
                                 h2 { style: "font-weight: 700; font-size: 1.125rem; color: var(--text-primary); margin: 0 0 .25rem 0;", "{dn}" }
                                 if let Some(u) = uname {
-                                    p { class: "muted", style: "font-size: .75rem; font-family: monospace; margin: 0 0 .25rem 0;", "@{u}" }
+                                    p { class: "muted", style: "font-size: var(--fs-xs); font-family: monospace; margin: 0 0 .25rem 0;", "@{u}" }
                                 }
-                                p { class: "muted", style: "font-size: .75rem; font-family: monospace; margin: 0;", "{email_label}" }
+                                p { class: "muted", style: "font-size: var(--fs-xs); font-family: monospace; margin: 0;", "{email_label}" }
                             }
                             div { class: "pf-meta-list",
                                 div { class: "pf-meta-row",
                                     span { class: "muted pf-meta-label", "Account Type:" }
-                                    span { style: "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-yellow);", "{role_label}" }
+                                    span { style: "font-size: var(--fs-2xs); font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-yellow);", "{role_label}" }
                                 }
                                 div { class: "pf-meta-row",
                                     span { class: "muted pf-meta-label", "Status:" }
                                     span {
                                         style: if email_verified {
-                                            "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-green);"
+                                            "font-size: var(--fs-2xs); font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--pastel-green);"
                                         } else {
-                                            "font-size: .625rem; font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--text-secondary);"
+                                            "font-size: var(--fs-2xs); font-family: monospace; font-weight: 600; text-transform: uppercase; color: var(--text-secondary);"
                                         },
                                         if email_verified { "Verified" } else { "Unverified" }
                                     }
@@ -252,7 +252,7 @@ pub fn Profile() -> Element {
                                 span { "Your email address isn't verified yet." }
                                 button {
                                     class: "app-btn",
-                                    style: "font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap;",
+                                    style: "font-size: var(--fs-md); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap;",
                                     disabled: resend_busy(),
                                     onclick: move |_| {
                                         let email = email_for_resend.clone();
@@ -359,7 +359,7 @@ pub fn Profile() -> Element {
                                 button {
                                     r#type: "submit",
                                     class: "app-btn app-btn-active",
-                                    style: "width: 100%; justify-content: center; font-size: .875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: .75rem 1rem;",
+                                    style: "width: 100%; justify-content: center; font-size: var(--fs-md); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: .75rem 1rem;",
                                     disabled: updating(),
                                     if updating() { "Saving..." } else { "Update Profile" }
                                 }
@@ -524,7 +524,7 @@ pub fn Profile() -> Element {
                             button {
                                 r#type: "submit",
                                 class: "app-btn app-btn-active",
-                                style: "width: 100%; justify-content: center; font-size: .875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: .75rem 1rem;",
+                                style: "width: 100%; justify-content: center; font-size: var(--fs-md); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: .75rem 1rem;",
                                 disabled: pw_busy(),
                                 if pw_busy() { "Changing…" } else { "Change Password" }
                             }
@@ -559,18 +559,18 @@ pub fn Profile() -> Element {
                                 }
                                 div { style: "display: flex; flex-direction: column; gap: .25rem; align-items: flex-end; text-align: right;",
                                     span { class: "pf-meta-label muted", "Generations" }
-                                    span { style: "font-size: .875rem; font-family: monospace;", "{quota_used} / \u{221e}" }
+                                    span { style: "font-size: var(--fs-sm); font-family: monospace;", "{quota_used} / \u{221e}" }
                                 }
                             }
                             if let Some(d) = renew_label.clone() {
                                 div { class: "pf-row",
                                     span { class: "pf-meta-label muted", "Renews" }
-                                    span { style: "font-size: .875rem; font-family: monospace;", "{d}" }
+                                    span { style: "font-size: var(--fs-sm); font-family: monospace;", "{d}" }
                                 }
                             }
                             button {
                                 class: "app-btn",
-                                style: "width: max-content; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border-color: var(--pastel-red); color: var(--pastel-red);",
+                                style: "width: max-content; font-size: var(--fs-md); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border-color: var(--pastel-red); color: var(--pastel-red);",
                                 onclick: move |_| cancel_open.set(true),
                                 "Cancel subscription"
                             }
@@ -703,20 +703,20 @@ pub fn Profile() -> Element {
                             if !danger_open() {
                                 button {
                                     class: "app-btn",
-                                    style: "width: max-content; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border-color: var(--pastel-red); color: var(--pastel-red);",
+                                    style: "width: max-content; font-size: var(--fs-md); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border-color: var(--pastel-red); color: var(--pastel-red);",
                                     onclick: move |_| danger_open.set(true),
                                     "Delete account…"
                                 }
                             } else {
                                 div { class: "pf-danger-confirm",
-                                    p { class: "muted", style: "font-size: .75rem; line-height: 1.6; margin: 0;",
+                                    p { class: "muted", style: "font-size: var(--fs-xs); line-height: 1.6; margin: 0;",
                                         "This action is irreversible. All of your stats, generation jobs, and account references will be deleted forever."
                                     }
                                     div { class: "pf-field",
                                         label { r#for: "pf-delete-confirm", class: "pf-label",
                                             "Type your email to confirm"
                                         }
-                                        p { class: "muted", style: "font-size: .6875rem; font-family: monospace; margin: 0;", "{email_label}" }
+                                        p { class: "muted", style: "font-size: var(--fs-2xs); font-family: monospace; margin: 0;", "{email_label}" }
                                         input {
                                             id: "pf-delete-confirm",
                                             class: "app-input",
@@ -734,7 +734,7 @@ pub fn Profile() -> Element {
                                     div { style: "display: flex; flex-wrap: wrap; gap: .75rem;",
                                         button {
                                             class: "app-btn app-btn-active",
-                                            style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; padding: .625rem 1rem; background: var(--pastel-red); border-color: var(--pastel-red); color: var(--contrast-ink);",
+                                            style: "font-size: var(--fs-md); font-weight: 600; text-transform: uppercase; padding: .625rem 1rem; background: var(--pastel-red); border-color: var(--pastel-red); color: var(--contrast-ink);",
                                             disabled: !ready || deleting(),
                                             onclick: move |_| {
                                                 let email = email_for_delete.clone();
@@ -766,7 +766,7 @@ pub fn Profile() -> Element {
                                         }
                                         button {
                                             class: "app-btn",
-                                            style: "font-size: .75rem; font-weight: 600; text-transform: uppercase; padding: .625rem 1rem;",
+                                            style: "font-size: var(--fs-md); font-weight: 600; text-transform: uppercase; padding: .625rem 1rem;",
                                             disabled: deleting(),
                                             onclick: move |_| {
                                                 danger_open.set(false);
@@ -833,7 +833,7 @@ const PROFILE_CSS: &str = r#"
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: .625rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
 }
 .pf-meta-list {
@@ -850,7 +850,7 @@ const PROFILE_CSS: &str = r#"
     align-items: center;
 }
 .pf-meta-label {
-    font-size: .625rem;
+    font-size: var(--fs-2xs);
     font-family: monospace;
     text-transform: uppercase;
     letter-spacing: .05em;
@@ -865,7 +865,7 @@ const PROFILE_CSS: &str = r#"
     margin: 0 0 .25rem 0;
 }
 .pf-subheading {
-    font-size: .75rem;
+    font-size: var(--fs-xs);
     font-family: monospace;
     margin: 0;
 }
@@ -881,7 +881,7 @@ const PROFILE_CSS: &str = r#"
     gap: .375rem;
 }
 .pf-label {
-    font-size: .75rem;
+    font-size: var(--fs-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: .05em;
@@ -893,7 +893,7 @@ const PROFILE_CSS: &str = r#"
     gap: .5rem;
 }
 .pf-show-btn {
-    font-size: .625rem;
+    font-size: var(--fs-2xs);
     font-weight: 600;
     font-family: monospace;
     letter-spacing: .05em;
@@ -907,7 +907,7 @@ const PROFILE_CSS: &str = r#"
     padding: .75rem .875rem;
     border: 1px solid color-mix(in srgb, var(--pastel-yellow) 35%, transparent);
     background: color-mix(in srgb, var(--pastel-yellow) 8%, transparent);
-    font-size: .75rem;
+    font-size: var(--fs-xs);
     font-family: monospace;
 }
 .pf-row {
@@ -922,7 +922,7 @@ const PROFILE_CSS: &str = r#"
     display: inline-block;
     width: max-content;
     padding: .25rem .625rem;
-    font-size: .625rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
     font-family: monospace;
     text-transform: uppercase;

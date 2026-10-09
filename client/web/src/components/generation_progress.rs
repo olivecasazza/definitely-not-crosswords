@@ -271,13 +271,13 @@ const PROGRESS_CSS: &str = r#"
     flex-shrink: 0;
 }
 .gp-title {
-    font-size: 0.6875rem;
+    font-size: var(--fs-xs);
     font-weight: 700;
     letter-spacing: 0.07em;
     text-transform: uppercase;
 }
 .gp-elapsed {
-    font-size: 0.6875rem;
+    font-size: var(--fs-xs);
 }
 .gp-bar-section {
     display: flex;
@@ -289,7 +289,7 @@ const PROGRESS_CSS: &str = r#"
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 0.625rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -312,7 +312,7 @@ const PROGRESS_CSS: &str = r#"
     transition: transform 0.2s ease-out;
 }
 .gp-prog-msg {
-    font-size: 0.625rem;
+    font-size: var(--fs-xs);
     margin: 0;
 }
 .gp-feed {
@@ -323,7 +323,7 @@ const PROGRESS_CSS: &str = r#"
     gap: 0.0625rem;
     background: var(--bg-cell-empty);
     padding: 0.375rem 0.5rem;
-    font-size: 0.625rem;
+    font-size: var(--fs-xs);
     line-height: 1.65;
 }
 .gp-line {

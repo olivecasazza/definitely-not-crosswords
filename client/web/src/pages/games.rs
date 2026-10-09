@@ -511,6 +511,45 @@ fn signed_out(kind: Panel) -> Element {
     }
 }
 
+/// Guest view of the daily puzzle. An in-progress session is watchable, so the
+/// CTA opens the live board (spectate); a fresh puzzle needs an account to
+/// play, and the copy says so instead of pretending otherwise.
+fn guest_featured(daily: &Option<DailyGame>) -> Element {
+    let Some(d) = daily else {
+        return status("muted", "Loading…", true);
+    };
+    if let Some(ag) = &d.active_game_id {
+        return rsx! {
+            div { class: "games-featured",
+                div { class: "games-head",
+                    span { class: "games-eyebrow", "TODAY'S PUZZLE" }
+                    span { class: "games-chip",
+                        "border-color: var(--pastel-green); color: var(--pastel-green);",
+                        "LIVE NOW" }
+                }
+                h2 { class: "games-featured-title", "{d.title}" }
+                if d.clues > 0 {
+                    p { class: "games-featured-meta", {plural(d.clues, "clue")} }
+                }
+                Link { to: Route::GamePlay { id: ag.clone() }, class: "app-btn app-btn-active games-featured-cta", "Watch →" }
+                p { class: "games-featured-meta", "Watching is free. Sign in to solve it with the team." }
+            }
+        };
+    }
+    rsx! {
+        div { class: "games-featured",
+            div { class: "games-head",
+                span { class: "games-eyebrow", "TODAY'S PUZZLE" }
+            }
+            h2 { class: "games-featured-title", "{d.title}" }
+            if d.clues > 0 {
+                p { class: "games-featured-meta", {plural(d.clues, "clue")} }
+            }
+            Link { to: Route::Login {}, class: "app-btn app-btn-active games-featured-cta", "Sign in to solve →" }
+        }
+    }
+}
+
 #[component]
 pub fn Games() -> Element {
     let state = use_app_state();
@@ -587,7 +626,18 @@ pub fn Games() -> Element {
         // "Sign in" message on every load.
         match &*state.session.read() {
             None => return status("muted", "Loading…", true),
-            Some(None) => return signed_out(kind),
+            // The daily puzzle is public data (`game.getDaily` is
+            // unauthenticated) and the play screen spectates without a
+            // session, so the front door shows the real puzzle instead of a
+            // sign-in wall — the co-op loop is visible before the account
+            // exists. The other three panels are personal by nature.
+            Some(None) => {
+                return if kind == Panel::Featured {
+                    guest_featured(&daily())
+                } else {
+                    signed_out(kind)
+                }
+            }
             Some(Some(_)) => {}
         }
 
@@ -975,7 +1025,9 @@ const GAMES_CSS: &str = "
 @media (max-width: 760px) {
   /* Tap targets ≥44px, search takes the full row, no hover-stick. */
   .games-search { max-width: none; }
-  .games-continue-card { padding: 1rem; min-height: 2.75rem; }
+  /* 2.75rem is 35.75px at the 13px root — the lesson styles.rs records
+     on .app-btn applies here too: rems lie about targets. 44px, not rem. */
+  .games-continue-card { padding: 1rem; min-height: 44px; }
   .games-continue-card:hover { background: transparent; border-left-color: transparent; }
   .games-join .app-input, .games-join .app-btn { min-height: 2.75rem; }
   .games-featured-cta { padding: .875rem 1.25rem; }

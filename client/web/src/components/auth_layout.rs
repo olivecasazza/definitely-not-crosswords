@@ -18,7 +18,7 @@ const AUTH_CSS: &str = r#"
   gap: 3rem; width: 100%; max-width: 60rem; margin: 0 auto; }
 .auth-brand-pc { flex: 1 1 0; min-width: 0; }
 .auth-brand-mobile { display: none; }
-.auth-wordmark { font-family: var(--mono, monospace); font-size: 1rem; font-weight: 800;
+.auth-wordmark { font-family: var(--mono, monospace); font-size: var(--fs-sm); font-weight: 800;
   color: var(--text-primary); }
 .auth-card { width: 24rem; max-width: 100%; flex: 0 0 auto; padding: 1.5rem;
   display: flex; flex-direction: column; gap: 1.25rem; }
@@ -28,22 +28,26 @@ const AUTH_CSS: &str = r#"
 
 .auth-form { display: flex; flex-direction: column; gap: 1rem; }
 .auth-group { display: flex; flex-direction: column; gap: .375rem; }
-.auth-label { font-size: .75rem; font-family: var(--mono, monospace); font-weight: 700;
+.auth-label { font-size: var(--fs-xs); font-family: var(--mono, monospace); font-weight: 700;
   text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
-.auth-field { width: 100%; padding: .625rem .75rem; font-size: .875rem; min-height: 44px; }
-.auth-submit { width: 100%; padding: .75rem 1rem; font-weight: 600; font-size: .875rem;
+.auth-field { width: 100%; padding: .625rem .75rem; font-size: var(--fs-lg); min-height: 44px; }
+.auth-submit { width: 100%; padding: .75rem 1rem; font-weight: 600; font-size: var(--fs-md);
   text-transform: uppercase; letter-spacing: .05em; min-height: 44px; }
-.auth-hint { font-size: .69rem; font-family: var(--mono, monospace); margin: 0; }
-.auth-note { font-size: .75rem; font-family: var(--mono, monospace); margin: 0; }
-.auth-banner { font-size: .75rem; font-family: var(--mono, monospace); padding: .75rem;
+.auth-hint { font-size: var(--fs-xs); font-family: var(--mono, monospace); margin: 0; }
+.auth-note { font-size: var(--fs-xs); font-family: var(--mono, monospace); margin: 0; }
+/* 3%, not 6%: the text is --pastel-red, and at 6% the tint lifts the
+   background enough to read 4.45:1 against it in light mode — under AA on the
+   surface that reports why a sign-in failed. The border keeps 20%; it is
+   non-text and only has to carry the boundary. */
+.auth-banner { font-size: var(--fs-xs); font-family: var(--mono, monospace); padding: .75rem;
   border: 1px solid color-mix(in srgb, var(--pastel-red) 20%, transparent);
-  background: color-mix(in srgb, var(--pastel-red) 6%, transparent); }
+  background: color-mix(in srgb, var(--pastel-red) 3%, transparent); }
 .auth-banner-ok { border-color: color-mix(in srgb, var(--pastel-green) 20%, transparent);
-  background: color-mix(in srgb, var(--pastel-green) 6%, transparent); }
-.auth-link { font-size: .75rem; font-family: var(--mono, monospace); text-align: center;
-  text-decoration: underline; }
+  background: color-mix(in srgb, var(--pastel-green) 3%, transparent); }
+.auth-link { font-size: var(--fs-xs); font-family: var(--mono, monospace); text-align: center;
+  text-decoration: underline; min-height: 44px; display: flex; align-items: center; justify-content: center; }
 .auth-divider { display: flex; align-items: center; gap: .75rem;
-  font-size: .75rem; font-family: var(--mono, monospace); }
+  font-size: var(--fs-xs); font-family: var(--mono, monospace); }
 .auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px;
   background: var(--border-app); }
 .auth-foot { padding-top: 1.25rem; border-top: 1px solid var(--border-app); text-align: center; }

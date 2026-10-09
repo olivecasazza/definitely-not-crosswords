@@ -239,7 +239,7 @@ pub const GAME_LIST_CSS: &str = "
 
 @media (max-width: 760px) {
   /* Comfortable tap target on touch, and no hover-stick on mobile Safari. */
-  .game-row { padding: 1rem; min-height: 3.25rem; }
+  .game-row { padding: 1rem; min-height: 44px; }
   .game-row:hover { background: transparent; border-left-color: transparent; }
   /* Progress bar yields first when a small row runs out of width. */
   .game-progress { width: 48px; }

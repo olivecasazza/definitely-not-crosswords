@@ -102,7 +102,11 @@ index="$(curl -fsS --max-time 30 "$BASE_URL/")" || {
   echo "::error::GET $BASE_URL/ failed" >&2
   exit 1
 }
-glue="$(printf '%s' "$index" | grep -o '/_assets/[^"]*crossword-web\.js' | head -1 || true)"
+# Hex-hash only, and never the first match blindly: the served index.html
+# carries a literal "/_assets/<64-hex>/crossword-web.js" inside the boot-card
+# comment (client/flake.nix's BOOT CSS note), and an unanchored first-match
+# grep fetched that placeholder and 404'd on every run.
+glue="$(printf '%s' "$index" | grep -o '/_assets/[0-9a-f]\{16,\}/crossword-web\.js' | head -1 || true)"
 if [ -z "$glue" ]; then
   echo "::error::no /_assets/*/crossword-web.js in $BASE_URL/ — the bundle layout changed; update this script" >&2
   exit 1

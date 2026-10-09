@@ -110,6 +110,10 @@ jobs:
             # is caught by the global rewrite above; add the ssh:// form here too.
             git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "git@github.com:olivecasazza/"
             git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "ssh://git@github.com/olivecasazza/"
+
+            # DEF-365: nixlab no longer declares the dead `agentctx` input
+            # (dropped in casazza-info/nixlab#560), so the manifests build
+            # evaluates with no override.
             nix build .#k8s-manifests
             cp -L result modules/k8s/manifests.yaml
             rm -f result

@@ -111,31 +111,10 @@ jobs:
             git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "git@github.com:olivecasazza/"
             git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "ssh://git@github.com/olivecasazza/"
 
-            # DEF-364: nixlab still declares a top-level `agentctx` input
-            # (git+ssh://git@github.com/olivecasazza/agentctx.git) whose repo has
-            # been deleted, so GitHub 404s it. Nix resolves EVERY direct flake
-            # input before evaluating any output (the failure is in
-            # call-flake.nix, before `.#k8s-manifests` is even selected), so the
-            # manifest can't regenerate even though the k8s path never consumes
-            # agentctx — it is only referenced by home-manager modules.
-            #
-            # Override the dead input with a tiny local stub. `--override-input`
-            # is transient (it never rewrites nixlab's flake.lock) and the stub
-            # is never evaluated on the k8s-manifests path, so the generated
-            # manifest is byte-for-byte what the real input would have produced.
-            # Root-cause cleanup (drop agentctx from nixlab) is tracked separately
-            # in DEF-365.
-            agentctx_stub="$RUNNER_TEMP/agentctx-stub"
-            mkdir -p "$agentctx_stub"
-            printf '%s\n' \
-              '{' \
-              '  description = "Stub for the deleted olivecasazza/agentctx flake input (DEF-364).";' \
-              '  outputs = { self }: {' \
-              '    homeManagerModules.default = { };' \
-              '    lib.renderPi = _: { };' \
-              '  };' \
-              '}' > "$agentctx_stub/flake.nix"
-            nix build .#k8s-manifests --override-input agentctx "path:$agentctx_stub"
+            # DEF-365: nixlab no longer declares the dead `agentctx` input
+            # (dropped in casazza-info/nixlab#560), so the manifests build
+            # evaluates with no override.
+            nix build .#k8s-manifests
             cp -L result modules/k8s/manifests.yaml
             rm -f result
             git add modules/k8s/manifests.yaml

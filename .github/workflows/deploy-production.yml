@@ -74,7 +74,32 @@ jobs:
             git commit -qm "chore(k8s): deploy crosswords production to $TAG" -- "$file"
             git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "git@github.com:olivecasazza/"
             git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "ssh://git@github.com/olivecasazza/"
-            nix build .#k8s-manifests
+              # DEF-364: nixlab STILL declares a top-level `agentctx` input
+            # (git+ssh://git@github.com/olivecasazza/agentctx.git, flake.nix:110)
+            # whose repo 404s, so Nix resolving every direct input before
+            # evaluating any output kills `nix build .#k8s-manifests` in
+            # call-flake.nix — the manifest can't regenerate even though the
+            # k8s path never consumes agentctx (only home-manager modules do).
+            # The override removal in #276 ("dropped in nixlab#560") checked out
+            # against a nixlab main that still declares it — v0.1.113, v0.1.114
+            # and v0.1.115 all failed to deploy on this exact fetch since.
+            #
+            # Override the dead input with a tiny local stub. `--override-input`
+            # is transient (it never rewrites nixlab's flake.lock) and the stub
+            # is never evaluated on the k8s-manifests path, so the generated
+            # manifest is byte-for-byte what the real input would have produced.
+            # Root-cause cleanup is to drop agentctx from nixlab for real.
+            agentctx_stub="$RUNNER_TEMP/agentctx-stub"
+            mkdir -p "$agentctx_stub"
+            printf '%s\n' \
+              '{' \
+              '  description = "Stub for the deleted olivecasazza/agentctx flake input (DEF-364).";' \
+              '  outputs = { self }: {' \
+              '    homeManagerModules.default = { };' \
+              '    lib.renderPi = _: { };' \
+              '  };' \
+              '}' > "$agentctx_stub/flake.nix"
+            nix build .#k8s-manifests --override-input agentctx "path:$agentctx_stub"
             cp -L result modules/k8s/manifests.yaml
             rm -f result
             git add modules/k8s/manifests.yaml

@@ -100,17 +100,6 @@ pub fn role_accent(role: &str) -> &'static str {
     }
 }
 
-/// Environment chip: PRODUCTION is red, everything else (staging, dev) is
-/// yellow. Rendered in the shared `AppHeader` for admins.
-pub fn env_badge(environment: &str) -> Element {
-    let accent = if environment == "production" {
-        "var(--color-error)"
-    } else {
-        "var(--color-warning)"
-    };
-    tag_badge("env", environment.to_uppercase(), Some(accent))
-}
-
 /// Shared table header row: monospace uppercase column labels.
 pub fn table_head(cols: Vec<&'static str>) -> Element {
     rsx! {

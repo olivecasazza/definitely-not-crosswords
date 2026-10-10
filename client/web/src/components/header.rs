@@ -1,9 +1,15 @@
 //! Top navigation bar. Auth-aware via `AppState`: active-route underline,
-//! ▶ Resume for the cached in-progress game, BETA chip (once the staging strip
-//! is dismissed), generation-quota chip for free users, theme toggle. While the
-//! session loads it shows a small skeleton instead of flashing the signed-out
-//! chrome. Under 760px the nav links vanish (the bottom TabBar owns primary
-//! navigation) and the wordmark collapses to the logo.
+//! ▶ Resume for the cached in-progress game, BETA tag (once the staging strip
+//! is dismissed), generation-quota readout for free users, theme toggle, and
+//! the one real action — Sign in for guests. While the session loads it shows
+//! a small skeleton instead of flashing the signed-out chrome. Under 760px the
+//! nav links vanish (the bottom TabBar owns primary navigation) and the
+//! wordmark collapses to the logo.
+//!
+//! Admin access and the environment signal live in the footer, not the header:
+//! the header carries exactly one filled control at a time (Sign in, or Resume
+//! for a signed-in player mid-game — the two are mutually exclusive), and
+//! everything else is text, a tag, or a glyph.
 
 use crate::components::brand::BrandLogo;
 use crate::components::identicon::Identicon;
@@ -27,7 +33,6 @@ pub fn AppHeader() -> Element {
 
     let games_active = matches!(route, Route::Games {});
     let stats_active = matches!(route, Route::Stats {});
-    let admin_active = matches!(route, Route::AdminIndex {});
     let navlink = |active: bool| {
         if active {
             "navlink navlink-active"
@@ -53,15 +58,6 @@ pub fn AppHeader() -> Element {
 
     let show_beta_chip = state.feature(|f| f.staging_banner) && *state.banner_dismissed.read();
 
-    // Environment chip (admins only): the one allowed header carries the
-    // env signal now that the admin tab strip is gone (GH-61).
-    let admin_env = state
-        .config
-        .read()
-        .as_ref()
-        .map(|c| c.environment.clone())
-        .filter(|e| !e.is_empty() && state.is_admin());
-
     rsx! {
         header { class: "site-header",
             Link { to: Route::Home {}, class: "brand",
@@ -71,9 +67,9 @@ pub fn AppHeader() -> Element {
             nav { class: "row",
                 Link { to: Route::Games {}, class: navlink(games_active), "Games" }
                 Link { to: Route::Stats {}, class: navlink(stats_active), "Stats" }
-                if state.is_admin() {
-                    Link { to: Route::AdminIndex {}, class: navlink(admin_active), "Admin" }
-                }
+                // Admin access lives in the footer, not here: it is a
+                // once-per-session destination for one role, and it cost the
+                // header a third nav slot plus an env badge next to it.
                 if let Some(g) = resume {
                     Link {
                         to: Route::GamePlay { id: g.id.clone() },
@@ -82,9 +78,6 @@ pub fn AppHeader() -> Element {
                         "▶ "
                         span { class: "resume-label", "Resume" }
                     }
-                }
-                if let Some(env) = admin_env {
-                    {crate::components::admin::env_badge(&env)}
                 }
                 if show_beta_chip {
                     div { class: "beta-wrap",
@@ -112,7 +105,7 @@ pub fn AppHeader() -> Element {
                     }
                 }
                 button {
-                    class: "app-btn",
+                    class: "icon-btn",
                     // Icon-only control: the glyph is the whole content, so
                     // without a name a screen reader announces "sun" or
                     // "moon" (or nothing) and never the action.
@@ -149,7 +142,7 @@ pub fn AppHeader() -> Element {
                                     "{u.name.clone().or(u.email.clone()).unwrap_or_default()}"
                                 }
                             }
-                            a { class: "app-btn signout-btn", href: "/api/auth/signout", "Sign out" }
+                            a { class: "navlink signout-btn", href: "/api/auth/signout", "Sign out" }
                         },
                         None => rsx! {
                             Link { to: Route::Login {}, class: "app-btn app-btn-active", "Sign in" }
@@ -178,7 +171,7 @@ const HEADER_CSS: &str = "
 .site-header .brand:hover svg { transform: scale(1.1); }
 .site-header .brand span { color: var(--dim); }
 .site-header .brand:hover span { color: var(--fg); }
-.site-header nav.row { gap: .25rem; }
+.site-header nav.row { gap: .5rem; }
 .site-header .navlink {
   color: var(--dim); padding: .5rem .5rem; min-height: 44px;
   display: inline-flex; align-items: center;
@@ -195,11 +188,15 @@ const HEADER_CSS: &str = "
 .site-header .navlink-user { display: inline-flex; align-items: center; gap: .4rem; }
 .resume-btn { white-space: nowrap; }
 .beta-wrap { position: relative; }
+/* Outlined tag, not the old filled black-bordered box: it was the loudest
+   thing in a strip whose only real action is Sign in. Hue stays --pastel-
+   yellow (14.7:1 dark / 6.1:1 light), so it reads as the env warning without
+   shouting. */
 .beta-chip {
   font-family: var(--mono); font-size: var(--fs-2xs); font-weight: 700;
   letter-spacing: .08em; padding: .2rem .45rem; cursor: pointer;
-  background: var(--color-warning); color: var(--contrast-ink);
-  border: 1px solid var(--contrast-ink);
+  background: transparent; color: var(--color-warning);
+  border: 1px solid var(--color-warning);
 }
 .beta-pop {
   position: absolute; top: calc(100% + .5rem); right: 0; z-index: 60;
@@ -208,13 +205,26 @@ const HEADER_CSS: &str = "
 }
 .beta-pop p { margin: 0; line-height: 1.5; }
 .beta-pop a { text-decoration: underline; font-weight: 700; }
+/* Plain mono text, not a boxed chip: the header carries exactly one real
+   control (Sign in / Resume) and everything else is information. The warn
+   state keeps the filled pill because that one time it is an alert. */
 .quota-chip {
   font-family: var(--mono); font-size: var(--fs-2xs); font-weight: 700;
-  letter-spacing: .05em; padding: .25rem .45rem;
-  border: 1px solid var(--border-app); color: var(--text-secondary);
+  letter-spacing: .05em; padding: .25rem .35rem;
+  color: var(--text-secondary); text-decoration: none;
 }
-.quota-chip:hover { color: var(--text-primary); border-color: var(--border-hover); }
+.quota-chip:hover { color: var(--text-primary); }
 .quota-chip-warn { color: var(--contrast-ink); background: var(--color-warning); border-color: var(--color-warning); }
+/* Borderless 44px icon control for the theme toggle — the glyph carries the
+   meaning, a box around it only added weight. */
+.site-header .icon-btn {
+  min-width: 44px; min-height: 44px; display: inline-flex; align-items: center;
+  justify-content: center; background: none; border: none; border-radius: 0;
+  color: var(--dim); cursor: pointer; font-size: var(--fs-md); padding: 0;
+  transition: color .15s ease;
+}
+.site-header .icon-btn:hover { color: var(--fg); }
+.site-header .icon-btn:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .session-skeleton {
   width: 22px; height: 22px; background: var(--bg-cell-letter);
   animation: square-pulse 1.2s ease-in-out infinite;

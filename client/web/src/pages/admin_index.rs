@@ -839,9 +839,9 @@ pub fn AdminIndex() -> Element {
                 };
 
                 rsx! {
-                    div { class: "col", style: "gap:1.5rem;height:100%;overflow-y:auto",
+                    div { class: "col admin-scroll",
                         // ── KPI strip ──────────────────────────────────────
-                        div { style: "display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))",
+                        div { class: "admin-grid",
                             {kpi_tile("Users", &users_t)}
                             {kpi_tile("Verified", &verified_t)}
                             {kpi_tile("Admins", &admins_t)}
@@ -852,28 +852,28 @@ pub fn AdminIndex() -> Element {
                         }
 
                         // ── recent activity ────────────────────────────────
-                        div { class: "app-card", style: "padding:0",
-                            div { style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app)",
-                                h2 { class: "muted", style: "font-size: var(--fs-xs);font-weight:bold;font-family:monospace;text-transform:uppercase;letter-spacing:0.05em",
+                        div { class: "app-card",
+                            div { class: "admin-cell-b",
+                                h2 { class: "muted admin-label",
                                     "Recent activity"
                                 }
                             }
                             if let Some(e) = jobs_err {
-                                div { class: "error", style: "padding:0.5rem 1rem;font-size: var(--fs-xs);border-bottom:1px solid var(--border-app)",
+                                div { class: "error admin-row-b",
                                     "Jobs unavailable: {e}"
                                 }
                             }
                             if let Some(e) = users_err {
-                                div { class: "error", style: "padding:0.5rem 1rem;font-size: var(--fs-xs);border-bottom:1px solid var(--border-app)",
+                                div { class: "error admin-row-b",
                                     "Users unavailable: {e}"
                                 }
                             }
                             if feed_loading {
-                                div { class: "muted", style: "padding:1.5rem 1rem;text-align:center;font-size: var(--fs-sm)",
+                                div { class: "muted admin-empty",
                                     "Loading activity…"
                                 }
                             } else if items.is_empty() {
-                                div { class: "muted", style: "padding:1.5rem 1rem;text-align:center;font-size: var(--fs-sm)",
+                                div { class: "muted admin-empty",
                                     "No recent activity."
                                 }
                             }
@@ -888,31 +888,29 @@ pub fn AdminIndex() -> Element {
                                             rsx! {
                                                 button {
                                                     key: "{i}",
-                                                    class: "row",
-                                                    style: "width:100%;gap:0.75rem;align-items:center;padding:0.625rem 1rem;border:none;border-bottom:1px solid var(--border-app);background:transparent;color:inherit;text-align:left;cursor:pointer;font-size: var(--fs-sm)",
+                                                    class: "row admin-row-btn",
                                                     aria_label: "Open jobs: {topic}",
                                                     onclick: move |_| crate::workspace::restore_panel(&jobs_workspace, AdminPanel::Jobs),
                                                     {status_badge(status.clone(), job_status_accent(&status))}
-                                                    span { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
+                                                    span { class: "admin-ellipsis",
                                                         {topic.clone()}
                                                     }
-                                                    span { class: "muted", style: "font-size: var(--fs-xs);white-space:nowrap", {when} }
+                                                    span { class: "muted admin-note admin-nowrap", {when} }
                                                 }
                                             }
                                         }
                                         FeedKind::User { display, email } => rsx! {
                                             div {
                                                 key: "{i}",
-                                                class: "row",
-                                                style: "gap:0.75rem;align-items:center;padding:0.625rem 1rem;border-bottom:1px solid var(--border-app);font-size: var(--fs-sm)",
+                                                class: "row admin-cell-row",
                                                 {tag_badge("user", "New user".to_string(), None)}
-                                                span { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
+                                                span { class: "admin-ellipsis",
                                                     {display.clone()}
                                                     if !email.is_empty() && email != display {
-                                                        span { class: "muted", style: "font-size: var(--fs-xs);margin-left:0.5rem", {email.clone()} }
+                                                        span { class: "muted admin-note admin-ml", {email.clone()} }
                                                     }
                                                 }
-                                                span { class: "muted", style: "font-size: var(--fs-xs);white-space:nowrap", {when} }
+                                                span { class: "muted admin-note admin-nowrap", {when} }
                                             }
                                         },
                                     }
@@ -928,18 +926,16 @@ pub fn AdminIndex() -> Element {
                 let is_running = status == "running";
                 let params_form = rsx! {
                     // topic + submit row
-                    div { class: "row", style: "flex-wrap:wrap;align-items:flex-end;gap:0.75rem",
-                        div { class: "col", style: "gap:0.375rem;flex:1;min-width:280px",
+                    div { class: "row admin-toolbar",
+                        div { class: "col admin-grow-topic",
                             label {
                                 r#for: "topic",
-                                class: "muted",
-                                style: "font-size: var(--fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                                class: "muted admin-label",
                                 "Topic"
                             }
                             input {
                                 id: "topic",
-                                class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);width:100%",
+                                class: "app-input admin-input-full",
                                 r#type: "text",
                                 value: "{form.read().topic}",
                                 oninput: move |e| form.write().topic = e.value(),
@@ -947,7 +943,6 @@ pub fn AdminIndex() -> Element {
                         }
                         button {
                             class: "app-btn app-btn-active",
-                            style: "height:38px;min-width:120px;font-weight:bold",
                             disabled: is_running,
                             onclick: move |_| {
                                 // drop previous subscription
@@ -1024,15 +1019,14 @@ pub fn AdminIndex() -> Element {
                     }
 
                     // preset chips — client-side sugar over the grid dimensions
-                    div { class: "row", style: "gap:0.5rem;flex-wrap:wrap",
+                    div { class: "row admin-gap admin-wrap-all",
                         for (name, w, h, min_len, max_len) in [
                             ("Mini 5×5", 5i64, 5i64, 3i64, 5i64),
                             ("Daily 15×15", 15, 15, 3, 12),
                             ("Sunday 21×21", 21, 21, 3, 12),
                         ] {
                             button {
-                                class: "app-btn",
-                                style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                                class: "app-btn admin-tag",
                                 onclick: move |_| {
                                     let mut f = form.write();
                                     f.width = w;
@@ -1046,7 +1040,7 @@ pub fn AdminIndex() -> Element {
                     }
 
                     // numeric params grid
-                    div { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:0.75rem",
+                    div { class: "admin-grid-90",
                         for (label, value, min_val, max_val, setter) in [
                             ("Width", form.read().width, 3i64, 50i64, 0usize),
                             ("Height", form.read().height, 3, 50, 1),
@@ -1056,11 +1050,10 @@ pub fn AdminIndex() -> Element {
                             ("Runs", form.read().runs, 1, 100, 5),
                             ("Attempts", form.read().max_attempts, 1, 1000, 6),
                         ] {
-                            label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                            label { class: "col muted admin-label",
                                 {label}
                                 input {
                                     class: "app-input",
-                                    style: "padding:0.375rem 0.5rem;font-size: var(--fs-md)",
                                     r#type: "number",
                                     min: "{min_val}",
                                     max: "{max_val}",
@@ -1087,20 +1080,20 @@ pub fn AdminIndex() -> Element {
                 };
 
                 rsx! {
-                    div { class: "col", style: "gap:1.5rem;padding:1rem;overflow-y:auto;height:100%",
-                        div { style: "border-bottom:1px solid var(--border-app);padding-bottom:1rem",
-                            h1 { style: "font-size:1.125rem;font-weight:bold;letter-spacing:0.05em",
+                    div { class: "col admin-scroll",
+                        div { class: "admin-head-b",
+                            h1 { class: "admin-title",
                                 "CROSSWORD GENERATOR"
                             }
                         }
                         // Mobile: collapse the form behind a disclosure. Gated by
                         // rsx (not CSS) so only one branch mounts the controls.
                         if mobile_ro {
-                            details { style: "border:1px solid var(--border-app)",
-                                summary { class: "muted", style: "cursor:pointer;padding:0.75rem 1rem;font-size: var(--fs-xs);font-weight:600;font-family:monospace;text-transform:uppercase;letter-spacing:0.05em",
+                            details { class: "admin-bordered",
+                                summary { class: "muted admin-row-link",
                                     "New generation (desktop recommended)"
                                 }
-                                div { class: "col", style: "gap:1.5rem;padding:1rem;border-top:1px solid var(--border-app)",
+                                div { class: "col admin-foot",
                                     {params_form}
                                 }
                             }
@@ -1125,7 +1118,7 @@ pub fn AdminIndex() -> Element {
                     format!("Last: {} · \"{}\" · {}", j.status, j.topic, when)
                 });
                 rsx! {
-                    div { class: "col", style: "gap:1rem;padding:1rem;height:100%;overflow-y:auto",
+                    div { class: "col admin-scroll admin-gap-lg",
                         // ── live progress ─────────────────────────────────────────
                         if status != "idle" {
                             GenerationProgress {
@@ -1136,41 +1129,40 @@ pub fn AdminIndex() -> Element {
                                 elapsed_secs: *elapsed_secs.read(),
                             }
                         } else if let Some(line) = last_run {
-                            div { class: "col muted", style: "gap:0.5rem;text-align:center;padding:2rem 0",
-                                div { style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                            div { class: "col muted admin-empty",
+                                div { class: "admin-tag",
                                     {line}
                                 }
-                                div { style: "font-size: var(--fs-sm)", "Generation output will appear here." }
+                                div { class: "admin-text",  "Generation output will appear here." }
                             }
                         } else {
-                            div { class: "muted", style: "font-size: var(--fs-sm);text-align:center;padding:2rem 0",
+                            div { class: "muted admin-empty",
                                 "Generation output will appear here."
                             }
                         }
 
                         // ── gen error ─────────────────────────────────────────────
                         if !gen_error.read().is_empty() {
-                            div { class: "app-card error", style: "padding:1rem;font-size: var(--fs-sm)",
+                            div { class: "app-card error admin-panel",
                                 {gen_error.read().clone()}
                             }
                         }
 
                         // ── completed game CTA ────────────────────────────────────
                         if let (Some(gid), Some(gtitle)) = (gen_game_id.read().clone(), gen_game_title.read().clone()) {
-                            div { class: "app-card", style: "padding:1rem;border-color:var(--color-success)",
-                                div { class: "row", style: "justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap",
-                                    div { class: "col", style: "gap:0.25rem",
-                                        div { style: "font-size: var(--fs-sm);font-weight:600", {gtitle.clone()} }
+                            div { class: "app-card admin-panel-ok",
+                                div { class: "row admin-row-between",
+                                    div { class: "col admin-tight",
+                                        div { class: "admin-strong",  {gtitle.clone()} }
                                         if !publish_error.read().is_empty() {
-                                            div { class: "error", style: "font-size: var(--fs-xs)", {publish_error.read().clone()} }
+                                            div { class: "error admin-note", {publish_error.read().clone()} }
                                         }
                                     }
-                                    div { class: "row", style: "gap:0.5rem",
+                                    div { class: "row admin-gap",
                                         // Publish is desktop-only; mobile stays read-only.
                                         if !mobile_ro && !*gen_game_published.read() {
                                             button {
-                                                class: "app-btn app-btn-active",
-                                                style: "font-weight:bold",
+                                                class: "app-btn app-btn-active admin-bold",
                                                 disabled: *publishing.read(),
                                                 onclick: {
                                                     let gid = gid.clone();
@@ -1243,14 +1235,13 @@ pub fn AdminIndex() -> Element {
                 // Server returned a full page — there may be more to fetch.
                 let can_load_more = jobs.read().len() as i64 >= *jobs_take.read();
                 rsx! {
-                    div { style: "overflow:hidden;height:100%;display:flex;flex-direction:column",
-                        div { class: "row", style: "padding:1rem;border-bottom:1px solid var(--border-app);justify-content:space-between;align-items:center",
-                            h2 { style: "font-size: var(--fs-sm);font-weight:bold;font-family:monospace;letter-spacing:0.05em",
+                    div { class: "admin-fill",
+                        div { class: "row admin-bar",
+                            h2 { class: "admin-section-title",
                                 "GENERATION JOBS"
                             }
                             button {
-                                class: "app-btn",
-                                style: "font-size: var(--fs-md);font-family:monospace;text-transform:uppercase",
+                                class: "app-btn admin-section-title",
                                 disabled: *jobs_loading.read(),
                                 onclick: move |_| do_load_jobs(jobs, jobs_loading, jobs_error, *jobs_take.peek()),
                                 if *jobs_loading.read() { "Refreshing" } else { "Refresh" }
@@ -1258,61 +1249,61 @@ pub fn AdminIndex() -> Element {
                         }
 
                         if !jobs_error.read().is_empty() {
-                            div { class: "error", style: "padding:0.75rem 1rem;font-size: var(--fs-sm);border-bottom:1px solid var(--border-app)",
+                            div { class: "error admin-cell-b",
                                 {jobs_error.read().clone()}
                             }
                         }
 
                         // search + status filters (client-side, over the fetched page)
-                        div { class: "row", style: "padding:0.75rem 1rem;border-bottom:1px solid var(--border-app);gap:0.5rem;align-items:center;flex-wrap:wrap",
+                        div { class: "row admin-cell-row",
                             input {
-                                class: "app-input",
-                                style: "padding:0.375rem 0.5rem;font-size: var(--fs-md);flex:1;min-width:160px",
+                                class: "app-input admin-grow",
                                 r#type: "text",
                                 placeholder: "Search topics…",
                                 value: "{job_search}",
                                 oninput: move |e| job_search.set(e.value()),
                             }
                             span {
-                                class: "muted",
-                                style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:bold;text-transform:uppercase;letter-spacing:0.05em;padding:0.125rem 0.5rem;border:1px solid var(--border-app);white-space:nowrap",
+                                class: "muted admin-tag-box",
                                 {format!("{shown} shown")}
                             }
-                            for (chip_label, chip_val) in [
-                                ("All", ""),
-                                ("Succeeded", "SUCCEEDED"),
-                                ("Failed", "FAILED"),
-                                ("Running", "RUNNING"),
-                            ] {
-                                button {
-                                    class: if *status_filter.read() == chip_val { "app-btn app-btn-active" } else { "app-btn" },
-                                    style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
-                                    onclick: move |_| status_filter.set(chip_val.to_string()),
-                                    {chip_label}
+                            div { class: "section-tabs", role: "group", aria_label: "Filter jobs by status",
+                                for (chip_label, chip_val) in [
+                                    ("All", ""),
+                                    ("Succeeded", "SUCCEEDED"),
+                                    ("Failed", "FAILED"),
+                                    ("Running", "RUNNING"),
+                                ] {
+                                    button {
+                                        class: if *status_filter.read() == chip_val { "section-tab section-tab-active" } else { "section-tab" },
+                                        aria_pressed: *status_filter.read() == chip_val,
+                                        onclick: move |_| status_filter.set(chip_val.to_string()),
+                                        {chip_label}
+                                    }
                                 }
                             }
                         }
 
-                        div { style: "overflow-x:auto;flex:1",
-                            table { style: "width:100%;text-align:left;font-size: var(--fs-sm);border-collapse:collapse",
+                        div { class: "admin-table-wrap",
+                            table { class: "admin-table",
                                 {table_head(vec!["Status", "Topic", "Grid", "Game", "Created"])}
                                 tbody {
                                     for job in filtered.iter() {
-                                        tr { style: "border-bottom:1px solid var(--border-app);font-family:monospace;font-size: var(--fs-xs)",
-                                            td { style: "padding:0.75rem 1rem",
+                                        tr { class: "admin-b admin-mono",
+                                            td { class: "admin-cell",
                                                 {status_badge(job.status.clone(), job_status_accent(&job.status))}
                                             }
-                                            td { style: "padding:0.75rem 1rem;font-family:sans-serif;font-size: var(--fs-sm);font-weight:500",
+                                            td { class: "admin-cell",
                                                 {job.topic.clone()}
                                             }
-                                            td { class: "muted", style: "padding:0.75rem 1rem",
+                                            td { class: "muted admin-cell",
                                                 {format!("{}x{}", job.width, job.height)}
                                             }
-                                            td { style: "padding:0.75rem 1rem",
+                                            td { class: "admin-cell",
                                                 if let Some(rg) = &job.result_game {
-                                                    div { class: "col", style: "gap:0.125rem",
-                                                        span { style: "font-family:sans-serif;font-size: var(--fs-sm);font-weight:500", {rg.title.clone()} }
-                                                        span { class: "muted", style: "font-size: var(--fs-2xs);font-weight:bold;text-transform:uppercase",
+                                                    div { class: "col admin-micro-gap",
+                                                        span { {rg.title.clone()} }
+                                                        span { class: "muted admin-tag",
                                                             if rg.published { "published" } else { "draft" }
                                                         }
                                                     }
@@ -1320,7 +1311,7 @@ pub fn AdminIndex() -> Element {
                                                     span { class: "muted", "—" }
                                                 }
                                             }
-                                            td { class: "muted", style: "padding:0.75rem 1rem",
+                                            td { class: "muted admin-cell",
                                                 {format_datetime(&job.created_at)}
                                             }
                                         }
@@ -1339,10 +1330,9 @@ pub fn AdminIndex() -> Element {
                         }
 
                         if can_load_more {
-                            div { style: "padding:0.75rem 1rem;border-top:1px solid var(--border-app)",
+                            div { class: "admin-cell-t",
                                 button {
-                                    class: "app-btn",
-                                    style: "width:100%;font-size: var(--fs-md);font-family:monospace;text-transform:uppercase",
+                                    class: "app-btn admin-input-full admin-upper",
                                     disabled: *jobs_loading.read(),
                                     onclick: move |_| {
                                         let cur = *jobs_take.peek();
@@ -1357,50 +1347,47 @@ pub fn AdminIndex() -> Element {
             }
 
             AdminPanel::AddUser if mobile_ro => rsx! {
-                div { class: "col", style: "gap:0.75rem;padding:1rem",
-                    div { class: "muted", style: "font-size: var(--fs-sm)",
+                div { class: "col admin-pad-row",
+                    div { class: "muted admin-text",
                         "Adding users requires a desktop viewport."
                     }
                     // fetch errors still surface on mobile (read-only display)
                     if !users_error.read().is_empty() {
-                        div { class: "app-card error", style: "padding:0.75rem;font-size: var(--fs-sm)",
+                        div { class: "app-card error admin-panel-tight",
                             {users_error.read().clone()}
                         }
                     }
                 }
             },
             AdminPanel::AddUser => rsx! {
-                div { class: "col", style: "gap:1rem;padding:1rem;overflow-y:auto",
+                div { class: "col admin-scroll admin-gap-lg",
                     // ── add user form ──────────────────────────────────────────
                     form {
-                        style: "display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));align-items:end",
+                        class: "admin-grid-160",
                         onsubmit: add_user,
-                        label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                        label { class: "col muted admin-label",
                             "Email"
                             input {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                                 r#type: "email",
                                 required: true,
                                 value: "{new_email}",
                                 oninput: move |e| new_email.set(e.value()),
                             }
                         }
-                        label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                        label { class: "col muted admin-label",
                             "Name"
                             input {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                                 r#type: "text",
                                 value: "{new_name}",
                                 oninput: move |e| new_name.set(e.value()),
                             }
                         }
-                        label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                        label { class: "col muted admin-label",
                             "Role"
                             select {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                                 value: "{new_role}",
                                 oninput: move |e| new_role.set(e.value()),
                                 for opt in role_options.read().iter() {
@@ -1410,7 +1397,6 @@ pub fn AdminIndex() -> Element {
                         }
                         button {
                             class: "app-btn app-btn-active",
-                            style: "height:38px;font-weight:bold",
                             r#type: "submit",
                             disabled: *saving.read(),
                             if *saving.read() { "Saving…" } else { "Add User" }
@@ -1419,12 +1405,12 @@ pub fn AdminIndex() -> Element {
 
                     // ── feedback ───────────────────────────────────────────────
                     if !user_message.read().is_empty() {
-                        div { class: "app-card success", style: "padding:0.75rem;font-size: var(--fs-sm)",
+                        div { class: "app-card success admin-panel-tight",
                             {user_message.read().clone()}
                         }
                     }
                     if !users_error.read().is_empty() {
-                        div { class: "app-card error", style: "padding:0.75rem;font-size: var(--fs-sm)",
+                        div { class: "app-card error admin-panel-tight",
                             {users_error.read().clone()}
                         }
                     }
@@ -1469,17 +1455,16 @@ pub fn AdminIndex() -> Element {
                 let shown = filtered.len();
 
                 rsx! {
-                    div { class: "col", style: "gap:0.75rem;height:100%",
+                    div { class: "col admin-col-fill",
                         if let Some(e) = fetch_err {
-                            div { class: "app-card error", style: "padding:0.75rem;font-size: var(--fs-sm)",
+                            div { class: "app-card error admin-panel-tight",
                                 {e}
                             }
                         }
                         // ── search + result count ──────────────────────────────
-                        div { class: "row", style: "gap:0.75rem;align-items:center;flex-wrap:wrap",
+                        div { class: "row admin-row",
                             input {
-                                class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);flex:1 1 200px;min-width:200px",
+                                class: "app-input admin-grow-lg",
                                 r#type: "search",
                                 placeholder: "Search name, email, username…",
                                 aria_label: "Search users",
@@ -1488,39 +1473,36 @@ pub fn AdminIndex() -> Element {
                             }
                             span {
                                 aria_live: "polite",
-                                style: "border:1px solid var(--border-app);padding:0.25rem 0.625rem;font-family:monospace;font-size: var(--fs-2xs);text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);white-space:nowrap",
+                                class: "admin-tag-box",
                                 "{shown} / {total} users"
                             }
                         }
                         // ── filter chips ───────────────────────────────────────
-                        div { class: "row", style: "gap:0.75rem;flex-wrap:wrap",
-                            div { class: "row", style: "gap:0.25rem", role: "group", aria_label: "Filter by role",
+                        div { class: "row admin-row",
+                            div { class: "section-tabs", role: "group", aria_label: "Filter by role",
                                 for (label, val) in [("All", None), ("Admin", Some("ADMIN")), ("User", Some("USER"))] {
                                     button {
-                                        class: if role_f == val { "app-btn app-btn-active" } else { "app-btn" },
-                                        style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                                        class: if role_f == val { "section-tab section-tab-active" } else { "section-tab" },
                                         aria_pressed: role_f == val,
                                         onclick: move |_| filter_role.set(val),
                                         {label}
                                     }
                                 }
                             }
-                            div { class: "row", style: "gap:0.25rem", role: "group", aria_label: "Filter by verification",
+                            div { class: "section-tabs", role: "group", aria_label: "Filter by verification",
                                 for (label, val) in [("All", None), ("Verified", Some(true)), ("Pending", Some(false))] {
                                     button {
-                                        class: if verified_f == val { "app-btn app-btn-active" } else { "app-btn" },
-                                        style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                                        class: if verified_f == val { "section-tab section-tab-active" } else { "section-tab" },
                                         aria_pressed: verified_f == val,
                                         onclick: move |_| filter_verified.set(val),
                                         {label}
                                     }
                                 }
                             }
-                            div { class: "row", style: "gap:0.25rem", role: "group", aria_label: "Filter by VIP",
+                            div { class: "section-tabs", role: "group", aria_label: "Filter by VIP",
                                 for (label, val) in [("All", false), ("VIP", true)] {
                                     button {
-                                        class: if vip_only == val { "app-btn app-btn-active" } else { "app-btn" },
-                                        style: "font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em",
+                                        class: if vip_only == val { "section-tab section-tab-active" } else { "section-tab" },
                                         aria_pressed: vip_only == val,
                                         onclick: move |_| filter_vip_only.set(val),
                                         {label}
@@ -1529,8 +1511,8 @@ pub fn AdminIndex() -> Element {
                             }
                         }
                         // ── users table ────────────────────────────────────────
-                        div { style: "overflow-x:auto;flex:1;min-height:0",
-                            table { style: "width:100%;text-align:left;font-size: var(--fs-sm);border-collapse:collapse",
+                        div { class: "admin-table-wrap",
+                            table { class: "admin-table",
                                 {table_head(vec!["User", "Username", "Verified", "Joined", "Role", "VIP Pass", "Capabilities"])}
                                 tbody {
                                     for user in filtered.iter() {
@@ -1555,7 +1537,7 @@ pub fn AdminIndex() -> Element {
                                             rsx! {
                                                 tr {
                                                     key: "{uid}",
-                                                    style: "border-bottom:1px solid var(--border-app);cursor:pointer",
+                                                    class: "admin-clickable",
                                                     tabindex: "0",
                                                     aria_label: "View details for {display_name}",
                                                     onclick: move |_| open_drawer(uid_open.clone()),
@@ -1567,26 +1549,26 @@ pub fn AdminIndex() -> Element {
                                                             open_drawer(uid_key.clone());
                                                         }
                                                     },
-                                                    td { style: "padding:0.75rem 1rem",
-                                                        div { style: "font-weight:500", "{display_name}" }
-                                                        div { class: "muted", style: "font-size: var(--fs-xs)", {email_text} }
+                                                    td { class: "admin-cell",
+                                                        div { class: "admin-med",  "{display_name}" }
+                                                        div { class: "muted admin-note", {email_text} }
                                                     }
-                                                    td { class: "muted", style: "padding:0.75rem 1rem", {username_text} }
-                                                    td { style: "padding:0.75rem 1rem", {verified_badge(verified)} }
-                                                    td { class: "muted", style: "padding:0.75rem 1rem;white-space:nowrap", {joined_text} }
+                                                    td { class: "muted admin-cell", {username_text} }
+                                                    td { class: "admin-cell",  {verified_badge(verified)} }
+                                                    td { class: "muted admin-cell admin-nowrap", {joined_text} }
                                                     // inline controls own their cells — keep clicks and
                                                     // keystrokes from bubbling into the row's drawer-open.
                                                     // Mobile is read-only: badges, no editors mounted.
                                                     if mobile_ro {
-                                                        td { style: "padding:0.75rem 1rem",
+                                                        td { class: "admin-cell",
                                                             {tag_badge("role", user_role.clone(), Some(role_accent(&user_role)))}
                                                         }
-                                                        td { class: "muted", style: "padding:0.75rem 1rem",
+                                                        td { class: "muted admin-cell",
                                                             if vip { "VIP" } else { "—" }
                                                         }
                                                     } else {
                                                         td {
-                                                            style: "padding:0.75rem 1rem",
+                                                            class: "admin-cell",
                                                             onclick: move |e| e.stop_propagation(),
                                                             onkeydown: move |e| e.stop_propagation(),
                                                             {
@@ -1596,7 +1578,6 @@ pub fn AdminIndex() -> Element {
                                                                 rsx! {
                                                                     select {
                                                                         class: "app-input",
-                                                                        style: "padding:0.375rem 0.5rem;font-size: var(--fs-md)",
                                                                         disabled: is_saving,
                                                                         value: "{user_role}",
                                                                         oninput: move |e| set_role(uid2.clone(), e.value()),
@@ -1608,7 +1589,7 @@ pub fn AdminIndex() -> Element {
                                                             }
                                                         }
                                                         td {
-                                                            style: "padding:0.75rem 1rem",
+                                                            class: "admin-cell",
                                                             onclick: move |e| e.stop_propagation(),
                                                             onkeydown: move |e| e.stop_propagation(),
                                                             {
@@ -1618,7 +1599,7 @@ pub fn AdminIndex() -> Element {
                                                                 rsx! {
                                                                     input {
                                                                         r#type: "checkbox",
-                                                                        style: "width:1rem;height:1rem;cursor:pointer",
+                                                                        class: "admin-checkbox",
                                                                         checked: vip,
                                                                         disabled: is_saving,
                                                                         oninput: move |e| set_vip(uid3.clone(), e.value() == "true"),
@@ -1627,11 +1608,11 @@ pub fn AdminIndex() -> Element {
                                                             }
                                                         }
                                                     }
-                                                    td { style: "padding:0.75rem 1rem",
-                                                        div { class: "row", style: "gap:0.25rem;flex-wrap:wrap",
+                                                    td { class: "admin-cell",
+                                                        div { class: "row admin-tight admin-wrap-all",
                                                             for cap in caps.iter() {
                                                                 span {
-                                                                    style: "border:1px solid var(--border-app);padding:0.125rem 0.5rem;font-size: var(--fs-2xs);color:var(--text-secondary)",
+                                                                    class: "admin-tag-box",
                                                                     {cap.clone()}
                                                                 }
                                                             }
@@ -1659,20 +1640,19 @@ pub fn AdminIndex() -> Element {
             }
 
             AdminPanel::Create if mobile_ro => rsx! {
-                div { class: "muted", style: "padding:1rem;font-size: var(--fs-sm)",
+                div { class: "muted admin-panel",
                     "Creating discount codes requires a desktop viewport."
                 }
             },
             AdminPanel::Create => rsx! {
                 form {
-                    style: "display:grid;gap:0.75rem;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));align-items:end;overflow-y:auto;padding:0.5rem",
+                    class: "admin-grid-160-scroll",
                     onsubmit: create_code,
 
-                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted admin-label",
                         "Code"
                         input {
-                            class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);font-family:monospace;text-transform:uppercase",
+                            class: "app-input admin-upper",
                             r#type: "text",
                             placeholder: "LAUNCH50",
                             minlength: "3",
@@ -1682,11 +1662,10 @@ pub fn AdminIndex() -> Element {
                             oninput: move |e| f_code.set(e.value()),
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted admin-label",
                         "Name"
                         input {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                             r#type: "text",
                             placeholder: "Launch promo",
                             minlength: "2",
@@ -1696,23 +1675,21 @@ pub fn AdminIndex() -> Element {
                             oninput: move |e| f_name.set(e.value()),
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted admin-label",
                         "Amount type"
                         select {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                             value: "{f_amount_type}",
                             oninput: move |e| f_amount_type.set(e.value()),
                             option { value: "PERCENT", "Percent" }
                             option { value: "FIXED", "Fixed" }
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted admin-label",
                         "Amount"
-                        div { class: "row", style: "gap:0.25rem;align-items:center",
+                        div { class: "row admin-inline-tight",
                             input {
-                                class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);flex:1",
+                                class: "app-input admin-grow-min0",
                                 r#type: "number",
                                 min: "1",
                                 step: "1",
@@ -1723,26 +1700,25 @@ pub fn AdminIndex() -> Element {
                                     f_amount_err.set(String::new());
                                 },
                             }
-                            span { class: "muted", style: "font-size: var(--fs-xs);white-space:nowrap",
+                            span { class: "muted admin-note admin-nowrap",
                                 if f_amount_type.read().as_str() == "PERCENT" { "%" } else { "USD" }
                             }
                         }
                         if !f_amount_err.read().is_empty() {
-                            span { class: "error", style: "font-size:var(--fs-2xs);text-transform:none",
+                            span { class: "error admin-tag-plain",
                                 {f_amount_err.read().clone()}
                             }
                         }
                         if f_amount_type.read().as_str() == "FIXED" {
-                            span { class: "muted", style: "font-size: var(--fs-2xs);text-transform:none", "Enter dollars (e.g. 10 = $10.00)" }
+                            span { class: "muted admin-tag-plain", "Enter dollars (e.g. 10 = $10.00)" }
                         } else {
-                            span { class: "muted", style: "font-size: var(--fs-2xs);text-transform:none", "1–100" }
+                            span { class: "muted admin-tag-plain", "1–100" }
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted admin-label",
                         "Duration"
                         select {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                             value: "{f_duration}",
                             oninput: move |e| f_duration.set(e.value()),
                             option { value: "ONCE", "Once (first payment only)" }
@@ -1751,11 +1727,10 @@ pub fn AdminIndex() -> Element {
                         }
                     }
                     if f_duration.read().as_str() == "REPEATING" {
-                        label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                        label { class: "col muted admin-label",
                             "Duration in months"
                             input {
                                 class: "app-input",
-                                style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                                 r#type: "number",
                                 min: "1",
                                 step: "1",
@@ -1765,11 +1740,10 @@ pub fn AdminIndex() -> Element {
                             }
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted admin-label",
                         "Max redemptions"
                         input {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                             r#type: "number",
                             min: "1",
                             step: "1",
@@ -1778,34 +1752,32 @@ pub fn AdminIndex() -> Element {
                             oninput: move |e| f_max_redemptions.set(e.value()),
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted admin-label",
                         "Expires at"
                         input {
                             class: "app-input",
-                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                             r#type: "date",
                             value: "{f_expires_at}",
                             oninput: move |e| f_expires_at.set(e.value()),
                         }
                     }
-                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                    label { class: "col muted admin-label",
                         "Test mode"
-                        div { class: "row", style: "gap:0.5rem;align-items:center;padding:0.5rem 0",
+                        div { class: "row admin-inline",
                             input {
                                 r#type: "checkbox",
-                                style: "width:1rem;height:1rem;cursor:pointer",
+                                class: "admin-checkbox",
                                 checked: *f_test_mode.read(),
                                 oninput: move |e| f_test_mode.set(e.value() == "true"),
                             }
-                            span { class: "muted", style: "font-size: var(--fs-2xs);text-transform:none",
+                            span { class: "muted admin-tag-plain",
                                 "Test-mode codes only work on test-mode checkouts."
                             }
                         }
                     }
-                    div { style: "display:flex;align-items:flex-end",
+                    div { class: "admin-flex-end",
                         button {
                             class: "app-btn app-btn-active",
-                            style: "height:38px;font-weight:bold",
                             r#type: "submit",
                             disabled: *discount_saving.read(),
                             if *discount_saving.read() { "Saving…" } else { "Create code" }
@@ -1815,19 +1787,19 @@ pub fn AdminIndex() -> Element {
             },
 
             AdminPanel::Discounts => rsx! {
-                div { class: "col", style: "gap:0.75rem;height:100%;overflow:hidden",
+                div { class: "col admin-col-fill-hidden",
                     if !discount_message.read().is_empty() {
-                        div { class: "app-card success", style: "padding:0.75rem;font-size: var(--fs-sm)",
+                        div { class: "app-card success admin-panel-tight",
                             {discount_message.read().clone()}
                         }
                     }
                     if !discount_error.read().is_empty() {
-                        div { class: "app-card error", style: "padding:0.75rem;font-size: var(--fs-sm)",
+                        div { class: "app-card error admin-panel-tight",
                             {discount_error.read().clone()}
                         }
                     }
-                    div { style: "overflow-x:auto;flex:1",
-                        table { style: "width:100%;text-align:left;font-size: var(--fs-sm);border-collapse:collapse",
+                    div { class: "admin-table-wrap",
+                        table { class: "admin-table",
                             {table_head(
                                 if mobile_ro {
                                     vec!["Code", "Name", "Amount", "Duration", "Redemptions", "Expires", "Test", "Status"]
@@ -1854,14 +1826,14 @@ pub fn AdminIndex() -> Element {
                                         let dcode_msg = dcode.clone();
 
                                         rsx! {
-                                            tr { style: "border-bottom:1px solid var(--border-app)",
-                                                td { style: "padding:0.75rem 1rem;font-family:monospace;font-weight:bold",
+                                            tr { class: "admin-b",
+                                                td { class: "admin-cell-mono",
                                                     {dcode.clone()}
                                                 }
-                                                td { class: "muted", style: "padding:0.75rem 1rem", {dname} }
-                                                td { class: "muted", style: "padding:0.75rem 1rem", {amount_str} }
-                                                td { class: "muted", style: "padding:0.75rem 1rem", {duration_str} }
-                                                td { class: "muted", style: "padding:0.75rem 1rem",
+                                                td { class: "muted admin-cell", {dname} }
+                                                td { class: "muted admin-cell", {amount_str} }
+                                                td { class: "muted admin-cell", {duration_str} }
+                                                td { class: "muted admin-cell",
                                                     {
                                                         match max_red {
                                                             Some(max) => {
@@ -1871,9 +1843,9 @@ pub fn AdminIndex() -> Element {
                                                                     0.0
                                                                 };
                                                                 rsx! {
-                                                                    div { class: "col", style: "gap:0.25rem;min-width:80px",
+                                                                    div { class: "col admin-tight-min",
                                                                         span { {format!("{times} / {max}")} }
-                                                                        div { style: "height:3px;width:100%;background:var(--bg-cell-empty)",
+                                                                        div { class: "admin-progress-track",
                                                                             div { style: format!("height:100%;width:{pct:.0}%;background:var(--pastel-yellow)") }
                                                                         }
                                                                     }
@@ -1885,29 +1857,28 @@ pub fn AdminIndex() -> Element {
                                                         }
                                                     }
                                                 }
-                                                td { class: "muted", style: "padding:0.75rem 1rem", {expiry_str} }
-                                                td { style: "padding:0.75rem 1rem",
+                                                td { class: "muted admin-cell", {expiry_str} }
+                                                td { class: "admin-cell",
                                                     if test_mode {
                                                         {tag_badge("mode", "Test".to_string(), Some("var(--text-secondary)"))}
                                                     } else {
-                                                        span { class: "muted", "—" }
+                                                        span { class: "muted admin-cell", "—" }
                                                     }
                                                 }
-                                                td { style: "padding:0.75rem 1rem",
+                                                td {
                                                     {status_badge(
                                                         if is_active { "Active" } else { "Inactive" }.to_string(),
                                                         if is_active { "var(--color-success)" } else { "var(--color-warning)" },
                                                     )}
                                                 }
                                                 if !mobile_ro {
-                                                    td { style: "padding:0.75rem 1rem",
+                                                    td { class: "admin-cell",
                                                         {
                                                             let is_busy = saving_ids.read().contains(&did);
                                                             rsx! {
-                                                                div { class: "row", style: "gap:0.5rem",
+                                                                div { class: "row admin-gap",
                                                                     button {
                                                                         class: "app-btn",
-                                                                        style: "font-size: var(--fs-md);padding:0.25rem 0.5rem",
                                                                         disabled: is_busy,
                                                                         onclick: move |_| {
                                                                             let id = did_active.clone();
@@ -1935,7 +1906,6 @@ pub fn AdminIndex() -> Element {
                                                                     }
                                                                     button {
                                                                         class: "app-btn error",
-                                                                        style: "font-size: var(--fs-md);padding:0.25rem 0.5rem",
                                                                         disabled: is_busy,
                                                                         onclick: move |_| pending_delete.set(Some(d_for_delete.clone())),
                                                                         "Delete"
@@ -1979,7 +1949,8 @@ pub fn AdminIndex() -> Element {
         });
 
     rsx! {
-        div { class: "col", style: "height:100%",
+        style { {ADMIN_CSS} }
+        div { class: "col admin-full",
             if mobile_ro {
                 {mobile_banner()}
             }
@@ -2010,42 +1981,41 @@ pub fn AdminIndex() -> Element {
                     Drawer {
                         title: "User details".to_string(),
                         on_close: move |_| selected_id.set(None),
-                        div { class: "col", style: "gap:1.25rem",
+                        div { class: "col admin-gap-125",
                             // ── identity ───────────────────────────────────────
-                            div { class: "row", style: "gap:0.75rem;align-items:center",
+                            div { class: "row admin-inline",
                                 Identicon { seed: uid.clone(), size: 48 }
-                                div { class: "col", style: "gap:0.25rem;min-width:0",
-                                    div { style: "font-weight:600", {display_name} }
-                                    div { class: "muted", style: "font-size: var(--fs-xs);overflow-wrap:anywhere", {email_text} }
-                                    div { class: "row", style: "gap:0.5rem;align-items:center",
+                                div { class: "col admin-tight-min0",
+                                    div { class: "admin-bold",  {display_name} }
+                                    div { class: "muted admin-note admin-anywhere", {email_text} }
+                                    div { class: "row admin-inline",
                                         {verified_badge(verified)}
-                                        span { class: "muted", style: "font-size: var(--fs-xs)", {username_text} }
+                                        span { class: "muted admin-note", {username_text} }
                                     }
                                 }
                             }
                             // ── role + vip (read-only values on mobile) ────────
                             if mobile_ro {
-                                div { class: "col", style: "gap:0.25rem",
-                                    span { class: "muted", style: "font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em", "Role" }
+                                div { class: "col admin-tight",
+                                    span { class: "muted admin-label", "Role" }
                                     {tag_badge("role", user_role.clone(), Some(role_accent(&user_role)))}
                                 }
-                                div { class: "col", style: "gap:0.25rem",
-                                    span { class: "muted", style: "font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em", "VIP pass" }
-                                    span { style: "font-size: var(--fs-sm)", if u.vip_pass { "Yes" } else { "No" } }
+                                div { class: "col admin-tight",
+                                    span { class: "muted admin-label", "VIP pass" }
+                                    span { class: "admin-text",  if u.vip_pass { "Yes" } else { "No" } }
                                 }
-                                div { class: "col", style: "gap:0.25rem",
-                                    span { class: "muted", style: "font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em", "Joined" }
-                                    span { style: "font-size: var(--fs-sm)", {joined_text.clone()} }
+                                div { class: "col admin-tight",
+                                    span { class: "muted admin-label", "Joined" }
+                                    span { class: "admin-text",  {joined_text.clone()} }
                                 }
-                                div { class: "muted", style: "font-size: var(--fs-xs);border-top:1px solid var(--border-app);padding-top:1rem",
+                                div { class: "muted admin-note-b",
                                     "Editing requires a desktop viewport."
                                 }
                             } else {
-                                label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                                label { class: "col muted admin-label",
                                     "Role"
                                     select {
                                         class: "app-input",
-                                        style: "padding:0.5rem 0.75rem;font-size: var(--fs-md)",
                                         disabled: role_saving,
                                         value: "{user_role}",
                                         oninput: move |e| set_role(uid_role.clone(), e.value()),
@@ -2054,42 +2024,39 @@ pub fn AdminIndex() -> Element {
                                         }
                                     }
                                 }
-                                label { class: "row", style: "gap:0.5rem;align-items:center;cursor:pointer",
+                                label { class: "row admin-inline-btn",
                                     input {
                                         r#type: "checkbox",
-                                        style: "width:1rem;height:1rem;cursor:pointer",
+                                        class: "admin-checkbox",
                                         checked: u.vip_pass,
                                         disabled: vip_saving,
                                         oninput: move |e| set_vip(uid_vip.clone(), e.value() == "true"),
                                     }
-                                    span { style: "font-size: var(--fs-sm)", "VIP pass" }
+                                    span { class: "admin-text",  "VIP pass" }
                                 }
                             }
                             // ── set password (desktop only) ────────────────────
                             if !mobile_ro {
                                 form {
-                                    class: "col",
-                                    style: "gap:0.75rem;border-top:1px solid var(--border-app);padding-top:1rem",
+                                    class: "col admin-foot-row",
                                     onsubmit: move |_| submit_password(uid_pw.clone()),
-                                    span { class: "muted", style: "font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em;font-family:monospace",
+                                    span { class: "muted admin-tag",
                                         "Set password"
                                     }
-                                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                                    label { class: "col muted admin-label",
                                         "New password"
                                         input {
                                             class: "app-input",
-                                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                                             r#type: "password",
                                             autocomplete: "new-password",
                                             value: "{pw}",
                                             oninput: move |e| pw.set(e.value()),
                                         }
                                     }
-                                    label { class: "col muted", style: "gap:0.25rem;font-size: var(--fs-xs);text-transform:uppercase;letter-spacing:0.05em",
+                                    label { class: "col muted admin-label",
                                         "Confirm password"
                                         input {
                                             class: "app-input",
-                                            style: "padding:0.5rem 0.75rem;font-size: var(--fs-md);text-transform:none",
                                             r#type: "password",
                                             autocomplete: "new-password",
                                             value: "{pw_confirm}",
@@ -2097,13 +2064,12 @@ pub fn AdminIndex() -> Element {
                                         }
                                     }
                                     if !pw_error.read().is_empty() {
-                                        div { class: "app-card error", style: "padding:0.5rem 0.75rem;font-size: var(--fs-xs)",
+                                        div { class: "app-card error admin-cell-sm",
                                             {pw_error.read().clone()}
                                         }
                                     }
                                     button {
                                         class: "app-btn app-btn-active",
-                                        style: "height:38px;font-weight:bold",
                                         r#type: "submit",
                                         disabled: *saving_pw.read(),
                                         if *saving_pw.read() { "Saving…" } else { "Set password" }
@@ -2154,3 +2120,93 @@ pub fn AdminIndex() -> Element {
         }
     }
 }
+
+/// ── Admin atoms ────────────────────────────────────────────────────────────
+/// One idiom per role. This page carried 190 inline `style` attributes across
+/// 104 exception patterns for what the rest of the app expresses with atoms
+/// (`.app-btn` / `.app-input` / `.app-card` plus the classes below). The same
+/// house world as everywhere else: square corners, hairline borders, mono
+/// uppercase micro-labels, tokens only.
+pub const ADMIN_CSS: &str = r#"
+.admin-body { display: flex; flex-direction: column; gap: 1.25rem; height: 100%; overflow-y: auto; padding: 1rem 1.25rem; }
+.admin-scroll { display: flex; flex-direction: column; padding: 1rem; height: 100%; overflow-y: auto; }
+.admin-fill { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.admin-full { height: 100%; }
+.admin-head { display: flex; flex-direction: column; gap: .375rem; }
+.admin-head-b { display: flex; flex-direction: column; gap: .375rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-app); }
+.admin-title { margin: 0; font-size: 1.125rem; font-weight: 700; letter-spacing: .05em; }
+.admin-sub { margin: 0; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.6; max-width: 68ch; }
+.admin-section-title { margin: 0; font-size: var(--fs-md); font-weight: 700; font-family: var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
+/* The workhorse label: mono uppercase micro, the 16x-repeated idiom. */
+.admin-label { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
+.admin-field { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.admin-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .75rem; }
+.admin-tight { gap: .25rem; }
+.admin-tight-min0 { gap: .25rem; min-width: 0; }
+.admin-tight-min { gap: .25rem; min-width: 80px; }
+.admin-gap { gap: .5rem; }
+.admin-gap-lg { gap: 1rem; }
+.admin-gap-125 { gap: 1.25rem; }
+.admin-micro-gap { gap: .125rem; }
+.admin-wrap-all { flex-wrap: wrap; }
+.admin-row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.admin-row-between { display: flex; justify-content: space-between; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.admin-inline { display: flex; align-items: center; gap: .5rem; }
+.admin-inline-tight { display: flex; align-items: center; gap: .25rem; }
+.admin-inline-btn { display: flex; align-items: center; gap: .5rem; cursor: pointer; }
+.admin-flex-end { display: flex; align-items: flex-end; }
+.admin-col-fill { display: flex; flex-direction: column; gap: .75rem; height: 100%; }
+.admin-col-fill-hidden { display: flex; flex-direction: column; gap: .75rem; height: 100%; overflow: hidden; }
+.admin-bar { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: 1rem; border-bottom: 1px solid var(--border-app); }
+.admin-cell { padding: .75rem 1rem; }
+.admin-cell-b { padding: .75rem 1rem; border-bottom: 1px solid var(--border-app); }
+.admin-cell-t { padding: .75rem 1rem; border-top: 1px solid var(--border-app); }
+.admin-cell-sm { padding: .5rem .75rem; font-size: var(--fs-xs); }
+.admin-cell-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; padding: .75rem 1rem; border-bottom: 1px solid var(--border-app); }
+.admin-cell-mono { padding: .75rem 1rem; font-family: var(--mono); font-weight: 700; }
+.admin-row-b { padding: .5rem 1rem; font-size: var(--fs-xs); border-bottom: 1px solid var(--border-app); }
+.admin-row-btn { display: flex; width: 100%; gap: .75rem; align-items: center; padding: .625rem 1rem; border: none; border-bottom: 1px solid var(--border-app); background: transparent; color: inherit; text-align: left; cursor: pointer; font-size: var(--fs-sm); }
+.admin-row-link { padding: .75rem 1rem; font-size: var(--fs-xs); font-weight: 600; font-family: var(--mono); text-transform: uppercase; letter-spacing: .05em; cursor: pointer; border-bottom: 1px solid var(--border-app); }
+.admin-clickable { border-bottom: 1px solid var(--border-app); cursor: pointer; }
+.admin-b { border-bottom: 1px solid var(--border-app); }
+.admin-table-wrap { overflow-x: auto; flex: 1; min-height: 0; }
+.admin-table { width: 100%; text-align: left; font-size: var(--fs-sm); border-collapse: collapse; }
+.admin-table th { padding: .5rem .75rem; font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-family: var(--mono); color: var(--text-secondary); text-align: left; border-bottom: 1px solid var(--border-app); white-space: nowrap; }
+.admin-table td { padding: .75rem 1rem; border-bottom: 1px solid var(--border-app); vertical-align: middle; }
+.admin-table tbody tr:last-child td { border-bottom: none; }
+.admin-nowrap { white-space: nowrap; }
+.admin-right { text-align: right; }
+.admin-mono { font-family: var(--mono); }
+.admin-upper { font-family: var(--mono); text-transform: uppercase; }
+.admin-ellipsis { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-anywhere { overflow-wrap: anywhere; }
+.admin-grow { flex: 1; min-width: 160px; }
+.admin-grow-lg { flex: 1 1 200px; min-width: 200px; }
+.admin-grow-topic { flex: 1; min-width: 280px; }
+.admin-grow-min0 { flex: 1; min-width: 0; }
+.admin-input-full { width: 100%; }
+.admin-checkbox { width: 1rem; height: 1rem; cursor: pointer; }
+.admin-panel { padding: 1rem; font-size: var(--fs-sm); }
+.admin-panel-tight { padding: .75rem; font-size: var(--fs-sm); }
+.admin-panel-ok { padding: 1rem; font-size: var(--fs-sm); border-color: var(--color-success); }
+.admin-empty { display: flex; flex-direction: column; align-items: center; gap: .5rem; padding: 2rem 1rem; text-align: center; font-size: var(--fs-sm); color: var(--text-secondary); }
+.admin-actions { display: flex; align-items: center; gap: .25rem; flex-wrap: wrap; }
+.admin-tag { font-family: var(--mono); font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.admin-tag-box { font-family: var(--mono); font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; border: 1px solid var(--border-app); padding: .125rem .5rem; white-space: nowrap; color: var(--text-secondary); }
+.admin-tag-plain { font-size: var(--fs-2xs); }
+.admin-strong { font-size: var(--fs-sm); font-weight: 600; }
+.admin-bold { font-weight: 700; }
+.admin-med { font-weight: 500; }
+.admin-note { font-size: var(--fs-xs); color: var(--text-secondary); }
+.admin-note-b { font-size: var(--fs-xs); color: var(--text-secondary); border-top: 1px solid var(--border-app); padding-top: 1rem; }
+.admin-foot { display: flex; gap: 1.5rem; padding: 1rem; border-top: 1px solid var(--border-app); }
+.admin-foot-row { display: flex; gap: .75rem; border-top: 1px solid var(--border-app); padding-top: 1rem; }
+.admin-grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.admin-grid-160 { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: end; }
+.admin-grid-160-scroll { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: end; overflow-y: auto; padding: .5rem; }
+.admin-grid-90 { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
+.admin-progress-track { height: 3px; width: 100%; background: var(--bg-cell-empty); }
+.admin-bordered { border: 1px solid var(--border-app); }
+.admin-pad-row { display: flex; gap: .75rem; padding: 1rem; }
+.admin-ml { margin-left: .5rem; }
+"#;

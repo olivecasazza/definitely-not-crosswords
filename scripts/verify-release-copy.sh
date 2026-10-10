@@ -102,11 +102,13 @@ index="$(curl -fsS --max-time 30 "$BASE_URL/")" || {
   echo "::error::GET $BASE_URL/ failed" >&2
   exit 1
 }
-# Hex-hash only, and never the first match blindly: the served index.html
-# carries a literal "/_assets/<64-hex>/crossword-web.js" inside the boot-card
-# comment (client/flake.nix's BOOT CSS note), and an unanchored first-match
-# grep fetched that placeholder and 404'd on every run.
-glue="$(printf '%s' "$index" | grep -o '/_assets/[0-9a-f]\{16,\}/crossword-web\.js' | head -1 || true)"
+# Any hash EXCEPT the literal "<64-hex>" placeholder: the served index.html
+# carries that placeholder inside the boot-card comment (client/flake.nix's BOOT
+# CSS note), and an unanchored first-match grep fetched it and 404'd on every
+# run. `[^"<>]+` still matches a hex hash and the guard suite's synthetic
+# `/_assets/deadbeef/` (a hex-only pattern silently dropped the guard's stub and
+# this suite went red on otherwise-green runs).
+glue="$(printf '%s' "$index" | grep -o '/_assets/[^"<>]\{1,\}/crossword-web\.js' | head -1 || true)"
 if [ -z "$glue" ]; then
   echo "::error::no /_assets/*/crossword-web.js in $BASE_URL/ — the bundle layout changed; update this script" >&2
   exit 1

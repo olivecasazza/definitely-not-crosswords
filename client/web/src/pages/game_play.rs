@@ -240,27 +240,37 @@ async fn commit_actions(
 
     // Adopt the server's verdicts in place of the optimistic placeholder
     // batch, so the grid colours from what the server actually decided.
+    //
+    // Only a GUESS adopts those verdicts. A placeholder save (unselect /
+    // direction-toggle / Escape) must keep its letters yellow: the server
+    // derives a verdict from the letter either way (DEF-243), so reconciling a
+    // correct partial word would flip it green the instant the reply lands and
+    // hide the placeholder the save exists to show — which is exactly the
+    // transient `.cw-placeholder` the demo tour races. The authoritative
+    // verdict still arrives moments later via the `GameActionsAdded` broadcast.
     let mut from_reply: HashMap<(i32, i32), bool> = HashMap::new();
-    if let Some(returned) = res.get("actions").and_then(|v| v.as_array()) {
-        let reconciled: Vec<GameAction> = returned
-            .iter()
-            .filter_map(|a| serde_json::from_value::<GameAction>(a.clone()).ok())
-            .collect();
-        for a in &reconciled {
-            from_reply.insert(
-                (a.cord_x, a.cord_y),
-                a.action_type == ActionType::CorrectGuess,
-            );
-        }
-        if !reconciled.is_empty() {
-            let mut merged = actions.peek().clone();
-            merged.retain(|a| {
-                !reconciled
-                    .iter()
-                    .any(|r| (r.cord_x, r.cord_y) == (a.cord_x, a.cord_y))
-            });
-            merged.extend(reconciled);
-            actions.set(merged);
+    if guess {
+        if let Some(returned) = res.get("actions").and_then(|v| v.as_array()) {
+            let reconciled: Vec<GameAction> = returned
+                .iter()
+                .filter_map(|a| serde_json::from_value::<GameAction>(a.clone()).ok())
+                .collect();
+            for a in &reconciled {
+                from_reply.insert(
+                    (a.cord_x, a.cord_y),
+                    a.action_type == ActionType::CorrectGuess,
+                );
+            }
+            if !reconciled.is_empty() {
+                let mut merged = actions.peek().clone();
+                merged.retain(|a| {
+                    !reconciled
+                        .iter()
+                        .any(|r| (r.cord_x, r.cord_y) == (a.cord_x, a.cord_y))
+                });
+                merged.extend(reconciled);
+                actions.set(merged);
+            }
         }
     }
 

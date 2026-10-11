@@ -141,6 +141,21 @@ fn direction_from_str(s: &str) -> Option<Direction> {
     }
 }
 
+fn placeholder_slots(slots: &[ActionSlot]) -> Vec<ActionSlot> {
+    let first_changed = slots.iter().position(|s| s.state != s.previous_state);
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| {
+            s.state != s.previous_state
+                || first_changed
+                    .map(|first| *i < first && !s.state.is_empty())
+                    .unwrap_or(false)
+        })
+        .map(|(_, s)| s.clone())
+        .collect()
+}
+
 /// Build the mutation input + optimistic local actions for a batch of slots.
 /// Shared by placeholder saves and guess submissions — the only difference
 /// is the action type stamped on each letter.
@@ -435,16 +450,20 @@ impl panel_kit::PanelKind for PanelId {
 /// saved layout exists (fresh profile / incognito / CI) — panel-kit persists
 /// to localStorage and re-scales floating geometry on window resize. Fixed
 /// pixel defaults only ever fit the one canvas they were tuned on.
+fn board_panel_height(board_width: f64, viewport_height: f64, margin: f64) -> f64 {
+    const CHROME: f64 = 34.0;
+    const PLAYERS_H: f64 = 46.0;
+    (board_width + PLAYERS_H + CHROME).min(viewport_height - 2.0 * margin)
+}
+
 fn default_layout() -> Vec<panel_kit::PanelWin<PanelId>> {
     let (vw, vh) = viewport();
     const M: f64 = 16.0; // workspace margin / inter-panel gap
-    const CHROME: f64 = 34.0; // panel border + the inset title row
-    const PLAYERS_H: f64 = 46.0; // `.cw-players` strip above the board
     let left_w = (vw * 0.42).clamp(360.0, 900.0);
     // The grid is square — `.cw-board-area` centres it and caps it at the
     // smaller axis — so board height follows *width*. Taking a fraction of
     // the viewport instead just parked dead space above and below the grid.
-    let board_h = (left_w + PLAYERS_H + CHROME).min(vh - 2.0 * M);
+    let board_h = board_panel_height(left_w, vh, M);
     let mut b = panel_kit::LayoutBuilder::new();
     vec![
         b.at(PanelId::Board, M, M, left_w, board_h),
@@ -1057,12 +1076,7 @@ pub fn GamePlay(id: String) -> Element {
         // Only persist letters the player actually changed. Saving the whole
         // prefilled word would restamp every cell — including correct guesses
         // — as a placeholder, hiding them behind placeholder styling.
-        let slots: Vec<ActionSlot> = game_action_data
-            .peek()
-            .iter()
-            .filter(|s| s.state != s.previous_state)
-            .cloned()
-            .collect();
+        let slots = placeholder_slots(game_action_data.peek().as_slice());
         if slots.is_empty() {
             return;
         }
@@ -2910,6 +2924,7 @@ const GAME_CSS: &str = r#"
    fall back to the viewport, where it never binds. */
 @media (max-width: 760px) {
   .cw-board-col { height: auto; }
+  .panel-board { height: auto !important; }
   .cw-board-area { flex: none; container-type: inline-size; }
 
   /* Mobile stacks Active Clue BELOW the board, so focusing a letter input
@@ -2959,6 +2974,54 @@ mod tests {
             vec![block(), block(), cell(2, 3), cell(3, 3), cell(4, 3)],
             vec![cell(0, 4), cell(1, 4), cell(2, 4), cell(3, 4), cell(4, 4)],
         ]
+    }
+
+    #[test]
+    fn board_panel_height_is_capped_by_viewport() {
+        assert_eq!(board_panel_height(360.0, 664.0, 16.0), 440.0);
+        assert_eq!(board_panel_height(900.0, 664.0, 16.0), 632.0);
+    }
+
+    #[test]
+    fn placeholder_save_keeps_prefilled_prefix_when_later_letter_changes() {
+        let slots = vec![
+            ActionSlot {
+                cord_x: 0,
+                cord_y: 0,
+                previous_state: "A".to_string(),
+                state: "A".to_string(),
+            },
+            ActionSlot {
+                cord_x: 1,
+                cord_y: 0,
+                previous_state: String::new(),
+                state: "B".to_string(),
+            },
+            ActionSlot {
+                cord_x: 2,
+                cord_y: 0,
+                previous_state: String::new(),
+                state: String::new(),
+            },
+        ];
+
+        let saved = placeholder_slots(&slots);
+
+        assert_eq!(saved.len(), 2);
+        assert_eq!(saved[0].state, "A");
+        assert_eq!(saved[1].state, "B");
+    }
+
+    #[test]
+    fn placeholder_save_does_not_restamp_a_fully_unchanged_word() {
+        let slots = vec![ActionSlot {
+            cord_x: 0,
+            cord_y: 0,
+            previous_state: "A".to_string(),
+            state: "A".to_string(),
+        }];
+
+        assert!(placeholder_slots(&slots).is_empty());
     }
 
     #[test]

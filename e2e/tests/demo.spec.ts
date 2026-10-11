@@ -196,17 +196,19 @@ async function selectClue(page: Page, clue: AnswerClue) {
 const misspelling = (answer: string) =>
   (answer[0].toUpperCase() === "A" ? "B" : "A") + answer.slice(1);
 
-/** Click Guess and wait for the entry row to clear (correct-guess path). */
 async function submitGuess(page: Page) {
   const guess = page.getByRole("button", { name: /^guess$/i });
-  await humanClick(page, guess);
-  // Correct guesses clear the entry row — that's the scoring-path assertion.
-  // Give the mutation a beat, then retry once if a re-render ate the click.
-  await page.waitForTimeout(1500);
-  if (await page.locator(".cw-letter-input").count()) {
-    await humanClick(page, guess);
-  }
-  await expect(page.locator(".cw-letter-input")).toHaveCount(0);
+  const rows = page.locator(".cw-letter-input");
+  await Promise.all([
+    page.waitForResponse(
+      (res) =>
+        res.url().includes("activeGame.addActions") &&
+        res.request().method() === "POST",
+      { timeout: 20_000 },
+    ),
+    humanClick(page, guess),
+  ]);
+  await expect(rows).toHaveCount(0, { timeout: 20_000 });
 }
 
 /** Select a clue from the list and guess it correctly, at reading speed. */
@@ -283,7 +285,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     // (via the pre-game card). Fresh starts can be slow.
     const card = (label: string) =>
       page
-        .locator('div[style*="cursor: pointer"]')
+        .locator('[data-row="game"]')
         .and(page.locator(`[aria-label*="${label}"]`))
         .first();
     const active = card("— IN PROGRESS");
@@ -401,13 +403,16 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
       await dwell(page, 2400, 3400); // let the red sink in
 
       // Beat 3 — correct it: retype over the boxes, green cells, entry clears.
-      await humanClick(page, page.locator(".cw-letter-input").first());
-      await humanTypeLetters(page, hitClue.answer);
-      const typed = await page
-        .locator(".cw-letter-input")
-        .evaluateAll((els) =>
-          els.map((e) => (e as HTMLInputElement).value).join(""),
-        );
+      const hitInputs = page.locator(".cw-letter-input");
+      await humanClick(page, hitInputs.first());
+      for (const ch of hitClue.answer) {
+        await page.keyboard.press("Backspace");
+        await page.keyboard.type(ch.toUpperCase());
+        await page.waitForTimeout(rand(70, 210));
+      }
+      const typed = await hitInputs.evaluateAll((els) =>
+        els.map((e) => (e as HTMLInputElement).value).join(""),
+      );
       expect(typed.toUpperCase()).toBe(hitClue.answer.toUpperCase());
       await dwell(page, 300, 800);
       await submitGuess(page);

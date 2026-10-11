@@ -23,14 +23,14 @@ const CSS: &str = r#"
   background: color-mix(in srgb, var(--bg-app) 50%, transparent);
 }
 .pro-upgrade .plan-label {
-  font-size: .625rem;
+  font-size: var(--fs-2xs);
   font-family: var(--mono);
   text-transform: uppercase;
   letter-spacing: .08em;
   color: var(--text-secondary);
 }
 .pro-upgrade .plan-name {
-  font-size: .875rem;
+  font-size: var(--fs-sm);
   font-weight: 700;
 }
 .pro-upgrade .plan-name.is-pro {
@@ -39,7 +39,7 @@ const CSS: &str = r#"
 .pro-upgrade .pro-chip {
   display: inline-block;
   padding: .125rem .5rem;
-  font-size: .625rem;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   text-transform: uppercase;
   background: var(--color-success);
@@ -49,10 +49,14 @@ const CSS: &str = r#"
   width: 100%;
   padding: .75rem 1rem;
   font-weight: 600;
-  font-size: .875rem;
+  font-size: var(--fs-md);
   letter-spacing: .08em;
   text-transform: uppercase;
-  background: linear-gradient(to right, var(--pastel-yellow), color-mix(in srgb, var(--pastel-yellow) 70%, transparent));
+  /* Solid, not the old two-stop gradient: the label is --contrast-ink, and
+     the gradient's 70%-alpha end lifted the fill to #9a8348 in light mode —
+     3.7:1 under white text. Every other accent button in the app is solid
+     for exactly this reason. */
+  background: var(--pastel-yellow);
   color: var(--contrast-ink);
   border: none;
   cursor: pointer;
@@ -174,7 +178,7 @@ pub fn ProUpgrade() -> Element {
             // Header
             div { class: "col",
                 p { class: "muted",
-                    style: "margin:0; font-size: .75rem; font-family: var(--mono);",
+                    style: "margin:0; font-size: var(--fs-xs); font-family: var(--mono);",
                     "Unlock unlimited puzzle generation with Pro"
                 }
             }
@@ -194,7 +198,7 @@ pub fn ProUpgrade() -> Element {
                     div { class: "col", style: "gap: .125rem; text-align: right; align-items: flex-end;",
                         span { class: "plan-label", "Generations" }
                         span {
-                            style: "font-size: .875rem; font-family: var(--mono);",
+                            style: "font-size: var(--fs-sm); font-family: var(--mono);",
                             "{quota_str}"
                         }
                     }
@@ -218,7 +222,7 @@ pub fn ProUpgrade() -> Element {
                 }
                 if !checkout_error.read().is_empty() {
                     p { class: "error",
-                        style: "margin: 0; font-size: .6875rem; font-family: var(--mono); padding-left: .25rem;",
+                        style: "margin: 0; font-size: var(--fs-xs); font-family: var(--mono); padding-left: .25rem;",
                         "{checkout_error}"
                     }
                 }
@@ -227,7 +231,7 @@ pub fn ProUpgrade() -> Element {
             // offer does not pretend to be available.
             if !is_pro && !pro_checkout {
                 p { class: "muted",
-                    style: "margin: 0; font-size: .75rem; font-family: var(--mono);",
+                    style: "margin: 0; font-size: var(--fs-xs); font-family: var(--mono);",
                     "Pro — $10/year: unlimited generation, teams of 10. Opening soon."
                 }
             }

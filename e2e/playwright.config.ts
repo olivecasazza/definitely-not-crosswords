@@ -17,7 +17,17 @@ export default defineConfig({
   // One retry absorbs transient network/cold-start flake without hiding real
   // regressions (a real break fails both attempts).
   retries: 1,
-  reporter: [["list"], ["html", { open: "never" }]],
+  // `heal-reporter` is opt-in via E2E_HEAL=1. It only writes anything when a
+  // test FAILS, so on a green run it is a no-op — that property is what keeps
+  // the canary deterministic (see HEAL.md). The default reporter list is
+  // unchanged when the env var is unset.
+  reporter: [
+    ["list"],
+    ["html", { open: "never" }],
+    // Explicit relative path: Playwright resolves a bare "heal-reporter" as a
+    // package name and fails with MODULE_NOT_FOUND, since it is a local file.
+    ...(process.env.E2E_HEAL ? [["./heal-reporter.ts", {}]] : []),
+  ],
   use: {
     baseURL,
     // 1080p so the recording doubles as a shareable demo clip. `size` forces the

@@ -65,9 +65,9 @@ fn guest_layout() -> Vec<PanelWin<GuestPanel>> {
     const GAP: f64 = 20.0;
     let welcome_w = (vw * 0.30).clamp(380.0, 620.0);
     let start_w = (vw * 0.20).clamp(280.0, 420.0);
-    // logo + title + tagline + four feature rows; two CTAs + footnote.
+    // logo + title + tagline + four feature rows; three CTAs + footnote.
     let welcome_h = 520.0_f64.min(vh - 2.0 * GAP);
-    let start_h = 250.0_f64.min(welcome_h);
+    let start_h = 300.0_f64.min(welcome_h);
     let x0 = ((vw - welcome_w - GAP - start_w) / 2.0).max(16.0);
     let y0 = ((vh - welcome_h) / 2.0).max(16.0);
     let mut b = LayoutBuilder::new();
@@ -145,8 +145,13 @@ fn GuestHome() -> Element {
             GuestPanel::Start => rsx! {
                 div { class: "home-start",
                     p { class: "home-start-eyebrow", "Ready when you are" }
-                    Link { to: Route::Login {}, class: "app-btn app-btn-active home-cta", "Sign in" }
+                    // Today's puzzle first: it is public to watch, so the
+                    // co-op loop is one click from the front door instead of
+                    // sitting behind an account wall. Sign-in stays available
+                    // but stops being the only door.
+                    Link { to: Route::Games {}, class: "app-btn app-btn-active home-cta", "See today's puzzle" }
                     Link { to: Route::Signup {}, class: "app-btn home-cta", "Create account" }
+                    Link { to: Route::Login {}, class: "app-btn home-cta", "Sign in" }
                     p { class: "home-start-foot", "Free to play. No card required." }
                 }
             },
@@ -677,35 +682,35 @@ const HOME_CSS: &str = "
 .home-title { font-family: var(--mono, monospace); font-size: 1.4rem; font-weight: 800; margin: 0;
   letter-spacing: -.01em; color: var(--text-primary, var(--fg)); }
 .home-tagline { color: var(--text-secondary, var(--dim)); max-width: 28rem; margin: 0;
-  line-height: 1.6; font-size: .88rem; }
+  line-height: 1.6; font-size: var(--fs-sm); }
 .home-features { display: flex; flex-direction: column; gap: .65rem; margin-top: .75rem;
   width: 100%; max-width: 26rem; }
 .home-feature { display: flex; align-items: flex-start; gap: .65rem; text-align: left;
   padding: .55rem .7rem; border: 1px solid var(--border-app, var(--line2));
   background: var(--bg-card, transparent); }
-.home-feature-icon { font-size: .8rem; color: var(--pastel-yellow); line-height: 1.4;
+.home-feature-icon { font-size: var(--fs-sm); color: var(--pastel-yellow); line-height: 1.4;
   flex-shrink: 0; min-width: 1.2rem; text-align: center; }
 .home-feature-body { flex: 1; min-width: 0; }
-.home-feature-title { margin: 0; font-size: .82rem; font-weight: 700; color: var(--text-primary, var(--fg)); }
-.home-feature-desc { margin: .15rem 0 0; font-size: .72rem; color: var(--text-secondary, var(--dim));
+.home-feature-title { margin: 0; font-size: var(--fs-xs); font-weight: 700; color: var(--text-primary, var(--fg)); }
+.home-feature-desc { margin: .15rem 0 0; font-size: var(--fs-xs); color: var(--text-secondary, var(--dim));
   line-height: 1.45; }
 
 .home-start { height: 100%; display: flex; flex-direction: column; justify-content: center;
   gap: .6rem; padding: 1.75rem 1.5rem; }
-.home-start-eyebrow { margin: 0 0 .35rem; font-size: .68rem; font-weight: 700; text-transform: uppercase;
+.home-start-eyebrow { margin: 0 0 .35rem; font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase;
   letter-spacing: .08em; color: var(--text-secondary, var(--dim)); }
-.home-cta { padding: .65rem 1.1rem; font-weight: 600; text-align: center; font-size: .88rem; }
-.home-start-foot { margin: .5rem 0 0; font-size: .72rem; color: var(--text-secondary, var(--dim));
+.home-cta { padding: .65rem 1.1rem; font-weight: 600; text-align: center; font-size: var(--fs-md); }
+.home-start-foot { margin: .5rem 0 0; font-size: var(--fs-xs); color: var(--text-secondary, var(--dim));
   text-align: center; }
 
 @media (max-width: 760px) {
   .home-welcome { padding: 1.25rem 1rem; gap: .75rem; }
   .home-title { font-size: 1.2rem; }
-  .home-tagline { font-size: .82rem; }
+  .home-tagline { font-size: var(--fs-xs); }
   .home-features { gap: .5rem; margin-top: .5rem; }
   .home-feature { padding: .45rem .55rem; }
   .home-start { padding: 1.25rem 1rem; gap: .55rem; }
-  .home-cta { padding: .75rem 1rem; font-size: .9rem; }
+  .home-cta { padding: .75rem 1rem; font-size: var(--fs-md); }
 }
 ";
 

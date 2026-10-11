@@ -1,17 +1,30 @@
 # buildbot-nix per-repo configuration.
 # See https://github.com/nix-community/buildbot-nix/blob/main/docs/EFFECTS.md
 #
-# This repo is enrolled in buildbot via the GitHub App + `nixlab-ci` topic
-# (configured on the buildbot master in the casazza-hydra repo). buildbot
-# evaluates `.#checks` on every PR and reports commit status to GitHub,
-# replacing the conventional-commits / approval-check / auto-merge GHA jobs.
+# Enrollment: this repo carries the `nixlab-ci` topic, so the buildbot master
+# (buildbot.casazza.io, running on `hetzner-ci`) enrolls it and evaluates
+# `.#checks` per PR, reporting `buildbot/nix-eval` + `buildbot/nix-build`
+# commit statuses to GitHub.
 #
-# On `v*` tag pushes (cut by release-plz), the worker builds `.#dockerImage`
-# itself and the postBuildStep `push-to-gar` (defined in casazza-hydra's
-# modules/nixos/buildbot.nix) pushes the OCI archive to Google Artifact
-# Registry via skopeo. Flux's ImagePolicy then promotes the new tag to
-# staging automatically — no deploy-staging GHA workflow needed.
+# NOTE (2026-10-04, DEF-319): buildbot currently reports on repos under the
+# `casazza-info` org but on NONE under the `olivecasazza` account, this repo
+# included — the last build recorded for this repo was 2026-09-25. The
+# enrollment (project + `#checks.*` builders) and the repo webhook both exist
+# on the master, and the master and its workers are up, so this is a GitHub App
+# installation/scope gap on the `olivecasazza` account rather than a master or
+# worker outage. Do not make buildbot statuses a required check on this repo
+# until DEF-319 is resolved.
+#
+# Release images: GitHub Actions `ci.yaml` is the SOLE publisher of `v*`
+# release images. buildbot does NOT publish them. The master runs with
+# `garPush.enable = false` (see casazza-info/nixlab,
+# systems/x86_64-linux/hetzner-ci/default.nix — the "stage 2" flag), so no
+# `push-to-gar` postBuildStep and no GAR credentials are configured for any
+# repo. `ci.yaml` pushes `:v<version>` on the release-plz tag and
+# `:latest` + `:<sha>` on main; Flux's semver ImagePolicy promotes the tag to
+# staging.
 
-# Branches/refs that run postBuildSteps (the GAR push). Tag pushes matching
-# this glob trigger the release pipeline.
-effects_branches = ["v*"]
+# No postBuildSteps are configured for this repo on the current master, so
+# there is no effects branch. (Previously asserted `["v*"]` for a GAR push
+# that was never enabled — see DEF-319.)
+effects_branches = []

@@ -19,8 +19,20 @@ pub const REPORT_BUG_URL: &str = "https://github.com/olivecasazza/definitely-not
 /// the button is a real 44px box (the strip grows to match) rather than a
 /// 14px target.
 const STAGING_CSS: &str = r#"
+.staging-banner { background: var(--color-warning); color: var(--contrast-ink);
+  font-size: var(--fs-sm); line-height: 1.4; padding: 0.4rem 0.9rem;
+  display: flex; gap: 0.75rem; align-items: center; justify-content: center;
+  flex-wrap: wrap; border-bottom: 1px solid var(--contrast-ink); }
 .staging-dismiss { position: relative; background: none; border: none; color: var(--contrast-ink);
   font-weight: 700; cursor: pointer; padding: 0 .5rem; font-size: var(--fs-sm); min-height: 44px; }
+/* Mobile: the full beta-price sentence plus a 44px dismiss wrap the banner to
+   five lines (~130px) and push the play board past a phone viewport. Collapse
+   to one short warning; the price detail stays on desktop and in the BETA
+   popover (header.rs) once the banner is dismissed. */
+@media (max-width: 760px) {
+  .staging-banner { padding: 0.2rem 0.5rem; gap: 0.5rem; }
+  .staging-long, .staging-report { display: none; }
+}
 "#;
 
 #[component]
@@ -32,14 +44,16 @@ pub fn StagingBanner() -> Element {
     rsx! {
         style { {STAGING_CSS} }
         div {
-            style: "background:var(--color-warning);color:var(--contrast-ink);font-size:var(--fs-sm);line-height:1.4;\
-                    padding:0.4rem 0.9rem;display:flex;gap:0.75rem;align-items:center;\
-                    justify-content:center;flex-wrap:wrap;border-bottom:1px solid var(--contrast-ink)",
+            class: "staging-banner",
             span {
                 b { "STAGING (beta) — " }
-                "Beta price: Pro is $1 here (production is $10/year) — but this is a test environment: expect occasional data loss and unexpected changes. You're a beta tester. 🎈"
+                "test environment, data may be lost."
+            }
+            span { class: "staging-long",
+                "Beta price: Pro is $1 here (production is $10/year). You're a beta tester. 🎈"
             }
             a {
+                class: "staging-report",
                 href: REPORT_BUG_URL,
                 target: "_blank",
                 rel: "noopener",

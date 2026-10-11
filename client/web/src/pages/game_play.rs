@@ -2459,7 +2459,7 @@ fn render_players_strip(
                     };
                     rsx! {
                         span {
-                            class: "cw-chip",
+                            class: if stale { "cw-chip cw-chip-stale" } else { "cw-chip" },
                             key: "{uid}",
                             // The underline correlates the chip with that
                             // player's focus ring on the board.
@@ -2482,11 +2482,8 @@ fn render_players_strip(
                             // `description` on a nameless `generic`, which no
                             // screen reader announces. A real StaticText in the
                             // content flow is announced in browse mode instead.
-                            // Visible now, not screen-reader-only: a dashed
-                            // underline is the one cue a sighted player had, and
-                            // it does not survive a glance or a screenshot.
                             if stale {
-                                span { class: "cw-chip-tag cw-chip-stale-tag", "last seen" }
+                                span { class: "cw-sr-only", "last known position, reconnecting" }
                             }
                         }
                     }
@@ -2630,8 +2627,6 @@ const GAME_CSS: &str = r#"
    chips so "who is actually here" is answered before anything goes wrong. */
 .cw-roster-line { flex-basis: 100%; font-family: var(--font-sans); font-size: var(--fs-2xs);
   font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
-/* Stale presence as a tag, not only a dashed underline. */
-.cw-chip-stale-tag { border-style: dashed; }
 .cw-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border-app); border-bottom-width: 2px; font-size: var(--fs-xs); font-family: var(--font-sans); color: var(--text-primary); background: var(--bg-card); }
 .cw-chip-tag { font-size: var(--fs-2xs); font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); border: 1px solid var(--border-app); padding: 0 4px; }
 .cw-chip-clue { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }

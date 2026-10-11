@@ -149,8 +149,10 @@ pub fn game_list(
                         div {
                             key: "{row.id}",
                             class: "game-row",
-                            // Inline `cursor: pointer` is also the e2e specs'
-                            // row selector — keep it alongside the class.
+                            // `data-row` is the e2e specs' row selector; the
+                            // inline `cursor: pointer` is a real affordance (a
+                            // role="button" div gets no browser cursor).
+                            "data-row": "game",
                             style: "cursor: pointer;",
                             role: "button",
                             tabindex: "0",

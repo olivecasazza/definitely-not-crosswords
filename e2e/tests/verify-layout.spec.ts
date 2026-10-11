@@ -119,7 +119,7 @@ async function openGame(page: Page): Promise<string | null> {
   await expect(page.getByText("Library").first()).toBeVisible();
   const card = (label: string) =>
     page
-      .locator('div[style*="cursor: pointer"]')
+      .locator('[data-row="game"]')
       .and(page.locator(`[aria-label*="${label}"]`))
       .first();
   const active = card("— IN PROGRESS");

@@ -271,7 +271,7 @@ function boardCells(clues: Clue[]): Set<string> {
 
 async function openBoard(page: Page, minOpen: number): Promise<string> {
   const rows = () =>
-    page.locator('div[style*="cursor: pointer"]').and(page.locator('[aria-label*="— "]'));
+    page.locator('[data-row="game"]').and(page.locator('[aria-label*="— "]'));
   const openCount = async (gameId: string) =>
     (await loadOpenClues(page, await trpcGet(page, "activeGame.get", { id: gameId }))).length;
 

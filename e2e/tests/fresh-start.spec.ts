@@ -25,7 +25,7 @@ test("starting a new game does not panic", async ({ page }) => {
   await page.goto("/games");
   await expect(page.getByText("Library").first()).toBeVisible();
   const fresh = page
-    .locator('div[style*="cursor: pointer"]')
+    .locator('[data-row="game"]')
     .and(page.locator('[aria-label*="— NEW"]'))
     .first();
   try {

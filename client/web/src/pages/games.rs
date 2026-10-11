@@ -715,6 +715,7 @@ pub fn Games() -> Element {
                                         div {
                                             key: "{g.id}",
                                             class: "games-continue-card",
+                                            "data-row": "continue",
                                             style: "cursor: pointer;",
                                             role: "button",
                                             tabindex: "0",

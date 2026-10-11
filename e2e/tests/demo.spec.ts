@@ -285,7 +285,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     // (via the pre-game card). Fresh starts can be slow.
     const card = (label: string) =>
       page
-        .locator('div[style*="cursor: pointer"]')
+        .locator('[data-row="game"]')
         .and(page.locator(`[aria-label*="${label}"]`))
         .first();
     const active = card("— IN PROGRESS");

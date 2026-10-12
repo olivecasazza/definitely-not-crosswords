@@ -245,7 +245,19 @@ jobs:
               exit 1
             fi
           done
-          ./scripts/multiplayer-bot-admin.sh --apply | tee -a "$GITHUB_ENV"
+          # Only the machine-readable tail may reach the env file. The runner
+          # splits each line of $GITHUB_ENV on the FIRST `=`, so a banner like
+          # `== preflight ==` parses as an empty variable name and the step dies
+          # with "Value cannot be null. (Parameter 'name')" before the soak ever
+          # starts. `tee` (not `tee -a`) keeps the human-readable table in the
+          # job log and on disk; the grep is anchored so only whole
+          # `NAME=value` assignments are forwarded. With `-e -o pipefail` a
+          # non-zero script still fails the step, and a successful run that
+          # emitted no assignments fails too — which is correct, since the soak
+          # cannot pick a game without them.
+          ./scripts/multiplayer-bot-admin.sh --apply \
+            | tee multiplayer-bot-admin.log \
+            | grep -E '^[A-Za-z_][A-Za-z0-9_]*=' >> "$GITHUB_ENV"
       - name: Install deps
         working-directory: e2e
         run: npm ci
@@ -334,6 +346,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+      # Take ownership of the checkout before nix reads it. `container:` runs
+      # this job as root but bind-mounts the workspace from the host, so the
+      # tree belongs to the host runner's uid. Nix resolves `./client#…` — a
+      # path that sits inside a git repo — as a `git+file://…?shallow=1` flake
+      # input and opens it with libgit2, which refuses a repo it does not own:
+      #   error: opening Git repository "/__w/…": repository path '/__w/…' is
+      #   not owned by current user (libgit2 error code = 7)
+      # `actions/checkout`'s `set-safe-directory: true` cannot help: that is
+      # git-CLI config written to a temporary HOME, and the check that fails is
+      # libgit2's own owner validation. `$(id -u)`/`$(id -g)` rather than a
+      # literal `root` so this stays correct if the image ever drops privileges.
+      - name: Take ownership of the checkout
+        run: chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
       - name: Cache Nix store
@@ -565,16 +590,20 @@ jobs:
           phone=$(find results -path '*phone*' -name '*.webm' | head -1)
           # yuv420p is load-bearing for Safari/Discord/Slack playback.
           if [ -n "$phone" ]; then
-            # Split-screen dock: the main recording scaled onto a dark 1920x1080
-            # canvas (the app's own bg color) at the left, and the second
-            # player's phone docked at the right — nothing gets covered.
+            # Split-screen dock: main recording on the left, phone on the
+            # right. A full-timeline visual review found both clips open on a
+            # blank white browser surface for their first ~1s; trim that exact
+            # lead-in from BOTH inputs so sync is preserved and the published
+            # demo begins on the app, not a browser boot flash.
             # Output length follows the main recording; the phone freezes on
             # its last frame if its clip ends first.
             ffmpeg -y -i "$v" -i "$phone" -filter_complex \
-              "[0:v]scale=1450:-2,pad=1920:1080:20:-1:color=0x121212[canvas];[1:v]scale=410:-2[phone];[canvas][phone]overlay=W-w-20:(H-h)/2:eof_action=repeat" \
-              -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+              "[0:v]trim=start=1,setpts=PTS-STARTPTS,scale=1450:-2,pad=1920:1080:20:-1:color=0x121212[canvas];[1:v]trim=start=1,setpts=PTS-STARTPTS,scale=410:-2[phone];[canvas][phone]overlay=W-w-20:(H-h)/2:eof_action=repeat,crop=1920:1080[out]" \
+              -map "[out]" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
           else
-            ffmpeg -y -i "$v" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+            # Same 1s browser-boot trim for the single-stream fallback.
+            ffmpeg -y -i "$v" -vf "trim=start=1,setpts=PTS-STARTPTS" \
+              -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
           fi
           echo "MP4=1" >> "$GITHUB_ENV"
       - name: Publish demo.mp4

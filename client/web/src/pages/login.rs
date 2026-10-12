@@ -261,14 +261,21 @@ pub fn Login() -> Element {
                         id: "email",
                         class: "app-input auth-field",
                         r#type: "email",
+                        // 1.3.5 Identify Input Purpose (AA): without these the
+                        // password manager cannot fill the sign-in form at all.
+                        autocomplete: "username",
+                        aria_invalid: *email_touched.read() && !email_error.is_empty(),
+                        aria_describedby: "email-hint",
                         placeholder: "you@example.com",
                         value: "{email}",
                         oninput: move |e| email.clone().set(e.value()),
                         onblur: move |_| email_touched.clone().set(true),
                     }
-                    if *email_touched.read() && !email_error.is_empty() {
-                        p { class: "error auth-hint", "{email_error}" }
-                    }
+                    // Always in the DOM so aria-describedby has a target; the
+                    // text is empty until the field is touched and invalid, and
+                    // an empty description is not announced.
+                    p { id: "email-hint", class: "error auth-hint",
+                        if *email_touched.read() { "{email_error}" } }
                 }
 
                 // Password field
@@ -278,14 +285,16 @@ pub fn Login() -> Element {
                         id: "password",
                         class: "app-input auth-field",
                         r#type: "password",
+                        autocomplete: "current-password",
+                        aria_invalid: *password_touched.read() && !password_error.is_empty(),
+                        aria_describedby: "password-hint",
                         placeholder: "••••••••",
                         value: "{password}",
                         oninput: move |e| password.clone().set(e.value()),
                         onblur: move |_| password_touched.clone().set(true),
                     }
-                    if *password_touched.read() && !password_error.is_empty() {
-                        p { class: "error auth-hint", "{password_error}" }
-                    }
+                    p { id: "password-hint", class: "error auth-hint",
+                        if *password_touched.read() { "{password_error}" } }
                 }
 
                 // Submit

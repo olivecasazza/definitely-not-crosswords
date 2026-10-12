@@ -285,7 +285,7 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     // (via the pre-game card). Fresh starts can be slow.
     const card = (label: string) =>
       page
-        .locator('div[style*="cursor: pointer"]')
+        .locator('[data-row="game"]')
         .and(page.locator(`[aria-label*="${label}"]`))
         .first();
     const active = card("— IN PROGRESS");
@@ -384,9 +384,12 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
         skip + Math.min(2, placeholderClue.answer.length - 1 - skip),
       );
       await selectClue(page, placeholderClue);
-      if (skip > 0) {
-        await humanClick(page, page.locator(".cw-letter-input").nth(skip));
-      }
+      // Focus the exact cell the beat types into. When the resumed word has no
+      // prefilled prefix (skip === 0) the editor's auto-focus can race the
+      // render, so the keystrokes below land nowhere and the placeholder save
+      // is a no-op — the `.cw-placeholder` assertion then times out. Click the
+      // target cell unconditionally instead of only when skip > 0.
+      await humanClick(page, page.locator(".cw-letter-input").nth(skip));
       if (partial.length) await humanTypeLetters(page, partial);
       await dwell(page, 500, 900);
       await humanClick(page, page.locator(".cw-link-btn")); // "ESC to clear"

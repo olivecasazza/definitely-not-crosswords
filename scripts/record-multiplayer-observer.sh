@@ -107,23 +107,17 @@ while IFS= read -r line; do
   esac
 done < "$SECRETS_FILE"
 
-# ── Pick a game with room to play, and put all four players in it ────────────
-echo "observer: reconciling accounts and choosing a game on $BASE_URL"
-"$REPO_ROOT/scripts/multiplayer-bot-admin.sh" --apply --base-url "$BASE_URL" \
-  ${ALLOW_PROD:+$([[ $ALLOW_PROD == 1 ]] && echo --allow-production)} > "$SECRETS_FILE.bot" 2>&1 || {
-    echo "ABORT: the admin bot could not provision the four players:" >&2
-    tail -20 "$SECRETS_FILE.bot" >&2
-    rm -f "$SECRETS_FILE.bot"
-    exit 1
-  }
-ACTIVE_GAME_ID="$(sed -n 's/^ACTIVE_GAME_ID=//p' "$SECRETS_FILE.bot" | tail -1)"
-OPEN_CELLS="$(sed -n 's/^OPEN_CELLS=//p' "$SECRETS_FILE.bot" | tail -1)"
-grep -E 'cells correct|activeGameId|open cells' "$SECRETS_FILE.bot" | sed 's/^/observer: /' || true
-rm -f "$SECRETS_FILE.bot"
-if [[ -z "$ACTIVE_GAME_ID" ]]; then
-  echo "ABORT: the admin bot did not report an ACTIVE_GAME_ID." >&2
-  exit 1
-fi
+# ── Fresh game ownership lives in the spec ───────────────────────────────────
+# The recorder used to run multiplayer-bot-admin and pin its ACTIVE_GAME_ID.
+# The bot intentionally prefers an existing in-progress game, so recordings
+# began on partially-played boards (one failed run started 22/167 correct) and
+# bypassed the soak's verified fresh-game setup.
+#
+# The spec now owns the complete lifecycle: provision accounts, abandon stale
+# attempts, start a 100%-open game, join all players concurrently, complete it,
+# and abandon on failure. The recorder should supply credentials and observe —
+# not create a competing game lifecycle.
+echo "observer: the soak will provision and start a fresh game after sign-in"
 
 # ── Record ───────────────────────────────────────────────────────────────────
 mkdir -p "$OUT_DIR"
@@ -137,7 +131,7 @@ docker_bin="${DOCKER:-docker}"
 "$docker_bin" run --rm --network host \
   -v "$REPO_ROOT/e2e:/work" -v "$RAW_DIR:/out" \
   -w /work -u "$(id -u):$(id -g)" -e HOME=/tmp \
-  -e E2E_RECORD=1 -e E2E_BASE_URL="$BASE_URL" -e ACTIVE_GAME_ID="$ACTIVE_GAME_ID" \
+  -e E2E_RECORD=1 -e E2E_BASE_URL="$BASE_URL" \
   -e E2E_EMAIL -e E2E_PASSWORD -e E2E_EMAIL_2 -e E2E_PASSWORD_2 \
   -e E2E_EMAIL_3 -e E2E_PASSWORD_3 -e E2E_EMAIL_4 -e E2E_PASSWORD_4 \
   mcr.microsoft.com/playwright:v1.61.0-noble \
@@ -204,4 +198,3 @@ if [[ "$KEEP_RAW" == 1 ]]; then
 else
   echo "observer: pass --keep-raw to retain the individual clips"
 fi
-[[ -n "$OPEN_CELLS" ]] && echo "observer: game had $OPEN_CELLS open cells at start"

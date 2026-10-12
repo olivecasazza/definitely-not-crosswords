@@ -537,6 +537,7 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .await
     .map_err(|e| sanitised_db_error("load the user", &e))?;
     let name: String = name_row.get("name");
+    let sequence = chrono::Utc::now().timestamp_millis();
 
     ctx.events.publish(crossword_db::AppEvent::GamePresence {
         active_game_id: id.to_string(),
@@ -544,6 +545,7 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         name,
         number,
         direction,
+        sequence,
     });
     Ok(json!({ "ok": true }))
 }
@@ -910,8 +912,6 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // Under the lock the losers block, then find the ActiveGame already gone
     // and are refused, so exactly one call can win.
     let mut tx = begin_game_write(ctx, active_game_id).await?;
-
-
 
     // Membership check: only a member of the active game may complete it
     // (this is destructive — it deletes the ActiveGame and cascades GameActions).

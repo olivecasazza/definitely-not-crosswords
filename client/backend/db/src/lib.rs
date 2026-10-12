@@ -132,6 +132,8 @@ pub enum AppEvent {
         name: String,
         number: Option<i32>,
         direction: Option<String>,
+        #[serde(default)]
+        sequence: i64,
     },
     GenerationProgress {
         event: GenerationEvent,

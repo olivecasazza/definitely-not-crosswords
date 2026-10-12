@@ -101,7 +101,13 @@ if [ -z "$PUSHGATEWAY_URL" ]; then
   exit 2
 fi
 
-JOB="${JOB:-definitely-not-crosswords-tests}"
+# Namespaced deliberately. A pushgateway PUT REPLACES every series in the
+# job/instance group, so sharing a generic job label with another producer
+# means whichever pushes last erases the other's. This one only ever carries
+# suite="multiplayer-soak"; sharing a group with the CI suites the regression
+# dashboard reads (suite=~"e2e|unit|integration") would let the first soak to
+# push blank that dashboard.
+JOB="${JOB:-crossword-multiplayer-soak}"
 INSTANCE="${INSTANCE:-${HOSTNAME:-local}}"
 PUSH_URL="${PUSHGATEWAY_URL}/metrics/job/${JOB}/instance/${INSTANCE}"
 

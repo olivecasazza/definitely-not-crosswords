@@ -78,12 +78,13 @@ const TAB_BAR_CSS: &str = "
   .tab-bar-spacer { display: block; height: calc(3.1rem + env(safe-area-inset-bottom)); }
   .tab-bar-tab {
     flex: 1 1 0; display: flex; flex-direction: column; align-items: center;
-    gap: .15rem; padding: .45rem 0 .35rem;
+    justify-content: center;
+    gap: .15rem; padding: .45rem 0 .35rem; min-height: 44px;
     font-family: var(--mono); font-size: var(--fs-2xs); text-transform: uppercase;
     letter-spacing: .05em; color: var(--text-secondary);
     border-top: 2px solid transparent;
   }
-  .tab-bar-icon { font-size: .9rem; line-height: 1; display: inline-flex; }
+  .tab-bar-icon { font-size: var(--fs-sm); line-height: 1; display: inline-flex; }
   .tab-bar-tab-active { color: var(--pastel-yellow); border-top-color: var(--pastel-yellow); }
 }
 ";

@@ -37,5 +37,5 @@ impl Ctx {
 /// user input into it.
 pub fn sanitised_db_error(what: &str, e: &sqlx::Error) -> String {
     tracing::error!(error = %e, operation = what, "database operation failed");
-    format!("{what} failed")
+    format!("INTERNAL: {what} failed")
 }

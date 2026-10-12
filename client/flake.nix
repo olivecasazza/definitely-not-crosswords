@@ -201,38 +201,33 @@
                 --out-dir $stage --out-name crossword-web "$wasm"
               wasm-opt -Oz -o $stage/crossword-web_bg.wasm $stage/crossword-web_bg.wasm || true
 
-              # The link-preview card (DEF-190) joins the bundle BEFORE it is
-              # hashed, and that ordering is load-bearing twice over.
+              # Browser/scraper images join the bundle BEFORE it is hashed, and
+              # that ordering is load-bearing twice over.
               #
-              # 1. It has to sit under /_assets to be reachable AT ALL. The
-              #    server mounts exactly one static dir and answers every other
-              #    path with the SPA fallback (backend/server/src/main.rs:157-196),
-              #    which returns index.html as 200 text/html. A card at the dist
-              #    root therefore "succeeds" with 200 and hands the scraper HTML
-              #    instead of an image: measured on staging before this change,
-              #    GET /og-image.png answered 200 text/html, 14923 bytes. That is
-              #    worse than no tag, which is the failure this issue exists to
-              #    prevent — so the card is placed where the server actually
-              #    serves files from, not where it would be tidier.
+              # 1. They have to sit under /_assets to be reachable AS FILES. The
+              #    server serves only /_assets from the dist tree; a file-shaped
+              #    path anywhere else is rejected by the SPA fallback as a real
+              #    404 (backend/server/src/spa.rs), so a dist-root /og-image.png
+              #    or /favicon.png is not a served static file at all.
               #
-              # 2. Being inside the hash gives it the bundle's immutability
+              # 2. Being inside the hash gives them the bundle's immutability
               #    guarantee for free: bytes at a hashed URL never change, so the
               #    edge's max-age=31536000 immutable stamp (assets.rs:50-61) can
-              #    never pin a stale card, and editing the card changes the hash
-              #    and busts every URL that points at it. A stable /og-image.png
-              #    at the dist root could not have either property, and adding a
-              #    cache-busting query to it is what DEF-140/145/152 exist to
-              #    stop.
+              #    never pin stale image bytes, and editing either image changes
+              #    the hash and busts every URL that points at it. A stable root
+              #    URL could not have either property, and adding a cache-busting
+              #    query to it is what DEF-140/145/152 exist to stop.
               #
-              # Copied in as og.png (a fixed name) because the head references one
-              # file; the content addressing is the hashed directory around it.
-              # The source is a committed asset, not generated here: the build must
-              # not depend on Pillow or a font, which are not in this closure.
-              # scripts/make-og-image.py regenerates these bytes,
+              # Copied in under fixed names because the head references one file
+              # per purpose; the content addressing is the hashed directory around
+              # them. The OG source is a committed generated asset:
+              # scripts/make-og-image.py regenerates it,
               # scripts/check-og-image.sh --regen asserts the committed file is
               # exactly what it produces, and scripts/verify-og-image-build.sh
-              # runs the steps above and asserts the head advertises this path.
+              # runs the steps above and asserts the head advertises fetchable
+              # image paths.
               cp ${./web/og-image.png} $stage/og.png
+              cp ${./web/favicon.png} $stage/favicon.png
 
               # Content-address the WHOLE bundle under one immutable prefix.
               #
@@ -354,13 +349,13 @@
                     needed: the sed runs in THIS build, the __ORIGIN__ one runs when the
                     server reads the finished index.html.
 
-                    og:image is inside /_assets because that is the only prefix the server
-                    serves as files; anything else resolves to the SPA fallback and answers
-                    200 text/html (see the copy step in this buildPhase). og:image:alt is not
-                    decoration: it is the text a scraper shows when it cannot render the
-                    image at all, so it must read as the product rather than describe a file
-                    ("1200x630 PNG" is the failure mode). It repeats the tagline and the Free
-                    plan claim already made above, in that order.
+                    og:image and the favicon are inside /_assets because that is the only
+                    prefix the server serves as files; a file-shaped path anywhere else is a
+                    404 from the SPA fallback (see the copy step in this buildPhase).
+                    og:image:alt is not decoration: it is the text a scraper shows when it
+                    cannot render the image at all, so it must read as the product rather
+                    than describe a file ("1200x630 PNG" is the failure mode). It repeats
+                    the tagline and the Free plan claim already made above, in that order.
 
                     twitter:card is summary_large_image now that there is an image to fill
                     the large box. Before DEF-190 it was summary, and deliberately so: with
@@ -370,6 +365,7 @@
               <title>definitely-not-crosswords — free real-time co-op crosswords</title>
               <meta name="description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free plan: $0, unlimited solving." />
               <link rel="canonical" href="__ORIGIN__/" />
+              <link rel="icon" type="image/png" sizes="32x32" href="/_assets/__BUNDLE_HASH__/favicon.png" />
               <meta property="og:type" content="website" />
               <meta property="og:site_name" content="definitely-not-crosswords" />
               <meta property="og:title" content="definitely-not-crosswords — free real-time co-op crosswords" />

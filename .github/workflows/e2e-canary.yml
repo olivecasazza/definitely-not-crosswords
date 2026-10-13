@@ -562,6 +562,86 @@ jobs:
             -d "{\"content\":\"🚨 crosswords PRODUCTION artifact canary FAILED — blank/poisoned front door or the origin re-armed immutable-on-404 — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
             "$DISCORD" || true
 
+  publish-observer:
+    name: Record + publish the 4-player observer video
+    needs: multiplayer-soak
+    # Run on a release or a manual dispatch. `always()` overrides the skip that
+    # `needs: multiplayer-soak` would otherwise inherit on `release`, where the
+    # soak itself is deliberately skipped (a release fires before Flux rolls the
+    # new image out). The job's own recorded soak governs pass/fail.
+    if: always() && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    # Same official image the observer script uses: ships the browsers + ffmpeg.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+    permissions:
+      contents: write # upload observer.mp4 to the release
+    env:
+      E2E_BASE_URL: https://crosswords-staging.casazza.io
+      # E2E_RECORD turns on the soak's per-context video and the slower, more
+      # watchable round cadence (multiplayer-soak.spec.ts, RECORD mode).
+      E2E_RECORD: "1"
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      E2E_EMAIL_2: ${{ secrets.E2E_EMAIL_2 }}
+      E2E_PASSWORD_2: ${{ secrets.E2E_PASSWORD_2 }}
+      E2E_EMAIL_3: ${{ secrets.E2E_EMAIL_3 }}
+      E2E_PASSWORD_3: ${{ secrets.E2E_PASSWORD_3 }}
+      E2E_EMAIL_4: ${{ secrets.E2E_EMAIL_4 }}
+      E2E_PASSWORD_4: ${{ secrets.E2E_PASSWORD_4 }}
+    steps:
+      # main's specs, same reasoning as the canary/soak jobs.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Install deps
+        working-directory: e2e
+        run: npm ci
+      # The spec owns the whole lifecycle — signup (idempotent), abandon stale
+      # attempts, start a 100%-open game, join all four, play, complete — so this
+      # job supplies credentials and records, exactly like the observer script.
+      - name: Record the four-player soak
+        working-directory: e2e
+        run: npx playwright test multiplayer-soak.spec.ts --reporter=list --retries=0
+      - name: Composite the 2x2 observer video
+        shell: bash
+        run: |
+          set -euo pipefail
+          videos=()
+          for n in 1 2 3 4; do
+            v="$(find e2e/test-results -path "*video-p${n}*" -name '*.webm' | head -1)"
+            [ -n "$v" ] || { echo "::error::no recording for player ${n}"; exit 1; }
+            videos+=("$v")
+          done
+          ffmpeg -y -loglevel error \
+            -i "${videos[0]}" -i "${videos[1]}" -i "${videos[2]}" -i "${videos[3]}" \
+            -filter_complex "[0:v]scale=960:540,setsar=1[v0];[1:v]scale=960:540,setsar=1[v1];[2:v]scale=960:540,setsar=1[v2];[3:v]scale=960:540,setsar=1[v3];[v0][v1][v2][v3]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0:fill=black[v]" \
+            -map "[v]" -c:v libx264 -crf 23 -preset veryfast -pix_fmt yuv420p -movflags +faststart \
+            observer.mp4
+          ffprobe -v error -select_streams v:0 \
+            -show_entries stream=width,height,codec_name -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 observer.mp4
+      - name: Upload observer.mp4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: observer-video
+          path: observer.mp4
+          retention-days: 14
+      - name: Publish observer.mp4
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="demo-latest"
+            gh release view "$TAG" -R "${{ github.repository }}" >/dev/null 2>&1 || \
+              gh release create "$TAG" -R "${{ github.repository }}" \
+                --title "Latest e2e demo video" --notes "Auto-updated by the e2e-canary workflow." --prerelease
+          fi
+          gh release upload "$TAG" observer.mp4 --clobber -R "${{ github.repository }}"
+          echo "Observer video: $GITHUB_SERVER_URL/${{ github.repository }}/releases/download/$TAG/observer.mp4"
+
   publish-demo:
     name: Publish demo video
     needs: canary

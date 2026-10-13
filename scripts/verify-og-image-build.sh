@@ -5,11 +5,11 @@
 # derivation's builder (/nix/store/...bash-5.3p9) is absent, and clean `main`
 # fails identically, so that is a pre-existing environment fault and not
 # evidence about this change. What IS verifiable here is the buildPhase script
-# itself: that it copies the card into the bundle, that the card is covered by
-# the content hash, and that the emitted index.html carries a real og:image at
-# the same hash the bundle is served from. Those are the properties that
-# actually broke last time (DEF-163 broke the BUILD, not the runtime), so they
-# are what this exercises.
+# itself: that it copies the card and favicon into the bundle, that those images
+# are covered by the content hash, and that the emitted index.html carries real
+# image URLs at the same hash the bundle is served from. Those are the
+# properties that actually broke last time (DEF-163 broke the BUILD, not the
+# runtime), so they are what this exercises.
 #
 # The stub stands in for the wasm-bindgen output: the script only ever stats
 # and hashes $stage, and the guards it runs are read from the real file, so a
@@ -21,6 +21,7 @@ REPO="$(pwd)"
 
 out="$(mktemp -d)"
 stage_src="$REPO/client/web/og-image.png"
+favicon_src="$REPO/client/web/favicon.png"
 trap 'rm -rf "$out"' EXIT
 
 fail=0
@@ -38,13 +39,14 @@ echo "/* glue */" > "$stage/snippets/abc123/inline.js"
 echo '\0asm fake' > "$stage/crossword-web_bg.wasm"
 
 # --- verbatim buildPhase, with the two derivations stubbed -----------------
-# The order below is the order in flake.nix and is itself under test: the card
-# is copied in BEFORE the hash is computed (flake.nix:229 vs :249), which is
-# what makes the card's URL content-addressed. Compute the hash first and the
+# The order below is the order in flake.nix and is itself under test: images are
+# copied in BEFORE the hash is computed (flake.nix:229-230 vs :250), which is
+# what makes their URLs content-addressed. Compute the hash first and the
 # assertion "the card changes the hash" fails — which is the point of running
 # this rather than trusting a reading of the diff.
 CROSSWORD_WEB_WASM="$stage_src"      # unused directly: $stage is pre-populated
 OG_IMAGE="$stage_src"
+FAVICON_IMAGE="$favicon_src"
 
 bad=$(grep -oE "from '[^']+'" "$stage/crossword-web.js" \
   | sed "s/from '//; s/'$//" | grep -v '^\./' || true)
@@ -55,6 +57,7 @@ for spec in $(grep -oE "from '\./[^']+'" "$stage/crossword-web.js" \
 done
 
 cp "$OG_IMAGE" "$stage/og.png"
+cp "$FAVICON_IMAGE" "$stage/favicon.png"
 
 bundleHash=$(cd "$stage" && find . -type f | LC_ALL=C sort \
   | xargs sha256sum | sha256sum | cut -c1-16)
@@ -86,16 +89,42 @@ find "$OUTDIR" -type f | sed "s|$OUTDIR|<out>|" | sort | sed 's/^/  /'
 echo
 
 card="$OUTDIR/_assets/$bundleHash/og.png"
+icon="$OUTDIR/_assets/$bundleHash/favicon.png"
 if [ -f "$card" ]; then
   pass "the card is served from inside the hashed bundle (<out>/_assets/$bundleHash/og.png)"
 else
   fail "the card is NOT in the bundle — nothing would serve it"
 fi
 
+if [ -f "$icon" ]; then
+  pass "the favicon is served from inside the hashed bundle (<out>/_assets/$bundleHash/favicon.png)"
+else
+  fail "the favicon is NOT in the bundle — nothing would serve it"
+fi
+
 if cmp -s "$card" "$stage_src"; then
   pass "the shipped card is byte-identical to the committed asset"
 else
   fail "the shipped card differs from client/web/og-image.png"
+fi
+
+if cmp -s "$icon" "$favicon_src"; then
+  pass "the shipped favicon is byte-identical to the committed asset"
+else
+  fail "the shipped favicon differs from client/web/favicon.png"
+fi
+
+if python3 - "$icon" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+b = p.read_bytes()
+sys.exit(0 if b.startswith(b"\x89PNG\r\n\x1a\n") and len(b) > 8 else 1)
+PY
+then
+  pass "the shipped favicon is PNG image bytes"
+else
+  fail "the shipped favicon is not PNG image bytes"
 fi
 
 # The card must be INSIDE the hash: if it were copied in after hashing, a card
@@ -105,7 +134,7 @@ fi
 # bundle.
 stage_nocard="$out/stage-nocard"
 cp -r "$stage" "$stage_nocard"
-rm -f "$stage_nocard/og.png"
+rm -f "$stage_nocard/og.png" "$stage_nocard/favicon.png"
 hashed_without=$(cd "$stage_nocard" && find . -type f | LC_ALL=C sort \
   | xargs sha256sum | sha256sum | cut -c1-16)
 if [ "$hashed_without" != "$bundleHash" ]; then
@@ -116,7 +145,7 @@ fi
 
 head=$(cat "$OUTDIR/index.html")
 
-# Extract the og:image URL and assert it resolves to the real file on disk.
+# Extract advertised image URLs and assert they resolve to real files on disk.
 img=$(printf '%s' "$head" | grep -oE '<meta property="og:image" content="[^"]+"' \
   | sed 's/.*content="//; s/"$//' | head -1)
 if [ -z "$img" ]; then
@@ -142,6 +171,25 @@ else
     pass "og:image resolves to a real file inside the dist (no SPA fallback, no 404)"
   else
     fail "og:image does not resolve to a file in the dist — the SPA fallback would serve HTML"
+  fi
+fi
+
+favicon=$(printf '%s' "$head" | grep -oE '<link rel="icon"[^>]+href="[^"]+"' \
+  | sed 's/.*href="//; s/"$//' | head -1)
+if [ -z "$favicon" ]; then
+  fail "no favicon link in the served head"
+else
+  echo
+  echo "favicon -> $favicon"
+  if [ "$favicon" = "/_assets/$bundleHash/favicon.png" ]; then
+    pass "favicon points at the SAME hash the bundle is served from"
+  else
+    fail "favicon hash does not match the served bundle ($favicon vs $bundleHash)"
+  fi
+  if [ -f "$OUTDIR$favicon" ]; then
+    pass "favicon resolves to real image bytes inside the dist (no SPA fallback, no 404)"
+  else
+    fail "favicon does not resolve to a file in the dist — the SPA fallback would 404"
   fi
 fi
 
@@ -172,7 +220,7 @@ done
 
 # The unreplaced placeholder would mean the tag ships with a literal token.
 if printf '%s' "$head" | grep -q '__BUNDLE_HASH__'; then
-  fail "__BUNDLE_HASH__ survived the sed — og:image would advertise a dead URL"
+  fail "__BUNDLE_HASH__ survived the sed — image tags would advertise dead URLs"
 else
   pass "no unsubstituted placeholder left in the head"
 fi
@@ -200,7 +248,7 @@ fi
 
 echo
 if [ "$fail" -ne 0 ]; then
-  echo "::error::the bundle would not serve a working card — see FAIL lines above."
+  echo "::error::the bundle would not serve working images — see FAIL lines above."
   exit 1
 fi
-echo "The build emits a card reachable at the hash the head advertises."
+echo "The build emits card and favicon images reachable at the hash the head advertises."

@@ -25,6 +25,7 @@ mod common;
 
 use crossword_server::ctx::sanitised_db_error;
 use crossword_server::routers;
+use crossword_server::wire;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,10 +37,25 @@ fn sqlx_error_text_is_not_serialised_to_callers() {
 
     let out = sanitised_db_error("save the submitted letters", &err);
 
-    assert_eq!(out, "save the submitted letters failed");
+    assert_eq!(out, "INTERNAL: save the submitted letters failed");
     assert!(!out.contains("invalid input value"));
     assert!(!out.contains("GameActionTypeEnum"));
     assert!(!out.contains("forged"));
+}
+
+#[test]
+fn sanitised_db_error_output_is_a_500_not_a_400() {
+    let err = sqlx::Error::PoolTimedOut;
+    let msg = sanitised_db_error("save the submitted letters", &err);
+
+    let v = wire::envelope(Err(msg)).0;
+    assert_eq!(v[0]["error"]["data"]["code"], "INTERNAL_SERVER_ERROR");
+    assert_eq!(v[0]["error"]["data"]["httpStatus"], 500);
+    assert_eq!(v[0]["error"]["code"], -32603);
+    assert_eq!(
+        v[0]["error"]["message"],
+        "save the submitted letters failed"
+    );
 }
 
 // ── 2. route-level: a real database failure, on routes outside active_game ────
@@ -105,7 +121,7 @@ async fn game_get_daily_reports_a_stable_message_when_the_database_is_down() {
         .await
         .expect_err("the pool is never dialled, so this must fail");
 
-    assert_eq!(err, "read the current utc date failed");
+    assert_eq!(err, "INTERNAL: read the current utc date failed");
     assert_carries_no_schema_detail(&err, "game.getDaily");
 }
 
@@ -115,7 +131,7 @@ async fn user_is_email_unique_reports_a_stable_message_when_the_database_is_down
         .await
         .expect_err("the pool is never dialled, so this must fail");
 
-    assert_eq!(err, "check the email address failed");
+    assert_eq!(err, "INTERNAL: check the email address failed");
     assert_carries_no_schema_detail(&err, "user.isEmailUnique");
 }
 
@@ -125,7 +141,7 @@ async fn team_list_reports_a_stable_message_when_the_database_is_down() {
         .await
         .expect_err("the pool is never dialled, so this must fail");
 
-    assert_eq!(err, "list the teams failed");
+    assert_eq!(err, "INTERNAL: list the teams failed");
     assert_carries_no_schema_detail(&err, "team.list");
 }
 
@@ -135,7 +151,7 @@ async fn stats_leaderboard_reports_a_stable_message_when_the_database_is_down() 
         .await
         .expect_err("the pool is never dialled, so this must fail");
 
-    assert_eq!(err, "load the leaderboard failed");
+    assert_eq!(err, "INTERNAL: load the leaderboard failed");
     assert_carries_no_schema_detail(&err, "stats.getGlobalLeaderboard");
 }
 

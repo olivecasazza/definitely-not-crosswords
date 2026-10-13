@@ -600,9 +600,12 @@ jobs:
       # The spec owns the whole lifecycle — signup (idempotent), abandon stale
       # attempts, start a 100%-open game, join all four, play, complete — so this
       # job supplies credentials and records, exactly like the observer script.
+      # `--retries=1` matches the fast soak: the presence fan-out is flaky, and
+      # the recording is always taken from a PASSING attempt, so a retry cannot
+      # yield a "cheerful" video from a failed run.
       - name: Record the four-player soak
         working-directory: e2e
-        run: npx playwright test multiplayer-soak.spec.ts --reporter=list --retries=0
+        run: npx playwright test multiplayer-soak.spec.ts --reporter=list --retries=1
       - name: Composite the 2x2 observer video
         shell: bash
         run: |

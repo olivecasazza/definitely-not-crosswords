@@ -74,8 +74,10 @@
 set -euo pipefail
 
 
-# Advisory low-open-cell threshold, in cells. See the warning block below for
-# why it is 10 and not 0, and why the check is advisory rather than fatal.
+# Minimum open-cell threshold for the selected target game. A multiplayer soak
+# or load run needs actual board left to play, so an exhausted active game is a
+# hard preflight failure rather than a warning the harnesses can accidentally
+# ignore.
 MIN_OPEN_CELLS="${MIN_OPEN_CELLS:-10}"
 APPLY=0
 ALLOW_PRODUCTION=0
@@ -380,9 +382,11 @@ CLUES=0; FILLED=0; CORRECT=0; TOTAL=0
 # run the puzzle closest to finished, i.e. the one where every remaining action
 # is the last action. Verified on staging: with a single in-progress game at
 # 155/161 correct, that difference is the whole run.
-ACTIVE_GAME_ID="$(jq -r '[ .[]
+ACTIVE_GAME_ID="$(jq -r --argjson min "$MIN_OPEN_CELLS" '[ .[]
       | select(.type == "ActiveGame")
       | select((.filledCount // 0) > 0 and (.correctCount // 0) < (.totalCells // 0))
+      | select(((.totalCells // 0) - (.correctCount // 0)) >= $min)
+      | select(((.totalCells // 0) - (.correctCount // 0)) >= (((.totalCells // 0) / 20) | floor))
     ] | sort_by(.correctCount // 0, .filledCount // 0) | .[0].id // empty' <<< "$list")"
 GAME_ID="$(jq -r --arg a "$ACTIVE_GAME_ID" \
   '[ .[] | select(.id == $a) ][0].gameId // empty' <<< "$list")"
@@ -394,10 +398,10 @@ if [[ -z "$ACTIVE_GAME_ID" ]]; then
   TOTAL="$(jq -r '[ .[] | select(.type == "ActiveGame") ][0].totalCells // 0' <<< "$list")"
   if [[ "$TOTAL" -gt 0 && "$CORRECT" -ge "$TOTAL" ]]; then
     echo "  WARNING: the only active game is finished ($CORRECT/$TOTAL correct)."
-    echo '           Starting a fresh game instead. A soak against a completed'
+    echo '           Starting a fresh game instead. A run against a completed'
     echo '           puzzle proves nothing.'
   elif [[ "$TOTAL" -gt 0 && "$CORRECT" -ge $(( TOTAL - MIN_OPEN_CELLS )) ]]; then
-    echo "  NOTE: the only active game is nearly finished ($CORRECT/$TOTAL correct,"
+    echo "  NOTE: the available active game is nearly finished ($CORRECT/$TOTAL correct,"
     echo "        $(( TOTAL - CORRECT )) open cells). Starting a fresh game instead."
   fi
   # The parent puzzle id is `gameId` on EVERY row gameList.get returns, and the
@@ -447,12 +451,6 @@ if [[ -n "$ACTIVE_GAME_ID" ]]; then
   TOTAL="$(jq -r '.totalCells // 0' <<< "$ROW")"
   OPEN_CELLS=$(( TOTAL - CORRECT ))
 
-  # Low-open-cell warning. Advisory, never fatal — a nearly-finished puzzle is
-  # still a legitimate thing to report on, and the operator may be soaking the
-  # completion path on purpose. But it must be impossible to miss, because a
-  # run against a 96%-complete puzzle exercises almost nothing and still exits
-  # 0. Hence it also lands in the summary table, marked, not only on stderr.
-  #
   # The threshold is 10 open cells OR fewer than 5% of the grid, whichever is
   # hit first. Both halves are needed: 10 absolute keeps a small grid honest
   # (a 15-cell puzzle with 6 open is already nearly done), and 5% keeps a large
@@ -462,10 +460,10 @@ if [[ -n "$ACTIVE_GAME_ID" ]]; then
   if [[ "$TOTAL" -gt 0 && ( "$OPEN_CELLS" -lt "$MIN_OPEN_CELLS" \
       || "$OPEN_CELLS" -lt $(( TOTAL / 20 )) ) ]]; then
     LOW_OPEN_CELLS=1
-    echo "  WARNING: the chosen game has only $OPEN_CELLS open cells ($CORRECT/$TOTAL correct)."
-    echo "           Threshold: under $MIN_OPEN_CELLS cells or under 5% of the grid."
-    echo '           A soak here exercises almost nothing and would still exit 0.'
-    echo '           Publish or start a fresher game before trusting this run.'
+    echo "  FAIL: the chosen game has only $OPEN_CELLS open cells ($CORRECT/$TOTAL correct)."
+    echo "        Threshold: under $MIN_OPEN_CELLS cells or under 5% of the grid."
+    echo '        A multiplayer run here exercises almost nothing and retrying a pinned'
+    echo '        exhausted active game can turn into Active game not found.'
   fi
 fi
 
@@ -558,6 +556,12 @@ if [[ "$APPLY" == 1 ]]; then
   if [[ "$JOINED" == partial ]]; then
     printf '\nPARTIAL: some players could not join %s.\n' "$ACTIVE_GAME_ID" >&2
     printf '%s\n' 'A multiplayer soak with a single member is not a multiplayer run.' >&2
+    exit 2
+  fi
+  if [[ "$LOW_OPEN_CELLS" == 1 ]]; then
+    printf '\nFAIL: chosen game %s has only %s open cells (%s/%s correct).\n' \
+      "$ACTIVE_GAME_ID" "$OPEN_CELLS" "$CORRECT" "$TOTAL" >&2
+    printf '%s\n' 'Start from a fresher puzzle before running the multiplayer soak or load gate.' >&2
     exit 2
   fi
 fi

@@ -395,13 +395,18 @@ async fn start(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     let ag_id = Uuid::new_v4().to_string();
     let member_id = Uuid::new_v4().to_string();
+    let mut tx = ctx
+        .pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
 
     sqlx::query(
         r#"INSERT INTO "ActiveGame" (id, "gameId", "createdAt", "updatedAt") VALUES ($1, $2, now(), now())"#,
     )
     .bind(&ag_id)
     .bind(game_id)
-    .execute(&ctx.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| sanitised_db_error("start the active game", &e))?;
 
@@ -414,9 +419,13 @@ async fn start(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&member_id)
     .bind(&user.id)
     .bind(&ag_id)
-    .execute(&ctx.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| sanitised_db_error("start the active game", &e))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("start the active game", &e))?;
 
     Ok(json!({ "id": ag_id }))
 }
@@ -469,6 +478,38 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     }
 
     let member_id = Uuid::new_v4().to_string();
+    let mut tx = begin_game_write(ctx, id).await?;
+
+    let ag = sqlx::query(
+        r#"
+        SELECT ag.id
+        FROM "ActiveGame" ag
+        JOIN "Game" g ON g.id = ag."gameId"
+        WHERE ag.id = $1 AND g.published = true
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| sanitised_db_error("load the active game", &e))?;
+
+    if ag.is_none() {
+        return Err("Active game not found".to_string());
+    }
+
+    let existing = sqlx::query(
+        r#"SELECT 1 FROM "GameMember" WHERE "activeGameId" = $1 AND "userId" = $2 LIMIT 1"#,
+    )
+    .bind(id)
+    .bind(&user.id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| sanitised_db_error("check membership", &e))?;
+
+    if existing.is_some() {
+        return Ok(json!({ "id": id, "joined": true }));
+    }
+
     sqlx::query(
         r#"
         INSERT INTO "GameMember" (id, "userId", "isOwner", "activeGameId", "createdAt", "updatedAt")
@@ -478,9 +519,13 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&member_id)
     .bind(&user.id)
     .bind(id)
-    .execute(&ctx.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| sanitised_db_error("join the active game", &e))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("join the active game", &e))?;
 
     Ok(json!({ "id": id, "joined": true }))
 }
@@ -569,10 +614,13 @@ fn latest_verdicts(
 
 /// Load the answer key for the active game, so every submitted letter can be
 /// classified against what actually belongs in that cell.
-async fn load_answer_key(
+async fn load_answer_key<'e, E>(
     active_game_id: &str,
-    ctx: &Ctx,
-) -> Result<crate::scoring::AnswerKey, String> {
+    executor: E,
+) -> Result<crate::scoring::AnswerKey, String>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let rows = sqlx::query(
         r#"
         SELECT "rootX", "rootY", answer, direction::text AS direction
@@ -582,7 +630,7 @@ async fn load_answer_key(
         "#,
     )
     .bind(active_game_id)
-    .fetch_all(&ctx.pool)
+    .fetch_all(executor)
     .await
     .map_err(|e| sanitised_db_error("load the answer key", &e))?;
 
@@ -721,7 +769,7 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         return Err("FORBIDDEN".to_string());
     }
 
-    let key = load_answer_key(id, ctx).await?;
+    let key = load_answer_key(id, &ctx.pool).await?;
 
     // Validate the whole batch before writing anything: a batch is one player
     // edit, so a single bad element must not leave a half-applied action log
@@ -834,7 +882,13 @@ struct LoggedAction {
 /// thing that writes them and it derives every one from the answer key
 /// (DEF-243). A row this module cannot classify is treated as a placeholder
 /// rather than being guessed at.
-async fn load_action_log(active_game_id: &str, ctx: &Ctx) -> Result<Vec<LoggedAction>, String> {
+async fn load_action_log<'e, E>(
+    active_game_id: &str,
+    executor: E,
+) -> Result<Vec<LoggedAction>, String>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let rows = sqlx::query(
         r#"
         SELECT "userId", "cordX", "cordY", "actionType"::text AS action_type, state
@@ -844,7 +898,7 @@ async fn load_action_log(active_game_id: &str, ctx: &Ctx) -> Result<Vec<LoggedAc
         "#,
     )
     .bind(active_game_id)
-    .fetch_all(&ctx.pool)
+    .fetch_all(executor)
     .await
     .map_err(|e| sanitised_db_error("load the action log", &e))?;
 
@@ -947,17 +1001,17 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     let member_rows =
         sqlx::query(r#"SELECT id, "userId" FROM "GameMember" WHERE "activeGameId" = $1"#)
             .bind(active_game_id)
-            .fetch_all(&ctx.pool)
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| sanitised_db_error("load the members", &e))?;
 
     // The answer key, so the grid's real state can be computed without trusting
     // anything the client said.
-    let key = load_answer_key(active_game_id, ctx).await?;
+    let key = load_answer_key(active_game_id, &mut *tx).await?;
 
     // Every action, oldest first, so the last verdict seen for a cell is the
     // one that stands — the same "newest wins" rule as the leaderboard read.
-    let log = load_action_log(active_game_id, ctx).await?;
+    let log = load_action_log(active_game_id, &mut *tx).await?;
 
     // The grid as it stands across all members. This is the gate: a grid that
     // is not solved cannot be completed, whatever the caller asks for.

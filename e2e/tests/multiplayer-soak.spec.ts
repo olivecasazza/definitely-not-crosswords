@@ -368,9 +368,14 @@ async function selectClue(page: Page, clue: AnswerClue) {
   // pages while their row clicks are in flight. Keep the assertion strict —
   // the full editor MUST mount — but retry the click across those legitimate
   // rerenders instead of treating one detached node as a failed game.
+  let clicked = false;
   await expect
     .poll(
       async () => {
+        if (!clicked) {
+          await row.click({ timeout: 5_000 }).catch(() => {});
+          clicked = true;
+        }
         if ((await page.locator(".cw-letter-input").count()) === clue.answer.length) {
           return true;
         }
@@ -585,11 +590,17 @@ test.describe("four-player multiplayer soak", () => {
         //
         // ACTIVE_GAME_ID still wins: CI pins it deliberately, and a pinned
         // board is a known quantity.
-        if (process.env.ACTIVE_GAME_ID) {
+        if (process.env.ACTIVE_GAME_ID && testInfo.retry === 0) {
           activeGameId = process.env.ACTIVE_GAME_ID;
           soak.activeGameId = activeGameId;
           console.log(`soak board: ACTIVE_GAME_ID=${activeGameId} (pinned)`);
         } else {
+          if (process.env.ACTIVE_GAME_ID) {
+            console.log(
+              `soak board: retry ${testInfo.retry} ignores ACTIVE_GAME_ID=${process.env.ACTIVE_GAME_ID} ` +
+                `because the first attempt may have completed or abandoned it`,
+            );
+          }
           activeGameId = await startFreshGame(p1);
           soak.activeGameId = activeGameId;
         }

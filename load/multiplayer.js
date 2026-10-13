@@ -48,6 +48,7 @@ const CROSSING_SHARE = num(__ENV.CROSSING_SHARE, 0.8);
 const WS_ERROR_RATE_MAX = num(__ENV.WS_ERROR_RATE_MAX, 0.05);
 const FAILED_RATE_MAX = num(__ENV.FAILED_RATE_MAX, 0.01);
 const CONFLICT_RATE_MAX = num(__ENV.CROSSING_CONFLICT_MAX, 0.05);
+const TRPC_ERROR_RATE_MAX = num(__ENV.TRPC_ERROR_RATE_MAX, 0.01);
 
 const SUMMARY_JSON = __ENV.SUMMARY_JSON || 'load-summary.json';
 
@@ -67,6 +68,7 @@ const ACCOUNTS = [
 // cell — i.e. another player (or a stale snapshot) had it. See README.
 const crossingConflictRate = new Rate('crossing_conflict_rate');
 const trpcErrorRate = new Rate('trpc_error_rate');
+const trpcErrors = new Counter('trpc_errors_total');
 const addActionsDuration = new Trend('crossword_add_actions_duration', true);
 const joinDuration = new Trend('crossword_join_duration', true);
 // Subscription frames the server pushed down /api/trpc-ws, tagged by the
@@ -115,7 +117,7 @@ export const options = {
   thresholds: {
     http_req_failed: [`rate<${FAILED_RATE_MAX}`],
     crossing_conflict_rate: [`rate<${CONFLICT_RATE_MAX}`],
-    trpc_error_rate: [`rate<${CONFLICT_RATE_MAX}`],
+    trpc_error_rate: [`rate<${TRPC_ERROR_RATE_MAX}`],
     crossword_ws_error_rate: [`rate<${WS_ERROR_RATE_MAX}`],
   },
   discardResponseBodies: false,
@@ -168,11 +170,17 @@ function trpcError(res) {
   try {
     body = res.json();
   } catch (e) {
-    return res.status;
+    return `unparseable_http_${res.status}`;
   }
   const first = Array.isArray(body) ? body[0] : body;
   if (first && first.error && first.error.message) return first.error.message;
-  return `http_${res.status}`;
+  if (res.status !== 200) return `http_${res.status}`;
+  return 'missing_result';
+}
+
+function recordTrpc(proc, ok, res) {
+  trpcErrorRate.add(!ok, { proc });
+  if (!ok) trpcErrors.add(1, { proc, error: trpcError(res) });
 }
 
 // POST form-encoded credentials login; returns the session cookie or null.
@@ -275,6 +283,11 @@ export function setup() {
       gameId = row.gameId;
       break;
     }
+  }
+  if (activeGameId && activeGameId === __ENV.ACTIVE_GAME_ID && num(__ENV.OPEN_CELLS, 1) <= 0) {
+    console.warn(`WARN: ACTIVE_GAME_ID=${activeGameId} reported OPEN_CELLS=${__ENV.OPEN_CELLS}; starting a fresh load game instead`);
+    activeGameId = null;
+    gameId = null;
   }
   if (!activeGameId) {
     // `gameList.get` returns a MIX: `type` is only ever `ActiveGame` or
@@ -499,7 +512,7 @@ export function joinScenario(data) {
     'join: 200': (r) => r.status === 200,
     'join: joined': () => !!trpcData(res),
   });
-  trpcErrorRate.add(!ok);
+  recordTrpc('activeGame.join', ok, res);
   sleep(THINK_TIME);
 }
 
@@ -522,7 +535,7 @@ export function actionsScenario(data) {
     'addActions: 200': (r) => r.status === 200,
     'addActions: actions returned': () => !!created,
   });
-  trpcErrorRate.add(!ok);
+  recordTrpc('activeGame.addActions', ok, res);
 
   if (created) {
     let conflicts = 0;
@@ -562,7 +575,7 @@ export function presenceScenario(data) {
     'presence: 200': (r) => r.status === 200,
     'presence: ok': () => !!trpcData(res),
   });
-  trpcErrorRate.add(!ok);
+  recordTrpc('activeGame.publishPresence', ok, res);
   // Humans click a clue every few seconds, not every few milliseconds.
   sleep(PRESENCE_THINK);
 }
@@ -573,13 +586,14 @@ export function readScenario(data) {
     JSON.stringify({ 0: { id: data.activeGameId } }),
     { headers: authHeaders(data), tags: { proc: 'activeGame.get' } }
   );
-  check(board, {
+  const boardOk = check(board, {
     'get: 200': (r) => r.status === 200,
     'get: has game': () => {
       const payload = trpcData(board);
       return !!(payload && payload.game);
     },
   });
+  recordTrpc('activeGame.get', boardOk, board);
 
   const grid = http.get(`${data.baseUrl}/api/grids/${data.gameId}`, {
     headers: cookieHeader(data.cookies[accountIndex(data)]),
@@ -746,6 +760,26 @@ function prometheus(data_, fixture_) {
         metricValue(metrics.trpc_error_rate, 'rate') || 0
       }`,
     ]
+  );
+  const trpcErrorMetric = metrics.trpc_errors_total;
+  const trpcErrorSamples = Object.keys(trpcErrorMetric?.submetrics || {}).map((key) => {
+    const sub = trpcErrorMetric.submetrics[key];
+    const tags = Object.assign({}, sub.tags || {});
+    const tagLabel = Object.keys(tags)
+      .sort()
+      .map((name) => `${name}=${JSON.stringify(String(tags[name]))}`)
+      .join(',');
+    return `definitely_not_crosswords_load_trpc_errors_total{${label}${tagLabel ? `,${tagLabel}` : ''}} ${
+      metricValue(sub, 'count') || 0
+    }`;
+  });
+  push(
+    'definitely_not_crosswords_load_trpc_errors_total',
+    'tRPC result-envelope failures by procedure and error message.',
+    'counter',
+    trpcErrorSamples.length
+      ? trpcErrorSamples
+      : [`definitely_not_crosswords_load_trpc_errors_total{${label},proc="none",error="none"} 0`]
   );
   push(
     'definitely_not_crosswords_load_ws_error_ratio',

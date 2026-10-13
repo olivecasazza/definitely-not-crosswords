@@ -388,6 +388,7 @@ jobs:
             --option allow-import-from-derivation true \
             ./client#crossword-load -- run multiplayer.js \
             --env SOAK_DURATION="${SOAK_DURATION:-60s}" \
+            --env TRPC_ERROR_RATE_MAX="${TRPC_ERROR_RATE_MAX:-0.01}" \
             2>&1 | tee k6-metrics.prom
       # The summary is also uploaded below. Push to the pushgateway only when
       # one is configured: this repo has no PUSHGATEWAY_URL today, and a

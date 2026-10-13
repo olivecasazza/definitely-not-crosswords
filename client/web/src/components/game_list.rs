@@ -149,8 +149,10 @@ pub fn game_list(
                         div {
                             key: "{row.id}",
                             class: "game-row",
-                            // Inline `cursor: pointer` is also the e2e specs'
-                            // row selector — keep it alongside the class.
+                            // `data-row` is the e2e specs' row selector; the
+                            // inline `cursor: pointer` is a real affordance (a
+                            // role="button" div gets no browser cursor).
+                            "data-row": "game",
                             style: "cursor: pointer;",
                             role: "button",
                             tabindex: "0",
@@ -239,7 +241,7 @@ pub const GAME_LIST_CSS: &str = "
 
 @media (max-width: 760px) {
   /* Comfortable tap target on touch, and no hover-stick on mobile Safari. */
-  .game-row { padding: 1rem; min-height: 3.25rem; }
+  .game-row { padding: 1rem; min-height: 44px; }
   .game-row:hover { background: transparent; border-left-color: transparent; }
   /* Progress bar yields first when a small row runs out of width. */
   .game-progress { width: 48px; }

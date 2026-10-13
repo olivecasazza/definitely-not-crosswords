@@ -47,8 +47,18 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    // Eight connections is not enough for one pod under multiplayer load: the
+    // outbox listener holds one for its LISTEN, the outbox writer acquires one
+    // per event, and the four-writer load test needs 14 concurrent sessions.
+    // Exhaustion made `addActions` queue for connections behind the per-game
+    // advisory lock and breached the k6 `trpc_error_rate` threshold. Raise the
+    // default and let the chart override it per deployment.
+    let pool_size = std::env::var("DATABASE_POOL_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(32);
     let pool = PgPoolOptions::new()
-        .max_connections(8)
+        .max_connections(pool_size)
         .connect(&db_url)
         .await?;
     // "local" | "staging" | "production". Default production: the safe (most
@@ -585,6 +595,7 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
                 name,
                 number,
                 direction,
+                sequence,
             },
         ) => Some(json!({
             "activeGameId": active_game_id,
@@ -592,6 +603,7 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
             "name": name,
             "number": number,
             "direction": direction,
+            "sequence": sequence,
         })),
         _ => None,
     }

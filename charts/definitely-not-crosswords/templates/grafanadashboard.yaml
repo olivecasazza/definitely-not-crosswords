@@ -25,36 +25,56 @@
     "title" "Crosswords Frontend Error Rate"
     "uid" "crosswords-frontend-errors"
     "file" "frontend-errors.json"
+    "folder" "Crosswords/Observability/Errors"
+    "tags" "observability,errors,frontend"
   )
   (dict
     "name" "backend-errors"
     "title" "Crosswords Backend Error Rate"
     "uid" "crosswords-backend-errors"
     "file" "backend-errors.json"
+    "folder" "Crosswords/Observability/Errors"
+    "tags" "observability,errors,backend"
   )
   (dict
     "name" "testing-regressions"
     "title" "Crosswords Testing Regressions"
     "uid" "crosswords-testing-regressions"
     "file" "testing-regressions.json"
+    "folder" "Crosswords/Testing/Suites"
+    "tags" "testing,regressions"
+  )
+  (dict
+    "name" "multiplayer"
+    "title" "Crosswords Multiplayer Soak & Load"
+    "uid" "crosswords-multiplayer"
+    "file" "multiplayer.json"
+    "folder" "Crosswords/Testing/Multiplayer"
+    "tags" "testing,multiplayer,realtime"
   )
   (dict
     "name" "platform-health"
     "title" "Crosswords Platform Health"
     "uid" "crosswords-platform-health"
     "file" "platform-health.json"
+    "folder" "Crosswords/Observability/Platform"
+    "tags" "observability,platform,kubernetes"
   )
   (dict
     "name" "resource-efficiency"
     "title" "Crosswords Resource Efficiency"
     "uid" "crosswords-resource-efficiency"
     "file" "resource-efficiency.json"
+    "folder" "Crosswords/Observability/Platform"
+    "tags" "observability,platform,resources"
   )
   (dict
     "name" "delivery"
     "title" "Crosswords Delivery & GitOps"
     "uid" "crosswords-delivery"
     "file" "delivery.json"
+    "folder" "Crosswords/Delivery/GitOps"
+    "tags" "delivery,gitops,flux"
   )
 -}}
 {{- range $dashboards }}
@@ -89,8 +109,31 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "grafana"
+  # NESTED FOLDERS ARE OPT-IN and default to OFF.
+  #
+  # Each dashboard carries a tier like "Crosswords/Observability/Errors",
+  # which renders as `folder: Crosswords/Observability/Errors`. A nested path
+  # only works if this cluster's Grafana operator can CREATE the intermediate
+  # folders — if it cannot, the GrafanaDashboard CR fails to apply and every
+  # dashboard stops syncing at once, which reads as the entire dashboard set
+  # regressing rather than as one bad resource.
+  #
+  # Operator capability is not verifiable from this repo, so the default
+  # restores exactly what shipped before tiering: a single folder from values.
+  # Enable with `nestedFolders: true` once the operator version is known good.
+  {{- if $.Values.observability.grafanaDashboard.nestedFolders }}
+  folder: {{ (.folder | default $.Values.observability.grafanaDashboard.folder) | quote }}
+  {{- else }}
   folder: {{ $.Values.observability.grafanaDashboard.folder | quote }}
+  {{- end }}
   uid: {{ .uid | quote }}
+  {{- /* Tags ride the same opt-in as nested folders: the default must render
+         byte-identically to what shipped before tiering existed, so a CRD that
+         rejects either field is never handed one. */}}
+  {{- $tagList := .tags | default "" }}
+  {{- if and $.Values.observability.grafanaDashboard.nestedFolders $tagList }}
+  tags: [{{ $i := 0 }}{{ range $t := splitList "," $tagList }}{{ if $i }}, {{ end }}{{ $t | quote }}{{ $i = add1 $i }}{{ end }}]
+  {{- end }}
   datasources:
     - inputName: DS_PROMETHEUS
       datasourceName: Prometheus

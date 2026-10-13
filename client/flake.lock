@@ -270,30 +270,12 @@
         "type": "github"
       }
     },
-    "panel-kit": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1789619199,
-        "narHash": "sha256-CgwnUIA9FfQhRCi4itT7lSBQixvwyRqoj+z/zSzYd8g=",
-        "owner": "olivecasazza",
-        "repo": "panel-kit",
-        "rev": "4aad83c86285c83706e380c054a2b317ff8c6f69",
-        "type": "github"
-      },
-      "original": {
-        "owner": "olivecasazza",
-        "repo": "panel-kit",
-        "rev": "4aad83c86285c83706e380c054a2b317ff8c6f69",
-        "type": "github"
-      }
-    },
     "root": {
       "inputs": {
         "crane": "crane",
         "flake-parts": "flake-parts",
         "nixpkgs": "nixpkgs",
         "omnix": "omnix",
-        "panel-kit": "panel-kit",
         "rust-overlay": "rust-overlay_2",
         "systems": "systems_2"
       }

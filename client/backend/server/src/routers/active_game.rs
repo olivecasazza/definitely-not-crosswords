@@ -2,7 +2,7 @@
 //! Subscriptions (onAddActions / onGameCompleted) are skipped — WebSocket phase.
 use crate::ctx::{sanitised_db_error, Ctx};
 use serde_json::{json, Value};
-use sqlx::Row;
+use sqlx::{Executor, Postgres, Row};
 use uuid::Uuid;
 
 pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<Value, String>> {
@@ -14,6 +14,7 @@ pub async fn try_handle(proc: &str, input: &Value, ctx: &Ctx) -> Option<Result<V
         "activeGame.addActions" => Some(add_actions(input, ctx).await),
         "activeGame.publishPresence" => Some(publish_presence(input, ctx).await),
         "activeGame.complete" => Some(complete(input, ctx).await),
+        "activeGame.abandon" => Some(abandon(input, ctx).await),
         _ => None,
     }
 }
@@ -394,13 +395,18 @@ async fn start(input: &Value, ctx: &Ctx) -> Result<Value, String> {
 
     let ag_id = Uuid::new_v4().to_string();
     let member_id = Uuid::new_v4().to_string();
+    let mut tx = ctx
+        .pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
 
     sqlx::query(
         r#"INSERT INTO "ActiveGame" (id, "gameId", "createdAt", "updatedAt") VALUES ($1, $2, now(), now())"#,
     )
     .bind(&ag_id)
     .bind(game_id)
-    .execute(&ctx.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| sanitised_db_error("start the active game", &e))?;
 
@@ -413,9 +419,13 @@ async fn start(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&member_id)
     .bind(&user.id)
     .bind(&ag_id)
-    .execute(&ctx.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| sanitised_db_error("start the active game", &e))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("start the active game", &e))?;
 
     Ok(json!({ "id": ag_id }))
 }
@@ -468,6 +478,38 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     }
 
     let member_id = Uuid::new_v4().to_string();
+    let mut tx = begin_game_write(ctx, id).await?;
+
+    let ag = sqlx::query(
+        r#"
+        SELECT ag.id
+        FROM "ActiveGame" ag
+        JOIN "Game" g ON g.id = ag."gameId"
+        WHERE ag.id = $1 AND g.published = true
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| sanitised_db_error("load the active game", &e))?;
+
+    if ag.is_none() {
+        return Err("Active game not found".to_string());
+    }
+
+    let existing = sqlx::query(
+        r#"SELECT 1 FROM "GameMember" WHERE "activeGameId" = $1 AND "userId" = $2 LIMIT 1"#,
+    )
+    .bind(id)
+    .bind(&user.id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| sanitised_db_error("check membership", &e))?;
+
+    if existing.is_some() {
+        return Ok(json!({ "id": id, "joined": true }));
+    }
+
     sqlx::query(
         r#"
         INSERT INTO "GameMember" (id, "userId", "isOwner", "activeGameId", "createdAt", "updatedAt")
@@ -477,9 +519,13 @@ async fn join(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .bind(&member_id)
     .bind(&user.id)
     .bind(id)
-    .execute(&ctx.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| sanitised_db_error("join the active game", &e))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("join the active game", &e))?;
 
     Ok(json!({ "id": id, "joined": true }))
 }
@@ -536,6 +582,7 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     .await
     .map_err(|e| sanitised_db_error("load the user", &e))?;
     let name: String = name_row.get("name");
+    let sequence = chrono::Utc::now().timestamp_millis();
 
     ctx.events.publish(crossword_db::AppEvent::GamePresence {
         active_game_id: id.to_string(),
@@ -543,6 +590,7 @@ async fn publish_presence(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         name,
         number,
         direction,
+        sequence,
     });
     Ok(json!({ "ok": true }))
 }
@@ -566,10 +614,13 @@ fn latest_verdicts(
 
 /// Load the answer key for the active game, so every submitted letter can be
 /// classified against what actually belongs in that cell.
-async fn load_answer_key(
+async fn load_answer_key<'e, E>(
     active_game_id: &str,
-    ctx: &Ctx,
-) -> Result<crate::scoring::AnswerKey, String> {
+    executor: E,
+) -> Result<crate::scoring::AnswerKey, String>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let rows = sqlx::query(
         r#"
         SELECT "rootX", "rootY", answer, direction::text AS direction
@@ -579,7 +630,7 @@ async fn load_answer_key(
         "#,
     )
     .bind(active_game_id)
-    .fetch_all(&ctx.pool)
+    .fetch_all(executor)
     .await
     .map_err(|e| sanitised_db_error("load the answer key", &e))?;
 
@@ -598,7 +649,10 @@ async fn load_answer_key(
 /// The latest letter standing in each cell of the active game, across all
 /// members. One query, `DISTINCT ON` per cell — the same "newest wins" rule the
 /// leaderboard read path in `game_list.rs` uses, so the two cannot disagree.
-async fn load_cell_states(active_game_id: &str, ctx: &Ctx) -> Result<CellStates, String> {
+async fn load_cell_states<'e, E>(active_game_id: &str, executor: E) -> Result<CellStates, String>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let rows = sqlx::query(
         r#"
         SELECT DISTINCT ON ("cordX", "cordY")
@@ -609,7 +663,7 @@ async fn load_cell_states(active_game_id: &str, ctx: &Ctx) -> Result<CellStates,
         "#,
     )
     .bind(active_game_id)
-    .fetch_all(&ctx.pool)
+    .fetch_all(executor)
     .await
     .map_err(|e| sanitised_db_error("load the current grid", &e))?;
 
@@ -630,6 +684,48 @@ async fn load_cell_states(active_game_id: &str, ctx: &Ctx) -> Result<CellStates,
         );
     }
     Ok(states)
+}
+
+/// The advisory-lock key for one active game. Single source of truth: the two
+/// DEF-28x races were each fixed by hand-rolling this string, and a third
+/// mutation that forgot it would reintroduce the same class of bug silently.
+fn game_write_key(active_game_id: &str) -> String {
+    format!("activeGame:write:{active_game_id}")
+}
+
+/// Begin a transaction and take the lock that serialises EVERY mutation of one
+/// active game. Every handler that writes must go through this.
+///
+/// Cells live in the append-only `GameAction` log, so there is no per-cell row
+/// for `SELECT ... FOR UPDATE` to attach to — an advisory lock keyed on the
+/// game is the only honest serialisation point. One key, so a game can never be
+/// locked in two orders and deadlock; a hash collision between two games only
+/// over-serialises them, it cannot corrupt either.
+///
+/// This exists because DEF-281 (`add_actions`) and DEF-282 (`complete`) were two
+/// separate races with the same shape: read state outside a transaction, then
+/// write. Fixing each one in place left the pattern to be remembered, and
+/// `join` — which also writes — had no lock at all. One guard removes the
+/// remembering.
+///
+/// The lock is transaction-scoped, so it is released by `commit` or by the
+/// rollback that happens when `tx` is dropped. Publish `GameActionsAdded` /
+/// `GameCompleted` only AFTER the commit, never inside it.
+async fn begin_game_write<'c>(
+    ctx: &'c Ctx,
+    active_game_id: &str,
+) -> Result<sqlx::Transaction<'c, Postgres>, String> {
+    let mut tx = ctx
+        .pool
+        .begin()
+        .await
+        .map_err(|e| sanitised_db_error("begin the transaction", &e))?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(game_write_key(active_game_id))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| sanitised_db_error("serialise writes to this game", &e))?;
+    Ok(tx)
 }
 
 /// activeGame.addActions — protected.
@@ -673,7 +769,7 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         return Err("FORBIDDEN".to_string());
     }
 
-    let key = load_answer_key(id, ctx).await?;
+    let key = load_answer_key(id, &ctx.pool).await?;
 
     // Validate the whole batch before writing anything: a batch is one player
     // edit, so a single bad element must not leave a half-applied action log
@@ -683,9 +779,18 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         submissions.push(crate::scoring::validate_submission(action, index, &key)?);
     }
 
-    // What each cell held before this batch, so `previousState` is the server's
-    // record rather than something the caller can assert.
-    let before = load_cell_states(id, ctx).await?;
+    // DEF-281. Serialise every write to a game, and take the cell snapshot
+    // INSIDE that critical section.
+    //
+    // This used to read `before` from the pool, then INSERT on the pool, with
+    // nothing in between. Two players submitting the SAME cell — routine in a
+    // crossword, where an ACROSS and a DOWN clue cross — both snapshotted
+    // before either wrote, so both logged the same `previousState` and the
+    // loser's record was wrong. Measured at a 0.40 conflict rate under four
+    // concurrent writers.
+    let mut tx = begin_game_write(ctx, id).await?;
+
+    let before = load_cell_states(id, &mut *tx).await?;
 
     let mut created: Vec<Value> = Vec::with_capacity(submissions.len());
 
@@ -713,7 +818,7 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .bind(action_type)
         .bind(&previous_state)
         .bind(&sub.state)
-        .execute(&ctx.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| sanitised_db_error("save the submitted letters", &e))?;
 
@@ -731,6 +836,14 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         }));
     }
 
+    // Release the advisory lock and make the rows durable BEFORE announcing
+    // them. Publishing first would let a subscriber reload the grid and miss
+    // these actions, and a rolled-back batch would have already been fanned
+    // out to every connected client as phantom moves.
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("commit the submitted letters", &e))?;
+
     // Broadcast for activeGame.onAddActions (live multiplayer).
     ctx.events
         .publish(crossword_db::AppEvent::GameActionsAdded {
@@ -741,7 +854,7 @@ async fn add_actions(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     // The grid's real state after this batch, so the client can finish a solved
     // board without ever holding the key. Previously it computed "solved" itself
     // from the answer the server had been sending it.
-    let after = load_cell_states(id, ctx).await?;
+    let after = load_cell_states(id, &ctx.pool).await?;
     let completion = crate::scoring::completion(&key, &latest_verdicts(&after));
 
     Ok(json!({
@@ -769,7 +882,13 @@ struct LoggedAction {
 /// thing that writes them and it derives every one from the answer key
 /// (DEF-243). A row this module cannot classify is treated as a placeholder
 /// rather than being guessed at.
-async fn load_action_log(active_game_id: &str, ctx: &Ctx) -> Result<Vec<LoggedAction>, String> {
+async fn load_action_log<'e, E>(
+    active_game_id: &str,
+    executor: E,
+) -> Result<Vec<LoggedAction>, String>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     let rows = sqlx::query(
         r#"
         SELECT "userId", "cordX", "cordY", "actionType"::text AS action_type, state
@@ -779,7 +898,7 @@ async fn load_action_log(active_game_id: &str, ctx: &Ctx) -> Result<Vec<LoggedAc
         "#,
     )
     .bind(active_game_id)
-    .fetch_all(&ctx.pool)
+    .fetch_all(executor)
     .await
     .map_err(|e| sanitised_db_error("load the action log", &e))?;
 
@@ -833,6 +952,21 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing id".to_string())?;
 
+    // DEF-282. Take the game's write lock BEFORE the existence checks and
+    // hold it through the commit below.
+    //
+    // These two reads used to run on the pool with nothing between them and
+    // the transaction that deletes ActiveGame. Four members reaching the
+    // results screen together therefore all passed "am I a member?" and all
+    // saw the ActiveGame, then each opened its own transaction and each
+    // INSERTed a CompletedGame — measured two distinct completedGameIds from
+    // one completion, which is two score records and two GameCompleted
+    // broadcasts for a single solved board.
+    //
+    // Under the lock the losers block, then find the ActiveGame already gone
+    // and are refused, so exactly one call can win.
+    let mut tx = begin_game_write(ctx, active_game_id).await?;
+
     // Membership check: only a member of the active game may complete it
     // (this is destructive — it deletes the ActiveGame and cascades GameActions).
     let is_member = sqlx::query(
@@ -840,7 +974,7 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     )
     .bind(active_game_id)
     .bind(&user.id)
-    .fetch_optional(&ctx.pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| sanitised_db_error("check membership", &e))?
     .is_some();
@@ -848,10 +982,11 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         return Err("FORBIDDEN".to_string());
     }
 
-    // Load the active game.
+    // Load the active game — inside the lock, so a second completer sees the
+    // row this one is about to delete rather than a stale copy.
     let ag = sqlx::query(r#"SELECT id, "gameId" FROM "ActiveGame" WHERE id = $1"#)
         .bind(active_game_id)
-        .fetch_optional(&ctx.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| sanitised_db_error("load the active game", &e))?;
 
@@ -866,17 +1001,17 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
     let member_rows =
         sqlx::query(r#"SELECT id, "userId" FROM "GameMember" WHERE "activeGameId" = $1"#)
             .bind(active_game_id)
-            .fetch_all(&ctx.pool)
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| sanitised_db_error("load the members", &e))?;
 
     // The answer key, so the grid's real state can be computed without trusting
     // anything the client said.
-    let key = load_answer_key(active_game_id, ctx).await?;
+    let key = load_answer_key(active_game_id, &mut *tx).await?;
 
     // Every action, oldest first, so the last verdict seen for a cell is the
     // one that stands — the same "newest wins" rule as the leaderboard read.
-    let log = load_action_log(active_game_id, ctx).await?;
+    let log = load_action_log(active_game_id, &mut *tx).await?;
 
     // The grid as it stands across all members. This is the gate: a grid that
     // is not solved cannot be completed, whatever the caller asks for.
@@ -920,12 +1055,9 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         })
         .collect();
 
-    // Run the mutation sequence inside a transaction.
-    let mut tx = ctx
-        .pool
-        .begin()
-        .await
-        .map_err(|e| sanitised_db_error("record the completed game", &e))?;
+    // The mutation sequence runs in the transaction opened at the top, which
+    // still holds the advisory lock. Opening a second one here would drop the
+    // lock's protection exactly where it is needed.
 
     let stats_id = Uuid::new_v4().to_string();
     sqlx::query(
@@ -1006,4 +1138,75 @@ async fn complete(input: &Value, ctx: &Ctx) -> Result<Value, String> {
         completed_game_id: completed_id.clone(),
     });
     Ok(json!({ "id": completed_id }))
+}
+
+/// activeGame.abandon — protected.
+///
+/// Delete an unfinished active game. The counterpart to `complete`: `complete`
+/// records a win, `abandon` discards the attempt, and both remove the
+/// ActiveGame (cascading GameActions).
+///
+/// This exists because without it a started game is immortal. `activeGame.start`
+/// is idempotent per (gameId, caller), so a user who starts a game and walks
+/// away can never start that game again — the row is the only thing marking
+/// it as taken, and only completing it removed it. That is not theoretical:
+/// the four-player soak exhausted staging's entire pool of published games
+/// because every run started one and none could ever be released.
+///
+/// Gate: any member, matching `complete`. Both are destructive and both are
+/// scoped by membership today; adding an owner-only gate here would make
+/// abandon stricter than complete, and a game nobody can abandon is the
+/// situation this fixes. Worth revisiting if "any member may destroy a shared
+/// game" turns out to be wrong.
+///
+/// Locked with the same per-game advisory lock, so an abandon cannot interleave
+/// with a completion or a batch of cell writes and leave a half-deleted game.
+async fn abandon(input: &Value, ctx: &Ctx) -> Result<Value, String> {
+    let user = match ctx.require_user() {
+        Ok(u) => u,
+        Err(e) => return Err(e),
+    };
+
+    let active_game_id = input
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing id".to_string())?;
+
+    let mut tx = begin_game_write(ctx, active_game_id).await?;
+
+    let is_member = sqlx::query(
+        r#"SELECT 1 FROM "GameMember" WHERE "activeGameId" = $1 AND "userId" = $2 LIMIT 1"#,
+    )
+    .bind(active_game_id)
+    .bind(&user.id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| sanitised_db_error("check membership", &e))?
+    .is_some();
+    if !is_member {
+        return Err("FORBIDDEN".to_string());
+    }
+
+    let deleted = sqlx::query(r#"DELETE FROM "ActiveGame" WHERE id = $1"#)
+        .bind(active_game_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| sanitised_db_error("abandon the active game", &e))?;
+
+    if deleted.rows_affected() == 0 {
+        return Err("Active game not found".to_string());
+    }
+
+    // Durable before it is announced, same rule as add_actions: publishing
+    // first would let a subscriber read a game that a rollback undid.
+    tx.commit()
+        .await
+        .map_err(|e| sanitised_db_error("abandon the active game", &e))?;
+
+    // Subscribers need to know, or a connected client sits on a board that no
+    // longer exists and keeps typing into it.
+    ctx.events.publish(crossword_db::AppEvent::GameAbandoned {
+        active_game_id: active_game_id.to_string(),
+    });
+    Ok(json!({ "abandoned": true }))
 }

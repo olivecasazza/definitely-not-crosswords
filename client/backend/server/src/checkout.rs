@@ -197,6 +197,7 @@ mod tests {
             ("LEMONSQUEEZY_API_KEY", "key"),
             ("LEMONSQUEEZY_STORE_ID", "store"),
             ("LEMONSQUEEZY_VARIANT_ID", "variant"),
+            ("PRO_PRICE_ANNOUNCED", "false"),
             ("PRO_CHECKOUT_DISCOUNT_CODE", "BETA"),
         ])));
         // Each missing credential flips the flag off.

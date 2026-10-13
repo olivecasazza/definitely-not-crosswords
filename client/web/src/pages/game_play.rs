@@ -17,6 +17,7 @@ use crossword_core::game::{
     Cell, Direction, GameAction, Question, QuestionWithAnswerMap,
 };
 use dioxus::prelude::*;
+use futures::channel::mpsc;
 use futures::StreamExt;
 use gloo_timers::future::{IntervalStream, TimeoutFuture};
 use panel_kit::loading::ProgressBar;
@@ -91,6 +92,7 @@ struct PresenceEntry {
     name: String,
     selection: Option<QKey>,
     tick: u64,
+    sequence: i64,
 }
 
 /// A remote player's focused word, projected onto the board as a colored border.
@@ -139,6 +141,21 @@ fn direction_from_str(s: &str) -> Option<Direction> {
     }
 }
 
+fn placeholder_slots(slots: &[ActionSlot]) -> Vec<ActionSlot> {
+    let first_changed = slots.iter().position(|s| s.state != s.previous_state);
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| {
+            s.state != s.previous_state
+                || first_changed
+                    .map(|first| *i < first && !s.state.is_empty())
+                    .unwrap_or(false)
+        })
+        .map(|(_, s)| s.clone())
+        .collect()
+}
+
 /// Build the mutation input + optimistic local actions for a batch of slots.
 /// Shared by placeholder saves and guess submissions — the only difference
 /// is the action type stamped on each letter.
@@ -173,6 +190,107 @@ fn build_action_batch(
         })
         .collect();
     (json!({ "id": game_id, "actions": payload }), local)
+}
+
+/// Write feedback for typed letters. Both writers (placeholder saves and
+/// guesses) were optimistic with no visible pending/failed state, so a
+/// dropped packet read exactly like "my partner just hasn't answered yet".
+/// `Saved` carries the server's per-letter verdict count for the word when
+/// the reply has one — the textual answer to "did this land?", which the
+/// board's red/green wash alone left to inference.
+#[derive(Clone, PartialEq)]
+pub(crate) enum SyncState {
+    Idle,
+    Saving,
+    /// (letters the server agreed with, letters in the word)
+    Saved(Option<(usize, usize)>),
+    Failed,
+}
+
+/// The one writer for typed letters. The wire action type is `placeholder`
+/// either way — a guess is a placeholder save the server answers with
+/// verdicts (DEF-243) — so `guess` only decides whether the saved line
+/// reports the verdict count. Owns the sync lifecycle and the retry batch,
+/// writes the optimistic local letters (so an unsaved word no longer vanishes
+/// from the clue bubbles until the event lands), and reconciles the server's
+/// verdicts on reply. Returns the reply plus this word's verdict map so the
+/// caller can decide word-solved and grid-complete.
+async fn commit_actions(
+    game_id: &str,
+    slots: &[ActionSlot],
+    guess: bool,
+    mut actions: Signal<Vec<GameAction>>,
+    mut sync: Signal<SyncState>,
+    mut failed_batch: Signal<Option<(Vec<ActionSlot>, bool)>>,
+) -> Option<(Value, HashMap<(i32, i32), bool>)> {
+    let (input, new_local) = build_action_batch(slots, game_id, ActionType::Placeholder);
+    let mut next_actions = actions.peek().clone();
+    next_actions.extend(new_local);
+    actions.set(next_actions);
+    sync.set(SyncState::Saving);
+
+    let res = match net::mutation("activeGame.addActions", Some(input)).await {
+        Ok(res) => res,
+        Err(_) => {
+            sync.set(SyncState::Failed);
+            failed_batch.set(Some((slots.to_vec(), guess)));
+            return None;
+        }
+    };
+
+    // Adopt the server's verdicts in place of the optimistic placeholder
+    // batch, so the grid colours from what the server actually decided.
+    //
+    // Only a GUESS adopts those verdicts. A placeholder save (unselect /
+    // direction-toggle / Escape) must keep its letters yellow: the server
+    // derives a verdict from the letter either way (DEF-243), so reconciling a
+    // correct partial word would flip it green the instant the reply lands and
+    // hide the placeholder the save exists to show — which is exactly the
+    // transient `.cw-placeholder` the demo tour races. The authoritative
+    // verdict still arrives moments later via the `GameActionsAdded` broadcast.
+    let mut from_reply: HashMap<(i32, i32), bool> = HashMap::new();
+    if guess {
+        if let Some(returned) = res.get("actions").and_then(|v| v.as_array()) {
+            let reconciled: Vec<GameAction> = returned
+                .iter()
+                .filter_map(|a| serde_json::from_value::<GameAction>(a.clone()).ok())
+                .collect();
+            for a in &reconciled {
+                from_reply.insert(
+                    (a.cord_x, a.cord_y),
+                    a.action_type == ActionType::CorrectGuess,
+                );
+            }
+            if !reconciled.is_empty() {
+                let mut merged = actions.peek().clone();
+                merged.retain(|a| {
+                    !reconciled
+                        .iter()
+                        .any(|r| (r.cord_x, r.cord_y) == (a.cord_x, a.cord_y))
+                });
+                merged.extend(reconciled);
+                actions.set(merged);
+            }
+        }
+    }
+
+    let verdicts = if guess {
+        let right = slots
+            .iter()
+            .filter(|s| from_reply.get(&(s.cord_x, s.cord_y)) == Some(&true))
+            .count();
+        Some((right, slots.len()))
+    } else {
+        None
+    };
+    sync.set(SyncState::Saved(verdicts));
+    failed_batch.set(None);
+    // The saved line answers "did that land?" — once answered it is history,
+    // and the board already shows the letters. Two and a half seconds is
+    // about how long it takes to glance at it after clicking Guess.
+    let mut sync_clear = sync;
+    gloo_timers::callback::Timeout::new(2_500, move || sync_clear.set(SyncState::Idle)).forget();
+    Some((res, from_reply))
 }
 
 /// Parse the `gameMembers` array from `activeGame.get`. `userName` is absent
@@ -212,18 +330,61 @@ fn parse_board(data: &Value) -> (Vec<Question>, Vec<GameAction>) {
     (questions, actions)
 }
 
-/// Replace `questions` / `actions` / `members` wholesale from `activeGame.get`.
+/// Should this connection-state transition trigger a reconcile?
+///
+/// Split out from the subscription setup so the *sequence* is testable without
+/// a live socket — the bug this guards (DEF-235) was not one call behaving
+/// wrongly, it was a whole class of reconnect never re-announcing presence.
+///
+/// The rule: every `Live` after the first one is a reconnect that has just
+/// repaired its subscriptions, so it must reconcile. The first-ever `Live` is
+/// deliberately skipped — there is nothing to reconcile, and re-fetching would
+/// discard the optimistic local merge the player has not submitted yet.
+/// Anything that is not `Live` (connecting, reconnecting, offline) does not
+/// reconcile on its own.
+fn is_reconcile_trigger(state: &net::ConnectionState, seen_live: &mut bool) -> bool {
+    if state != &net::ConnectionState::Live {
+        return false;
+    }
+    // `mem::replace` rather than `mem::take`: return the *prior* value, then
+    // mark it seen. The first `Live` returns `false` (skip the redundant
+    // reconcile), and every `Live` after it returns `true` — so a second `Live`
+    // in the same tick is still a genuine reconnect.
+    std::mem::replace(seen_live, true)
+}
+
+/// Replace `questions` / `actions` / `members` wholesale from `activeGame.get`,
+/// then re-announce our own selection.
 ///
 /// The reconcile step of a reconnect (DEF-175 §3). Every action taken while
 /// the socket was down is missing from the local append-only `actions` list, and
 /// nothing else can recover it — so the only correct repair is to re-read the
 /// server's state and overwrite. All three are already signals, so this is a
 /// `set`, not a re-render of the page.
+///
+/// The re-announce is the part that was missing (DEF-235). Presence is
+/// ephemeral and fire-and-forget: the other players' picture of us lives only as
+/// long as we keep publishing. A dropped socket takes every publish we made over
+/// the dead connection with it, and nothing republished — so the partner kept
+/// rendering us as "working on nothing" until we happened to select a *different*
+/// clue. One reconnect was enough to make a live co-op player go invisible on
+/// their partner's board, which is what `demo.spec.ts`'s presence-ring assertion
+/// kept failing on with a 20s timeout and no ring anywhere in the DOM.
+///
+/// Republishing the current selection (including `None`) is the whole repair,
+/// and it is safe to do here specifically: the reconnect that drove this call has
+/// already re-established the subscription, so the broadcast lands on a live
+/// socket rather than dying with the old one. `selected` is read after the fetch
+/// so the announce reflects where the player is now, not where they were when
+/// the socket dropped. It is the publisher's own `joined` guard (inside
+/// `publish_presence`) that keeps a non-member from publishing.
 fn reconcile_game(
     id: &str,
     questions: Signal<Vec<Question>>,
     actions: Signal<Vec<GameAction>>,
     members: Signal<Vec<MemberInfo>>,
+    selected: Signal<Option<QKey>>,
+    reannounce: impl Fn(Option<QKey>) + 'static,
 ) {
     let id = id.to_string();
     let mut questions = questions;
@@ -239,6 +400,7 @@ fn reconcile_game(
         questions.set(qs);
         actions.set(acts);
         members.set(parse_members(&data));
+        reannounce(*selected.peek());
     });
 }
 
@@ -298,16 +460,20 @@ impl panel_kit::PanelKind for PanelId {
 /// saved layout exists (fresh profile / incognito / CI) — panel-kit persists
 /// to localStorage and re-scales floating geometry on window resize. Fixed
 /// pixel defaults only ever fit the one canvas they were tuned on.
+fn board_panel_height(board_width: f64, viewport_height: f64, margin: f64) -> f64 {
+    const CHROME: f64 = 34.0;
+    const PLAYERS_H: f64 = 46.0;
+    (board_width + PLAYERS_H + CHROME).min(viewport_height - 2.0 * margin)
+}
+
 fn default_layout() -> Vec<panel_kit::PanelWin<PanelId>> {
     let (vw, vh) = viewport();
     const M: f64 = 16.0; // workspace margin / inter-panel gap
-    const CHROME: f64 = 34.0; // panel border + the inset title row
-    const PLAYERS_H: f64 = 46.0; // `.cw-players` strip above the board
     let left_w = (vw * 0.42).clamp(360.0, 900.0);
     // The grid is square — `.cw-board-area` centres it and caps it at the
     // smaller axis — so board height follows *width*. Taking a fraction of
     // the viewport instead just parked dead space above and below the grid.
-    let board_h = (left_w + PLAYERS_H + CHROME).min(vh - 2.0 * M);
+    let board_h = board_panel_height(left_w, vh, M);
     let mut b = panel_kit::LayoutBuilder::new();
     vec![
         b.at(PanelId::Board, M, M, left_w, board_h),
@@ -418,7 +584,7 @@ fn PlayStatusError(message: String) -> Element {
 pub fn GamePlay(id: String) -> Element {
     // --- source-of-truth state ---
     let questions = use_signal(Vec::<Question>::new);
-    let mut actions = use_signal(Vec::<GameAction>::new);
+    let actions = use_signal(Vec::<GameAction>::new);
     let loading = use_signal(|| true);
     let load_error = use_signal(|| Option::<String>::None);
 
@@ -450,8 +616,66 @@ pub fn GamePlay(id: String) -> Element {
     let mut joining = use_signal(|| false);
     let mut join_error = use_signal(String::new);
 
+    // One ordered, coalescing writer for ephemeral presence state.
+    //
+    // Two independent fire-and-forget mutations originally raced: a direction
+    // toggle queued clear(None), then clue selection queued focus(Some), and a
+    // stale clear could arrive last. Serialising removed the reorder, but
+    // replaying every historical focus/clear after 24 UI solves built a queue
+    // of stale states; the final focus could sit behind them for 90s.
+    //
+    // Presence is STATE, not an audit log. Drain everything already pending
+    // and send only the newest state. A clear immediately followed by focus
+    // becomes focus; a user who genuinely clears and stops still sends clear.
+    // One request remains in flight at a time, so wire order stays defined.
+    let presence_tx = use_hook(|| {
+        let (tx, mut rx) = mpsc::unbounded::<Value>();
+        spawn_local(async move {
+            while let Some(mut latest) = rx.next().await {
+                // VUs/components share no state, but one component owns this
+                // receiver; draining here is the single coalescing point.
+                while let Ok(Some(newer)) = rx.try_next() {
+                    latest = newer;
+                }
+                let _ = net::mutation("activeGame.publishPresence", Some(latest)).await;
+            }
+        });
+        tx
+    });
+
+    // Broadcast our selection to the other members (no-op until we join).
+    //
+    // Hoisted above the load/subscribe block because the reconnect reconcile
+    // needs it: presence is fire-and-forget, so a socket that dropped and came
+    // back has to re-announce or the other player renders us as idle for the
+    // rest of the session (DEF-235). The send is ordered/coalesced by the one
+    // presence writer above, so a stale clear cannot overtake a newer focus.
+    let id_for_presence = id.clone();
+    let presence_tx_for_publish = presence_tx.clone();
+    let publish_presence = move |selection: Option<QKey>| {
+        let joined = state
+            .user()
+            .map(|u| members.peek().iter().any(|m| m.user_id == u.id))
+            .unwrap_or(false);
+        if !joined {
+            return;
+        }
+        let input = match selection {
+            Some((n, d)) => json!({ "id": id_for_presence, "number": n, "direction": dir_str(d) }),
+            None => json!({ "id": id_for_presence, "number": null }),
+        };
+        let _ = presence_tx_for_publish.unbounded_send(input);
+    };
+    // Same publisher under its own handle, for the reconnect reconcile.
+    let publish_for_reconcile = publish_presence.clone();
+
     // per-letter input mount handles, so we can drive focus without web-sys.
     let mut input_refs = use_signal(Vec::<Option<Rc<MountedData>>>::new);
+
+    // Write feedback for the last placeholder save / guess (audit P1), plus
+    // the batch a failed write kept so the Retry control can resend it.
+    let sync = use_signal(|| SyncState::Idle);
+    let failed_batch = use_signal(|| Option::<(Vec<ActionSlot>, bool)>::None);
 
     // keep subscription handles alive for the component lifetime.
     let _subs =
@@ -526,12 +750,17 @@ pub fn GamePlay(id: String) -> Element {
             let seen_live = seen_live.clone();
             let id = id_for_load.clone();
             move |s: net::ConnectionState| {
-                if s != net::ConnectionState::Live
-                    || std::mem::replace(&mut *seen_live.borrow_mut(), true)
-                {
+                if !is_reconcile_trigger(&s, &mut seen_live.borrow_mut()) {
                     return;
                 }
-                reconcile_game(&id, questions, actions, members);
+                reconcile_game(
+                    &id,
+                    questions,
+                    actions,
+                    members,
+                    selected,
+                    publish_for_reconcile.clone(),
+                );
             }
         }));
         let on_state_for = move |s: net::ConnectionState| on_state.borrow_mut()(s);
@@ -640,12 +869,22 @@ pub fn GamePlay(id: String) -> Element {
                     .and_then(|x| x.as_str())
                     .unwrap_or("Anonymous Player")
                     .to_string();
+                let sequence = data.get("sequence").and_then(|x| x.as_i64()).unwrap_or(0);
+                if presence
+                    .peek()
+                    .get(&uid)
+                    .map(|e| sequence < e.sequence)
+                    .unwrap_or(false)
+                {
+                    return;
+                }
                 presence.write().insert(
                     uid,
                     PresenceEntry {
                         name,
                         selection,
                         tick: *clock.peek(),
+                        sequence,
                     },
                 );
             },
@@ -781,25 +1020,32 @@ pub fn GamePlay(id: String) -> Element {
 
     // --- selection helpers ---------------------------------------------------
 
-    // Broadcast our selection to the other members (no-op until we join).
-    let id_for_presence = id.clone();
-    let publish_presence = move |selection: Option<QKey>| {
-        let joined = state
-            .user()
-            .map(|u| members.peek().iter().any(|m| m.user_id == u.id))
-            .unwrap_or(false);
-        if !joined {
-            return;
-        }
-        let input = match selection {
-            Some((n, d)) => json!({ "id": id_for_presence, "number": n, "direction": dir_str(d) }),
-            None => json!({ "id": id_for_presence, "number": null }),
-        };
+    // Refresh the current focus before its 45s TTL expires.
+    //
+    // Presence is ephemeral and intentionally not persisted. One missed
+    // websocket delta therefore leaves a peer missing forever if the player
+    // keeps working the same clue: no selection change produces another event.
+    // A 10s heartbeat makes the latest state self-healing (and repairs a
+    // reconnect that missed the original focus) without turning presence into
+    // durable history. The coalescing writer ensures a clear still wins — this
+    // only sends while a selection actually exists.
+    let heartbeat_tx = presence_tx.clone();
+    let heartbeat_id = id.clone();
+    let heartbeat_selected = selected;
+    use_hook(move || {
         spawn_local(async move {
-            let _ = net::mutation("activeGame.publishPresence", Some(input)).await;
+            let mut ticks = IntervalStream::new(10_000);
+            while ticks.next().await.is_some() {
+                if let Some((number, direction)) = *heartbeat_selected.peek() {
+                    let _ = heartbeat_tx.unbounded_send(json!({
+                        "id": heartbeat_id,
+                        "number": number,
+                        "direction": dir_str(direction),
+                    }));
+                }
+            }
         });
-    };
-
+    });
     // Snapshot the in-progress word for a question, pre-filling current letters.
     let publish_for_select = publish_presence.clone();
     let select_question = move |key: QKey| {
@@ -833,27 +1079,24 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     // Submit the current word as a placeholder save (used by unselect).
+    // Write feedback, retry batch and the optimistic local letters live in
+    // `commit_actions` — shared with the guess path.
     let id_for_save = id.clone();
     let submit_placeholder = move || {
         // Only persist letters the player actually changed. Saving the whole
         // prefilled word would restamp every cell — including correct guesses
         // — as a placeholder, hiding them behind placeholder styling.
-        let slots: Vec<ActionSlot> = game_action_data
-            .peek()
-            .iter()
-            .filter(|s| s.state != s.previous_state)
-            .cloned()
-            .collect();
+        let slots = placeholder_slots(game_action_data.peek().as_slice());
         if slots.is_empty() {
             return;
         }
-        let (input, local) = build_action_batch(&slots, &id_for_save, ActionType::Placeholder);
-        // optimistic local merge so the board updates immediately
-        let mut cur = actions.peek().clone();
-        cur.extend(local);
-        actions.set(cur);
+        // commit_actions already merges the optimistic local letters. The id
+        // is cloned into a local: an `async move` block that borrows a
+        // capture moves it, which would make this closure FnOnce and break
+        // every caller that unselects twice.
+        let game_id = id_for_save.clone();
         spawn_local(async move {
-            let _ = net::mutation("activeGame.addActions", Some(input)).await;
+            commit_actions(&game_id, &slots, false, actions, sync, failed_batch).await;
         });
     };
 
@@ -861,7 +1104,7 @@ pub fn GamePlay(id: String) -> Element {
     // broadcasting presence. `save_progress` first persists the typed letters
     // as a placeholder (unselect / direction-toggle); a correct guess already
     // persisted its letters, so it clears without saving.
-    let mut submit_placeholder_for_clear = submit_placeholder.clone();
+    let submit_placeholder_for_clear = submit_placeholder.clone();
     let publish_for_clear = publish_presence.clone();
     let clear_selection = move |save_progress: bool| {
         let was_selected = selected.peek().is_some();
@@ -1258,18 +1501,10 @@ pub fn GamePlay(id: String) -> Element {
         // whether this word is right or whether the grid is finished. It sends
         // the letters and lets the server say: `addActions` returns each
         // action with the verdict *it* derived, plus the grid's real
-        // `solved`/`correct`/`total`. The optimistic local batch is therefore
-        // stamped `placeholder` — a guess in flight — and is replaced by the
-        // server's copy on the way back.
-        let (add_input, new_local) =
-            build_action_batch(&slots, &id_for_guess, ActionType::Placeholder);
-
-        let mut next_actions = actions.peek().clone();
-        next_actions.extend(new_local);
-        actions.set(next_actions);
-
+        // `solved`/`correct`/`total`. `commit_actions` owns that exchange —
+        // optimistic local write, sync feedback, retry batch, verdict merge —
+        // and hands back the reply plus this word's verdict map.
         let id_complete = id_for_guess.clone();
-        let mut actions_for_reply = actions;
         let mut clear_for_guess = clear_selection.clone();
         // The word this guess is about, snapshotted now. A `QKey` would be
         // wrong: the player can select another clue while the request is in
@@ -1280,50 +1515,25 @@ pub fn GamePlay(id: String) -> Element {
             .map(|s| (s.cord_x, s.cord_y))
             .collect();
         let nav = navigator();
+        let game_id = id_for_guess.clone();
         // Dioxus `spawn`: `nav.push` below needs the runtime scope (raw
         // spawn_local panics resolving the history context).
         spawn(async move {
-            let Ok(res) = net::mutation("activeGame.addActions", Some(add_input)).await else {
+            let Some((res, from_reply)) =
+                commit_actions(&game_id, &slots, true, actions, sync, failed_batch).await
+            else {
                 return;
             };
-            // Adopt the server's verdicts in place of the optimistic guess, so
-            // the grid colours from what the server actually decided.
-            if let Some(returned) = res.get("actions").and_then(|v| v.as_array()) {
-                let reconciled: Vec<GameAction> = returned
-                    .iter()
-                    .filter_map(|a| serde_json::from_value::<GameAction>(a.clone()).ok())
-                    .collect();
-                if !reconciled.is_empty() {
-                    // What the server said about this word, and only this word.
-                    let mut from_reply: HashMap<(i32, i32), bool> = HashMap::new();
-                    for a in &reconciled {
-                        from_reply.insert(
-                            (a.cord_x, a.cord_y),
-                            a.action_type == ActionType::CorrectGuess,
-                        );
-                    }
-
-                    let mut merged = actions_for_reply.peek().clone();
-                    merged.retain(|a| {
-                        !reconciled
-                            .iter()
-                            .any(|r| (r.cord_x, r.cord_y) == (a.cord_x, a.cord_y))
-                    });
-                    merged.extend(reconciled);
-                    actions_for_reply.set(merged);
-
-                    // A right guess ends the word, so the editor closes. This is
-                    // what `a46ff5c` (DEF-243) dropped: it computed `is_correct`
-                    // against an answer the client was still being sent, and
-                    // when the answer moved to the server the clear went with it
-                    // and nothing replaced it. A correct word in a puzzle with
-                    // others left therefore kept its entry row, and the letters
-                    // the player had just submitted stayed editable over the
-                    // now-green cells. Only the server's verdict can say this.
-                    if word_solved(&word_for_reply, &from_reply) {
-                        clear_for_guess(false);
-                    }
-                }
+            // A right guess ends the word, so the editor closes. This is what
+            // `a46ff5c` (DEF-243) dropped: it computed `is_correct` against an
+            // answer the client was still being sent, and when the answer moved
+            // to the server the clear went with it and nothing replaced it. A
+            // correct word in a puzzle with others left therefore kept its
+            // entry row, and the letters the player had just submitted stayed
+            // editable over the now-green cells. Only the server's verdict can
+            // say this.
+            if word_solved(&word_for_reply, &from_reply) {
+                clear_for_guess(false);
             }
             if !res.get("solved").and_then(|v| v.as_bool()).unwrap_or(false) {
                 return;
@@ -1340,6 +1550,24 @@ pub fn GamePlay(id: String) -> Element {
                     });
                 }
             }
+        });
+    };
+
+    // Retry the last failed write. The batch remembers its intent so a failed
+    // GUESS retries as a guess (with the verdict line), not a silent save.
+    let id_for_retry = id.clone();
+    let retry_failed = move || {
+        let Some((slots, guess)) = failed_batch.peek().clone() else {
+            return;
+        };
+        // The closure's own copy — `Signal::set` routes through DerefMut, so
+        // it needs a mutable binding here even though the outer `sync` is
+        // only ever read.
+        let mut sync = sync;
+        sync.set(SyncState::Saving);
+        let game_id = id_for_retry.clone();
+        spawn_local(async move {
+            commit_actions(&game_id, &slots, guess, actions, sync, failed_batch).await;
         });
     };
 
@@ -1544,6 +1772,8 @@ pub fn GamePlay(id: String) -> Element {
                 editor_focus,
                 unselect.clone(),
                 submit_guess.clone(),
+                sync.read().clone(),
+                retry_failed.clone(),
             ),
         }
     };
@@ -1621,24 +1851,44 @@ fn step_to_playable(grid: &[Vec<Cell>], from: (i32, i32), dx: i32, dy: i32) -> O
 ///
 /// Built from what is actually DRAWN (`display`), so a letter sitting in the
 /// local draft but not yet committed is announced instead of reading as empty.
-fn cell_aria_label(num: Option<i32>, display: &str, action_type: Option<ActionType>) -> String {
+///
+/// DEF-215: when a remote player's presence projects a ring onto this cell, the
+/// label also carries who and whether that position is live or last-known. The
+/// ring's `title` says the same thing, but `title` never wins over an explicit
+/// `aria-label` — so without this, a screen-reader user on a stale ring hears
+/// the letter and the correctness and nothing about the staleness.
+fn cell_aria_label(
+    num: Option<i32>,
+    display: &str,
+    action_type: Option<ActionType>,
+    presence: Option<(&str, bool)>,
+) -> String {
     let mut label = String::new();
     if let Some(n) = num {
         label.push_str(&format!("{n}, "));
     }
     if display.trim().is_empty() {
         label.push_str("empty");
-        return label;
+    } else {
+        label.push_str(display.trim());
+        label.push_str(", ");
+        label.push_str(match action_type {
+            Some(ActionType::CorrectGuess) => "correct",
+            Some(ActionType::IncorrectGuess) => "incorrect",
+            // A typed-but-uncommitted letter and a saved placeholder are both
+            // "in progress" as far as the board is concerned.
+            _ => "in progress",
+        });
     }
-    label.push_str(display.trim());
-    label.push_str(", ");
-    label.push_str(match action_type {
-        Some(ActionType::CorrectGuess) => "correct",
-        Some(ActionType::IncorrectGuess) => "incorrect",
-        // A typed-but-uncommitted letter and a saved placeholder are both
-        // "in progress" as far as the board is concerned.
-        _ => "in progress",
-    });
+    // Appending presence must not drop the state suffix above (DEF-215 A14):
+    // "is this wrong?" is still answerable after "whose cell is this?".
+    if let Some((name, stale)) = presence {
+        label.push_str(", ");
+        label.push_str(name);
+        if stale {
+            label.push_str(" (last known — reconnecting)");
+        }
+    }
     label
 }
 
@@ -1841,7 +2091,7 @@ fn render_board(
                                                     .any(|c| c.cord_x == x && c.cord_y == y)
                                         })
                                     });
-                                    let (ring, ring_title, ring_stale) = match remote_hit {
+                                    let (ring, ring_title, ring_stale, ring_presence) = match remote_hit {
                                         Some(r) => {
                                             // Last-known, not live: the socket is
                                             // reconnecting, so dim the ring rather
@@ -1872,9 +2122,10 @@ fn render_board(
                                                     if r.stale { " (last known — reconnecting)" } else { "" }
                                                 ),
                                                 r.stale,
+                                                Some((r.name.as_str(), r.stale)),
                                             )
                                         }
-                                        None => (String::new(), String::new(), false),
+                                        None => (String::new(), String::new(), false, None),
                                     };
                                     // A state hook for the e2e suite, not a style: the
                                     // visual treatment is the ring above.
@@ -1886,7 +2137,8 @@ fn render_board(
                                     } else {
                                         cell.modifications.first().map(|m| m.state.clone()).unwrap_or_default()
                                     };
-                                    let aria_label = cell_aria_label(num, &display, action_type);
+                                    let aria_label =
+                                        cell_aria_label(num, &display, action_type, ring_presence);
                                     // Roving tabindex: exactly one cell in the
                                     // grid is a Tab stop, so Tab enters the
                                     // board once instead of 225 times.
@@ -1947,27 +2199,66 @@ fn render_clues(
     editor_focus: impl FnMut() + Clone + 'static,
     unselect: impl FnMut(Event<MouseData>) + Clone + 'static,
     submit_guess: impl FnMut() + Clone + 'static,
+    sync: SyncState,
+    on_retry: impl FnMut() + Clone + 'static,
 ) -> Element {
     let mut toggle_a = toggle_dir.clone();
+    let mut retry = on_retry.clone();
     let across_active = selected_direction == Some(Direction::Across);
     let down_active = selected_direction == Some(Direction::Down);
+    // The saved line. Keyed off the write state, so what a screen reader
+    // hears and what the panel shows cannot disagree. A failed write keeps
+    // the retry affordance beside it; everything else is text only.
+    let (sync_text, sync_cls): (&str, &str) = match &sync {
+        SyncState::Saving => ("Saving…", "cw-sync cw-sync-saving"),
+        SyncState::Saved(None) => ("Saved", "cw-sync cw-sync-saved"),
+        SyncState::Saved(Some((right, total))) => {
+            if right == total {
+                ("Word solved", "cw-sync cw-sync-saved")
+            } else {
+                ("Not yet", "cw-sync cw-sync-saved")
+            }
+        }
+        SyncState::Failed => ("Not saved", "cw-sync cw-sync-failed"),
+        SyncState::Idle => ("", "cw-sync"),
+    };
+    let count_line: Option<String> = match &sync {
+        SyncState::Saved(Some((right, total))) if right != total => {
+            Some(format!("{right} of {total} letters correct"))
+        }
+        _ => None,
+    };
+    let sync_line = match &count_line {
+        Some(line) => format!("{sync_text} — {line}"),
+        None => sync_text.to_string(),
+    };
 
     rsx! {
         div { class: "cw-clues",
             div { class: "cw-clues-head",
                 h2 { "Clues" }
-                div { class: "cw-tabs",
-                    button {
-                        class: if across_active { "cw-tab cw-tab-active-across" } else { "cw-tab" },
-                        onclick: move |_| toggle_a(Direction::Across),
-                        "Across"
+                div { class: "cw-head-right",
+                    span { class: "{sync_cls}", role: "status", "{sync_line}" }
+                    if matches!(sync, SyncState::Failed) {
+                        button {
+                            class: "cw-sync-retry",
+                            onclick: move |_| retry(),
+                            "Retry"
+                        }
                     }
-                    button {
-                        class: if down_active { "cw-tab cw-tab-active-down" } else { "cw-tab" },
-                        onclick: move |_| toggle_dir(Direction::Down),
-                        "Down"
+                        div { class: "cw-tabs",
+                            button {
+                                class: if across_active { "cw-tab cw-tab-active-across" } else { "cw-tab" },
+                                onclick: move |_| toggle_a(Direction::Across),
+                                "Across"
+                            }
+                            button {
+                                class: if down_active { "cw-tab cw-tab-active-down" } else { "cw-tab" },
+                                onclick: move |_| toggle_dir(Direction::Down),
+                                "Down"
+                            }
+                        }
                     }
-                }
             }
             div { class: "cw-clue-list",
                 for m in filtered.iter().cloned() {
@@ -2082,6 +2373,24 @@ fn render_clues(
                     }
                 }
             }
+            // Progressive disclosure, native <details>: keyboard-operable and
+            // in the accessibility tree with no JS focus management. The
+            // audit's P1 — the play surface explained neither its controls
+            // nor its state colors, so a first-time solver had to infer both
+            // at the highest-stakes task.
+            details { class: "cw-help",
+                summary { "How to play" }
+                div { class: "cw-help-body",
+                    p { "Arrow keys move the cursor, typing advances to the next cell, Enter saves and checks the word, Escape clears it. The Across and Down tabs filter the list." }
+                    div { class: "cw-help-legend",
+                        span { class: "cw-legend-item cw-legend-editing", "Word you're editing" }
+                        span { class: "cw-legend-item cw-legend-wrong", "Wrong guess" }
+                        span { class: "cw-legend-item cw-legend-right", "Correct" }
+                        span { class: "cw-legend-item cw-legend-live", "Teammate typing here" }
+                        span { class: "cw-legend-item cw-legend-stale", "Teammate's last spot" }
+                    }
+                }
+            }
         }
     }
 }
@@ -2124,8 +2433,33 @@ fn render_players_strip(
     // pill reads one consistent value.
     let pill = render_conn_pill(conn, retry_now);
 
+    // Roster status in words, before anything goes wrong. Presence was
+    // invisible while healthy and appeared only when it broke, so a partner
+    // who is paused looked identical to one who is typing. Live count
+    // excludes the local player — they are trivially live.
+    let live_now = chips
+        .iter()
+        .filter(|(uid, ..)| Some(uid.as_str()) != my_id)
+        .filter(|(uid, ..)| {
+            presence
+                .get(uid)
+                .is_some_and(|e| tick.saturating_sub(e.tick) <= PRESENCE_TTL_SECS)
+        })
+        .count();
+    let others = chips.len().saturating_sub(1);
+    let roster_line = if others == 0 {
+        "Only you here — copy the invite link to play together".to_string()
+    } else if live_now == 0 {
+        "Waiting for teammates".to_string()
+    } else if stale {
+        format!("{live_now} of {others} live — positions last known")
+    } else {
+        format!("{live_now} of {others} live now")
+    };
+
     rsx! {
         div { class: "cw-players",
+            span { class: "cw-roster-line", "{roster_line}" }
             for (uid, name, is_owner, sel) in chips {
                 {
                     let color = player_color(&uid, my_id);
@@ -2167,6 +2501,13 @@ fn render_players_strip(
                                 span { class: "cw-chip-clue", style: "color: {color};",
                                     "#{n} {dir_str(d).to_lowercase()}"
                                 }
+                            }
+                            // DEF-215: `title` is in the AX tree but lands as a
+                            // `description` on a nameless `generic`, which no
+                            // screen reader announces. A real StaticText in the
+                            // content flow is announced in browse mode instead.
+                            if stale {
+                                span { class: "cw-sr-only", "last known position, reconnecting" }
                             }
                         }
                     }
@@ -2306,10 +2647,14 @@ const GAME_CSS: &str = r#"
 .cw-board-col { display: flex; flex-direction: column; height: 100%; width: 100%; }
 .cw-board-area { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 4px; box-sizing: border-box; container-type: size; }
 .cw-players { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--border-app); }
+/* The roster's status in words — takes its own row (flex-basis 100%) above the
+   chips so "who is actually here" is answered before anything goes wrong. */
+.cw-roster-line { flex-basis: 100%; font-family: var(--font-sans); font-size: var(--fs-2xs);
+  font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
 .cw-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border-app); border-bottom-width: 2px; font-size: var(--fs-xs); font-family: var(--font-sans); color: var(--text-primary); background: var(--bg-card); }
 .cw-chip-tag { font-size: var(--fs-2xs); font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); border: 1px solid var(--border-app); padding: 0 4px; }
 .cw-chip-clue { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
-.cw-invite-btn { margin-left: auto; padding: 4px 12px; font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
+.cw-invite-btn { margin-left: auto; padding: 4px 12px; position: relative; font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .cw-invite-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
 /* The co-op socket's status pill (DEF-175 §5). Rendered in the roster bar, which
    is the co-op surface: always visible, already carrying per-player live state,
@@ -2342,7 +2687,7 @@ const GAME_CSS: &str = r#"
 .cw-join-card { display: flex; flex-direction: column; gap: 12px; max-width: 22rem; padding: 24px 28px; text-align: center; background: var(--bg-card); border: 1px solid var(--border-app); }
 .cw-join-card h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
 .cw-join-card p { margin: 0; font-size: 12px; }
-.cw-join-card .error { font-size: 11px; font-family: var(--mono); }
+.cw-join-card .error { font-size: var(--fs-2xs); font-family: var(--mono); }
 .cw-board { display: grid; gap: var(--cw-gap, 3px); max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; }
 /* min-width/min-height:0 is load-bearing: grid items default to `auto`, whose
    automatic minimum size floors each 1fr track at the cell's content size. The
@@ -2448,8 +2793,15 @@ const GAME_CSS: &str = r#"
    would make the one cell the player is looking at a black hole among white
    ones. The fill tokens stay pale with dark ink in both themes (styles.rs). */
 .cw-focused { --cw-wash: var(--fill-yellow); --cw-ink: var(--fill-ink); transform: scale(1.05); z-index: 2; }
-.cw-incorrect { --cw-wash: color-mix(in srgb, var(--pastel-red) 15%, transparent); --cw-ink: var(--pastel-red); }
-.cw-correct { --cw-wash: color-mix(in srgb, var(--pastel-green) 15%, transparent); --cw-ink: var(--pastel-green); }
+/* Ink is --text-primary on BOTH outcome washes. The old per-outcome inks put
+   the same hue's dark form on top of its own 15% wash: red-on-red measured
+   4.45:1 in light mode (AA wants 4.5) and green-on-green sat at 4.93 — the
+   outcome was carried by the letters instead of the wash, exactly what the
+   two-channel split below exists to prevent. The wash and the border still
+   read red/green; the letters just stop competing with them. Same rule the
+   clue bubbles and .cw-selected already follow. */
+.cw-incorrect { --cw-wash: color-mix(in srgb, var(--pastel-red) 15%, transparent); --cw-ink: var(--text-primary); }
+.cw-correct { --cw-wash: color-mix(in srgb, var(--pastel-green) 15%, transparent); --cw-ink: var(--text-primary); }
 /* Border channel, lowest precedence first. The outcome classes set their own
    border colour so a wrong cell that is NOT selected still reads as wrong from
    the outline alone; selection then overrides it, which is what makes a
@@ -2466,7 +2818,7 @@ const GAME_CSS: &str = r#"
 .cw-correct .cw-num { color: var(--text-primary); }
 .cw-char { pointer-events: none; line-height: 1; }
 
-.cw-link-btn { margin-left: auto; background: none; border: none; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
+.cw-link-btn { margin-left: auto; background: none; border: none; color: var(--text-secondary); font-size: var(--fs-2xs); cursor: pointer; position: relative; }
 .cw-link-btn:hover { color: var(--text-primary); }
 /* The inline editor, inside the selected clue row. `.cw-clue-actions` used to
    sit at `margin-top: auto` in a full-height panel; in a content-sized row that
@@ -2489,15 +2841,58 @@ const GAME_CSS: &str = r#"
    both themes, and squares off with the input instead of feathering. */
 .cw-input-focused { border-color: var(--pastel-yellow); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pastel-yellow) 35%, transparent); }
 .cw-clue-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
-.cw-btn-cancel { font-family: var(--font-sans); padding: 8px 16px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; }
+.cw-btn-cancel { font-family: var(--font-sans); padding: 8px 16px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; min-height: 44px; }
 .cw-btn-cancel:hover { color: var(--text-primary); border-color: var(--border-hover); }
-.cw-btn-guess { font-family: var(--font-sans); padding: 8px 20px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--pastel-yellow); background: var(--pastel-yellow); color: var(--contrast-ink); cursor: pointer; }
+.cw-btn-guess { font-family: var(--font-sans); padding: 8px 20px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--pastel-yellow); background: var(--pastel-yellow); color: var(--contrast-ink); cursor: pointer; min-height: 44px; }
 
 .cw-clues { display: flex; flex-direction: column; gap: 10px; height: 100%; }
-.cw-clues-head { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-app); padding-bottom: 8px; }
+/* The head's padding is deliberately ABOVE-heavier: the h2 sits in a flex row
+   beside the tabs, and the detector reads a heading with more space below it
+   than above as bound to the block beneath it. 12px above vs 2px below (plus
+   the panel's own top inset) keeps it reading as the panel's title. */
+.cw-clues-head { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-app); padding: 12px 0 2px; gap: .5rem; }
 .cw-clues-head h2 { font-size: 14px; color: var(--text-secondary); margin: 0; }
+/* Write feedback (saving / saved-with-verdict / not-saved + Retry). The
+   severity colour is the same pastel pair the cells use, and the text says
+   the state outright, so the line never rests on hue alone. */
+.cw-head-right { display: flex; align-items: center; gap: .5rem; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.cw-sync { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary);
+  display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
+.cw-sync-saved { color: var(--pastel-green); }
+.cw-sync-failed { color: var(--pastel-red); }
+.cw-sync-retry { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--pastel-red);
+  background: transparent; border: 1px solid var(--pastel-red); border-radius: 0;
+  padding: .125rem .375rem; cursor: pointer; position: relative; }
+.cw-sync-retry:hover { color: var(--text-primary); border-color: var(--text-primary); }
+/* How-to-play disclosure. Sits at the bottom of the panel, below the
+   scrolling list, so it is always reachable without scrolling to the end. */
+.cw-help { border-top: 1px solid var(--border-app); padding-top: 6px; }
+.cw-help summary { font-family: var(--font-sans); font-size: var(--fs-2xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary);
+  cursor: pointer; padding: .125rem 0; }
+.cw-help summary:hover { color: var(--text-primary); }
+.cw-help-body { display: flex; flex-direction: column; gap: .5rem; padding: .25rem 0 .125rem;
+  font-size: var(--fs-xs); line-height: 1.5; color: var(--text-secondary); }
+.cw-help-body p { margin: 0; max-width: 42ch; }
+.cw-help-legend { display: flex; flex-wrap: wrap; gap: .25rem .875rem; }
+.cw-legend-item { display: inline-flex; align-items: center; gap: .3rem; }
+/* The swatch reuses the exact state channel it names — border colour for the
+   outline states, solid ring for live presence, dashed for stale — so the
+   legend key and the board read as the same system. */
+.cw-legend-item::before { content: ""; width: 10px; height: 10px; flex-shrink: 0;
+  border: 2px solid var(--text-secondary); box-sizing: border-box; }
+.cw-legend-editing::before { border-color: var(--pastel-yellow); }
+.cw-legend-wrong::before { border-color: var(--pastel-red); }
+.cw-legend-right::before { border-color: var(--pastel-green); }
+.cw-legend-live::before { border-color: var(--presence-2); border-radius: 50%; }
+.cw-legend-stale::before { border-color: var(--presence-2); border-radius: 50%; border-style: dashed; }
 .cw-tabs { display: flex; gap: 4px; }
-.cw-tab { font-family: var(--font-sans); padding: 4px 12px; font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.cw-tab { font-family: var(--font-sans); padding: 4px 12px; font-size: var(--fs-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 0; border: 1px solid var(--border-app); background: transparent; color: var(--text-secondary); cursor: pointer; position: relative; }
+.cw-tab::after, .cw-invite-btn::after, .cw-link-btn::after, .cw-sync-retry::after {
+  content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: max(100%, 44px); height: max(100%, 44px); }
 .cw-tab:hover { border-color: var(--border-hover); }
 /* Active direction tab: same reasoning as .cw-focused. "Active" is read against
    the other tab, so the filled one has to be the lighter of the pair in both
@@ -2513,10 +2908,15 @@ const GAME_CSS: &str = r#"
 .cw-clue-body { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .cw-clue-row-text { font-size: 13px; color: var(--text-secondary); line-height: 1.4; }
 .cw-bubbles { display: flex; flex-wrap: wrap; gap: 4px; }
-.cw-bubble { width: 20px; height: 20px; border-radius: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.cw-bubble { width: 20px; height: 20px; border-radius: 0; display: flex; align-items: center; justify-content: center; font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; }
 .cw-bubble-empty { background: var(--bg-cell-empty); border: 1px solid var(--border-app); opacity: 0.3; }
 .cw-bubble.cw-placeholder { background: var(--bg-cell-letter); color: var(--text-primary); border: 1px solid var(--pastel-yellow); }
-.cw-bubble.cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 18%, transparent); color: var(--pastel-red); border: 1px solid var(--pastel-red); }
+/* Ink is --text-primary, not --pastel-red: red letters on the 18% red wash
+   measured 4.45:1 in light mode — under AA on the smallest text in the app.
+   The hue still reads from the border and the wash; the letters just stop
+   being the same colour as their own background's pigment. Same ink-on-wash
+   rule the board cells use (--cw-ink). */
+.cw-bubble.cw-incorrect { background: color-mix(in srgb, var(--pastel-red) 18%, transparent); color: var(--text-primary); border: 1px solid var(--pastel-red); }
 .cw-bubble.cw-correct { background: color-mix(in srgb, var(--pastel-green) 18%, transparent); color: var(--pastel-green); border: 1px solid var(--pastel-green); }
 
 /* Desktop tiling stretches every panel to the full workspace height, which left
@@ -2534,6 +2934,7 @@ const GAME_CSS: &str = r#"
    fall back to the viewport, where it never binds. */
 @media (max-width: 760px) {
   .cw-board-col { height: auto; }
+  .panel-board { height: auto !important; }
   .cw-board-area { flex: none; container-type: inline-size; }
 
   /* Mobile stacks Active Clue BELOW the board, so focusing a letter input
@@ -2583,6 +2984,54 @@ mod tests {
             vec![block(), block(), cell(2, 3), cell(3, 3), cell(4, 3)],
             vec![cell(0, 4), cell(1, 4), cell(2, 4), cell(3, 4), cell(4, 4)],
         ]
+    }
+
+    #[test]
+    fn board_panel_height_is_capped_by_viewport() {
+        assert_eq!(board_panel_height(360.0, 664.0, 16.0), 440.0);
+        assert_eq!(board_panel_height(900.0, 664.0, 16.0), 632.0);
+    }
+
+    #[test]
+    fn placeholder_save_keeps_prefilled_prefix_when_later_letter_changes() {
+        let slots = vec![
+            ActionSlot {
+                cord_x: 0,
+                cord_y: 0,
+                previous_state: "A".to_string(),
+                state: "A".to_string(),
+            },
+            ActionSlot {
+                cord_x: 1,
+                cord_y: 0,
+                previous_state: String::new(),
+                state: "B".to_string(),
+            },
+            ActionSlot {
+                cord_x: 2,
+                cord_y: 0,
+                previous_state: String::new(),
+                state: String::new(),
+            },
+        ];
+
+        let saved = placeholder_slots(&slots);
+
+        assert_eq!(saved.len(), 2);
+        assert_eq!(saved[0].state, "A");
+        assert_eq!(saved[1].state, "B");
+    }
+
+    #[test]
+    fn placeholder_save_does_not_restamp_a_fully_unchanged_word() {
+        let slots = vec![ActionSlot {
+            cord_x: 0,
+            cord_y: 0,
+            previous_state: "A".to_string(),
+            state: "A".to_string(),
+        }];
+
+        assert!(placeholder_slots(&slots).is_empty());
     }
 
     #[test]
@@ -2670,20 +3119,64 @@ mod tests {
     #[test]
     fn cell_aria_label_reads_number_letter_then_state() {
         assert_eq!(
-            cell_aria_label(Some(14), "R", Some(ActionType::CorrectGuess)),
+            cell_aria_label(Some(14), "R", Some(ActionType::CorrectGuess), None),
             "14, R, correct"
         );
         assert_eq!(
-            cell_aria_label(Some(7), "", Some(ActionType::CorrectGuess)),
+            cell_aria_label(Some(7), "", Some(ActionType::CorrectGuess), None),
             "7, empty"
         );
         assert_eq!(
-            cell_aria_label(None, "Q", Some(ActionType::IncorrectGuess)),
+            cell_aria_label(None, "Q", Some(ActionType::IncorrectGuess), None),
             "Q, incorrect"
         );
         // A letter in the local draft but not yet committed is still drawn, so
         // it is announced rather than read as empty.
-        assert_eq!(cell_aria_label(Some(3), "A", None), "3, A, in progress");
+        assert_eq!(
+            cell_aria_label(Some(3), "A", None, None),
+            "3, A, in progress"
+        );
+    }
+
+    /// DEF-215 A14: a cell under a remote ring has to say whose cell it is, and
+    /// a stale one has to say the position is last-known — without that append
+    /// costing the letter its state suffix.
+    #[test]
+    fn cell_aria_label_appends_presence_without_dropping_state() {
+        assert_eq!(
+            cell_aria_label(
+                Some(14),
+                "R",
+                Some(ActionType::CorrectGuess),
+                Some(("ada", false))
+            ),
+            "14, R, correct, ada"
+        );
+        assert_eq!(
+            cell_aria_label(
+                Some(14),
+                "R",
+                Some(ActionType::CorrectGuess),
+                Some(("ada", true))
+            ),
+            "14, R, correct, ada (last known — reconnecting)"
+        );
+        // An empty square on somebody's ring still carries the ring: "empty" is
+        // the whole state there is, so there is nothing to preserve behind it.
+        assert_eq!(
+            cell_aria_label(
+                Some(7),
+                "",
+                Some(ActionType::CorrectGuess),
+                Some(("ada", true))
+            ),
+            "7, empty, ada (last known — reconnecting)"
+        );
+        // In-progress is the default suffix and must survive the same way.
+        assert_eq!(
+            cell_aria_label(None, "A", None, Some(("bo", true))),
+            "A, in progress, bo (last known — reconnecting)"
+        );
     }
 
     /// A word running across row 1 from (0,1) for 3 cells, and one running down
@@ -2872,5 +3365,72 @@ mod tests {
             ((8, 8), true),
         ]);
         assert!(!word_solved(&word, &mixed));
+    }
+
+    /// DEF-235: the presence ring never appeared for a live co-op player.
+    ///
+    /// Presence is fire-and-forget, so a reconnect silently dropped every
+    /// publish we had made over the dead socket. Nothing republished, which
+    /// left the partner rendering us as idle for the rest of the session — the
+    /// exact "no ring anywhere in the DOM after 20s" the demo tour hit. The
+    /// repair rides the reconcile, so the guard has to fire on every reconnect,
+    /// not just the first.
+    #[test]
+    fn reconnect_after_the_first_live_still_triggers_a_reconcile() {
+        use net::ConnectionState::*;
+
+        let mut seen_live = false;
+
+        // Cold start: Connecting → Live is the first-ever Live. Nothing to
+        // reconcile (and re-fetching would drop the un-submitted optimistic
+        // merge), so it must not fire.
+        assert!(!is_reconcile_trigger(&Connecting, &mut seen_live));
+        assert!(!is_reconcile_trigger(&Live, &mut seen_live));
+
+        // The blip that broke it: the socket drops and comes back. This is the
+        // transition that must reconcile — and therefore must re-announce
+        // presence.
+        assert!(!is_reconcile_trigger(
+            &Reconnecting { attempt: 1 },
+            &mut seen_live
+        ));
+        assert!(
+            is_reconcile_trigger(&Live, &mut seen_live),
+            "a reconnect must reconcile so presence is re-announced"
+        );
+
+        // And it keeps firing: a player whose connection flaps repeatedly must
+        // be re-announced on every repair, not just the first.
+        assert!(!is_reconcile_trigger(
+            &Reconnecting { attempt: 2 },
+            &mut seen_live
+        ));
+        assert!(is_reconcile_trigger(&Live, &mut seen_live));
+    }
+
+    /// A `Live` is the only thing that reconciles, and a non-`Live` state must
+    /// not consume the first-`Live` slot. `Connecting`, `Reconnecting` and
+    /// `Offline` leave the board alone and leave `seen_live` untouched, so the
+    /// first-ever `Live` is still recognised as the first one and skipped.
+    #[test]
+    fn non_live_transitions_never_reconcile_or_consume_the_first_live() {
+        use net::ConnectionState::*;
+
+        let mut seen_live = false;
+
+        for state in [Connecting, Reconnecting { attempt: 3 }, Offline] {
+            assert!(
+                !is_reconcile_trigger(&state, &mut seen_live),
+                "{state:?} must not reconcile"
+            );
+        }
+        assert!(
+            !seen_live,
+            "a non-Live state must not consume the first-Live slot"
+        );
+        // The first-ever `Live` is skipped, not reconciled...
+        assert!(!is_reconcile_trigger(&Live, &mut seen_live));
+        // ...and every `Live` after it is a genuine reconnect.
+        assert!(is_reconcile_trigger(&Live, &mut seen_live));
     }
 }

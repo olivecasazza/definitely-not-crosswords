@@ -12,7 +12,16 @@ on:
     - cron: "0 8 * * *" # nightly ~00:00 PT — canary against staging
   release:
     types: [published] # cut a release -> record + publish the demo video
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      prod_url:
+        description: Production canary URL override for forced-failure verification
+        required: false
+        type: string
+      prod_bundle_path:
+        description: Production bundle path override for forced-failure verification
+        required: false
+        type: string
 
 concurrency:
   group: e2e-canary
@@ -106,14 +115,50 @@ jobs:
             echo "::error::no /_assets/<16-hex>/crossword-web.js in $E2E_BASE_URL/ — bundle layout changed; update this check"
             exit 1
           fi
-          wasm_url="$E2E_BASE_URL$(dirname "$glue")/crossword-web_bg.wasm"
-          for url in "$E2E_BASE_URL$glue" "$wasm_url"; do
-            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url")"
-            if [ "$code" != "200" ]; then
-              echo "::error::served artifact $url returned HTTP $code (want 200) — possible poisoned edge cache entry"
+          probe_artifact_url() {
+            url="$1"
+            samples="$2"
+            label="$3"
+            ok=0
+            http_bad=0
+            transport_bad=0
+            codes=""
+            transport_errors=""
+            for i in $(seq 1 "$samples"); do
+              err_file="$(mktemp)"
+              rc=0
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url" 2>"$err_file")" || rc=$?
+              err="$(<"$err_file")"
+              rm -f "$err_file"
+              if [ "$rc" -ne 0 ] || [ "$code" = "000" ]; then
+                transport_bad=$((transport_bad + 1))
+                transport_errors="$transport_errors sample $i: curl exit $rc http $code${err:+ ($err)};"
+                continue
+              fi
+              codes="$codes$code "
+              if [ "$code" = "200" ]; then
+                ok=$((ok + 1))
+              else
+                http_bad=$((http_bad + 1))
+              fi
+            done
+            if [ "$http_bad" -gt 0 ]; then
+              echo "::error::$label artifact $url returned HTTP non-200 in $http_bad/$samples completed samples [$codes] — possible poisoned edge cache entry / blank front door for those visitors"
+              [ "$transport_bad" -gt 0 ] && echo "::warning::$label artifact $url also had transport errors in $transport_bad/$samples samples:$transport_errors"
               exit 1
             fi
-            echo "ok  $url -> 200"
+            if [ "$ok" -eq 0 ]; then
+              echo "::error::$label artifact $url had only transport errors in $transport_bad/$samples samples:$transport_errors"
+              exit 1
+            fi
+            if [ "$transport_bad" -gt 0 ]; then
+              echo "::warning::$label artifact $url had transport errors in $transport_bad/$samples samples after retries:$transport_errors"
+            fi
+            echo "ok  $url -> 200 on $ok/$samples completed samples"
+          }
+          wasm_url="$E2E_BASE_URL$(dirname "$glue")/crossword-web_bg.wasm"
+          for url in "$E2E_BASE_URL$glue" "$wasm_url"; do
+            probe_artifact_url "$url" 3 staging
           done
       - name: Install deps
         working-directory: e2e
@@ -138,6 +183,239 @@ jobs:
           [ -z "$DISCORD" ] && { echo "DISCORD_WEBHOOK unset; skipping alert"; exit 0; }
           curl -sf -H 'Content-Type: application/json' \
             -d "{\"content\":\"🚨 crosswords staging e2e canary FAILED — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
+            "$DISCORD" || true
+
+  multiplayer-soak:
+    name: Four-player multiplayer soak
+    runs-on: ubuntu-latest
+    # Separate from `canary` for the same reason `production-artifact` is: the
+    # soak needs four seeded accounts and a playable game, so it fails for
+    # reasons that have nothing to do with whether the canary's login page
+    # renders. Coupling them would mean a missing e2e secret suppresses the demo
+    # recording AND the front-door canary.
+    #
+    # Runs on a schedule and on demand only — never on `release`. A release
+    # fires minutes before Flux has rolled the new image out (see the version
+    # gate in the `canary` job), so a four-client soak would race the rollout
+    # and report contention against a half-rolled deployment.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+    env:
+      E2E_BASE_URL: https://crosswords-staging.casazza.io
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      E2E_EMAIL_2: ${{ secrets.E2E_EMAIL_2 }}
+      E2E_PASSWORD_2: ${{ secrets.E2E_PASSWORD_2 }}
+      E2E_EMAIL_3: ${{ secrets.E2E_EMAIL_3 }}
+      E2E_PASSWORD_3: ${{ secrets.E2E_PASSWORD_3 }}
+      E2E_EMAIL_4: ${{ secrets.E2E_EMAIL_4 }}
+      E2E_PASSWORD_4: ${{ secrets.E2E_PASSWORD_4 }}
+    steps:
+      # main's specs, same reasoning as the canary job: a `schedule` event can
+      # land on any ref, and the specs describe the deployed site.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      # Unblock before the browsers start. This reconciles the four accounts
+      # (signup is idempotent and needs no admin credential), picks the
+      # in-progress game with the MOST open cells, and joins players 2-4. It
+      # exits non-zero on a partial state on purpose: a soak that ran against
+      # three accounts is not a four-player result.
+      - name: Reconcile accounts and provision a playable game
+        # Explicit bash, not GitHub's default. A `container:` job runs `run:`
+        # under `sh -e`, which on this image is dash: `set -o pipefail` aborts
+        # with "Illegal option" before the loop is ever entered, so this step
+        # failed on every dispatch regardless of account state. The indirect
+        # expansion `${!1:-}` below is a bashism too.
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! command -v jq >/dev/null; then
+            apt-get update
+            apt-get install -y jq
+          fi
+          for pair in "E2E_EMAIL E2E_PASSWORD" "E2E_EMAIL_2 E2E_PASSWORD_2" \
+                      "E2E_EMAIL_3 E2E_PASSWORD_3" "E2E_EMAIL_4 E2E_PASSWORD_4"; do
+            set -- $pair
+            if [ -z "${!1:-}" ] || [ -z "${!2:-}" ]; then
+              echo "::error::$1/$2 not set as repo secrets — a four-player soak needs four distinct accounts."
+              echo "Add them (see secrets.yaml.example) or this job cannot run. Not self-skipping:"
+              echo "a green job that tested one player would read as a passing soak."
+              exit 1
+            fi
+          done
+          # Only the machine-readable tail may reach the env file. The runner
+          # splits each line of $GITHUB_ENV on the FIRST `=`, so a banner like
+          # `== preflight ==` parses as an empty variable name and the step dies
+          # with "Value cannot be null. (Parameter 'name')" before the soak ever
+          # starts. `tee` (not `tee -a`) keeps the human-readable table in the
+          # job log and on disk; the grep is anchored so only whole
+          # `NAME=value` assignments are forwarded. With `-e -o pipefail` a
+          # non-zero script still fails the step, and a successful run that
+          # emitted no assignments fails too — which is correct, since the soak
+          # cannot pick a game without them.
+          ./scripts/multiplayer-bot-admin.sh --apply \
+            | tee multiplayer-bot-admin.log \
+            | grep -E '^[A-Za-z_][A-Za-z0-9_]*=' >> "$GITHUB_ENV"
+      - name: Install deps
+        working-directory: e2e
+        run: npm ci
+      - name: Run four-player soak
+        id: soak
+        working-directory: e2e
+        # `if: always()` on the NEXT step, not here: this step must genuinely
+        # fail the job on a red suite. The metrics step records the outcome
+        # either way, so a failing soak still reaches the dashboard.
+        run: |
+          set +e
+          started=$(date +%s)
+          npx playwright test multiplayer-soak.spec.ts --reporter=list,html
+          code=$?
+          elapsed=$(( $(date +%s) - started ))
+          case $code in
+            0) status=pass ;;
+            2) status=skip ;;
+            *) status=fail ;;
+          esac
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "duration=$elapsed" >> "$GITHUB_OUTPUT"
+          exit $code
+      # The multiplayer dashboard queries
+      # definitely_not_crosswords_ci_test_state{suite="multiplayer-soak"}. Nothing
+      # in this repo emitted that series before this step, which is why the
+      # dashboards were permanently empty. Runs on failure too: a red soak that
+      # never records its own outcome is exactly the run you need to see.
+      - name: Emit soak metrics
+        if: always()
+        run: |
+          ./scripts/emit-test-metrics.sh \
+            --suite multiplayer-soak \
+            --status "${{ steps.soak.outputs.status || 'fail' }}" \
+            --cases 1 \
+            --duration "${{ steps.soak.outputs.duration || 0 }}" \
+            -o soak-metrics.prom
+          # Push only when a pushgateway exists; a missing scrape target must
+          # not turn a metrics step into a red job.
+          if [ -n "${PUSHGATEWAY_URL:-}" ]; then
+            PUSHGATEWAY_URL="$PUSHGATEWAY_URL" \
+              ./scripts/publish-test-metrics.sh soak-metrics.prom || \
+              echo "::warning::pushgateway publish failed; metrics are in the artifact"
+          fi
+      - name: Upload soak artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multiplayer-soak-results
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+            soak-metrics.prom
+          retention-days: 14
+      - name: Alert Discord on failure
+        if: failure()
+        env:
+          DISCORD: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          [ -z "$DISCORD" ] && { echo "DISCORD_WEBHOOK unset; skipping alert"; exit 0; }
+          curl -sf -H 'Content-Type: application/json' \
+            -d "{\"content\":\"🚨 crosswords 4-player multiplayer soak FAILED — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
+            "$DISCORD" || true
+
+  protocol-load:
+    name: Multiplayer protocol load (k6)
+    runs-on: ubuntu-latest
+    # Deliberately NOT `needs: multiplayer-soak`. The load test is what
+    # quantifies the crossing-cell contention the soak can only observe once,
+    # and gating one on the other means the number that matters is unavailable
+    # exactly when the soak is already red. Both jobs reconcile their own state.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+    env:
+      E2E_BASE_URL: https://crosswords-staging.casazza.io
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      E2E_EMAIL_2: ${{ secrets.E2E_EMAIL_2 }}
+      E2E_PASSWORD_2: ${{ secrets.E2E_PASSWORD_2 }}
+      E2E_EMAIL_3: ${{ secrets.E2E_EMAIL_3 }}
+      E2E_PASSWORD_3: ${{ secrets.E2E_PASSWORD_3 }}
+      E2E_EMAIL_4: ${{ secrets.E2E_EMAIL_4 }}
+      E2E_PASSWORD_4: ${{ secrets.E2E_PASSWORD_4 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      # Take ownership of the checkout before nix reads it. `container:` runs
+      # this job as root but bind-mounts the workspace from the host, so the
+      # tree belongs to the host runner's uid. Nix resolves `./client#…` — a
+      # path that sits inside a git repo — as a `git+file://…?shallow=1` flake
+      # input and opens it with libgit2, which refuses a repo it does not own:
+      #   error: opening Git repository "/__w/…": repository path '/__w/…' is
+      #   not owned by current user (libgit2 error code = 7)
+      # `actions/checkout`'s `set-safe-directory: true` cannot help: that is
+      # git-CLI config written to a temporary HOME, and the check that fails is
+      # libgit2's own owner validation. `$(id -u)`/`$(id -g)` rather than a
+      # literal `root` so this stays correct if the image ever drops privileges.
+      - name: Take ownership of the checkout
+        run: chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+      - name: Cache Nix store
+        uses: cachix/cachix-action@v17
+        env:
+          USER: root
+        with:
+          name: nix-community
+          skipPush: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      # `nix run` rather than `nix build`: the load scenario needs a LIVE host,
+      # so it can never be a `checks` derivation (the repo rule is that Nix
+      # verification lives in checks and GHA keeps only non-Nix gates). The flake
+      # supplies the pinned k6 + the scenario; the scenario needs the network.
+      - name: Run k6 multiplayer load
+        # Explicit bash: this is a `container:` job, so GitHub would run it
+        # under `sh -e` and `set -o pipefail` below would abort with
+        # "Illegal option" instead of enforcing the threshold.
+        shell: bash
+        run: |
+          # stdout carries the Prometheus exposition format (handleSummary
+          # returns it as `stdout`), so tee it to a file for the push step.
+          # `set -o pipefail` so a threshold breach still fails the job: the
+          # crossing-conflict threshold is the whole point of this gate.
+          set -o pipefail
+          nix run --accept-flake-config --impure \
+            --option allow-import-from-derivation true \
+            ./client#crossword-load -- run multiplayer.js \
+            --env SOAK_DURATION="${SOAK_DURATION:-60s}" \
+            --env TRPC_ERROR_RATE_MAX="${TRPC_ERROR_RATE_MAX:-0.01}" \
+            2>&1 | tee k6-metrics.prom
+      # The summary is also uploaded below. Push to the pushgateway only when
+      # one is configured: this repo has no PUSHGATEWAY_URL today, and a
+      # missing scrape target must not fail the job that produced the numbers.
+      - name: Publish metrics to pushgateway
+        if: env.PUSHGATEWAY_URL != ''
+        run: |
+          nix run --accept-flake-config --impure ./client#crossword-load -- version >/dev/null
+          ./scripts/publish-test-metrics.sh k6-metrics.prom || \
+            echo "::warning::pushgateway publish failed; metrics are still in the artifact"
+      - name: Upload load summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multiplayer-load-summary
+          path: |
+            load-summary.json
+            k6-metrics.prom
+          retention-days: 14
+      - name: Alert Discord on failure
+        if: failure()
+        env:
+          DISCORD: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          [ -z "$DISCORD" ] && { echo "DISCORD_WEBHOOK unset; skipping alert"; exit 0; }
+          curl -sf -H 'Content-Type: application/json' \
+            -d "{\"content\":\"🚨 crosswords multiplayer load FAILED (crossing-cell contention?) — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
             "$DISCORD" || true
 
   production-artifact:
@@ -168,36 +446,80 @@ jobs:
       # Runs on the same triggers as the rest of the canary.
       - name: Probe production's served bundle
         env:
-          PROD_URL: https://crosswords.casazza.io
+          PROD_URL: ${{ inputs.prod_url || 'https://crosswords.casazza.io' }}
+        # Explicit bash. This job has no `container:`, so GitHub already
+        # defaults to bash and this step is not currently broken — but the two
+        # steps below it are one `container:` line away from the same
+        # "Illegal option -o pipefail" death as multiplayer-soak, and the
+        # default flips silently with that line. Pinned, not implicit.
+        shell: bash
         run: |
           set -uo pipefail
-          index="$(curl -fsS --max-time 30 "$PROD_URL/")" || {
-            echo "::error::production index.html unreachable at $PROD_URL/"; exit 1; }
+          index=""
+          if [ -z "${{ inputs.prod_bundle_path }}" ]; then
+            index="$(curl -fsS --max-time 30 "$PROD_URL/")" || {
+              echo "::error::production index.html unreachable at $PROD_URL/"; exit 1; }
+          fi
           # Same anchor as the staging probe, for the same reason: the boot
           # card's CSS comment in <head> names a `/_assets/<64-hex>/…` example
           # before the real <script> tag, and an unanchored match probes a URL
           # that never existed. That is how a green production probe became a
           # permanent red one the moment this build shipped.
-          glue="$(printf '%s' "$index" | grep -o '/_assets/[0-9a-f]\{16\}/crossword-web\.js' | head -1 || true)"
+          glue="${{ inputs.prod_bundle_path }}"
           if [ -z "$glue" ]; then
-            echo "::error::no /_assets/<16-hex>/crossword-web.js in production index.html — bundle layout changed; update this check"
-            exit 1
+            glue="$(printf '%s' "$index" | grep -o '/_assets/[0-9a-f]\{16\}/crossword-web\.js' | head -1 || true)"
+            if [ -z "$glue" ]; then
+              echo "::error::no /_assets/<16-hex>/crossword-web.js in production index.html — bundle layout changed; update this check"
+              exit 1
+            fi
           fi
           # Sample repeatedly instead of once. A poisoned edge entry splits by
           # PoP (observed: 404 from SEA, 200 from PDX), so a single request is a
           # coin flip and would make this alarm useless. 10 samples from one
           # runner reliably catches a PoP split.
-          for url in "$PROD_URL$glue" "$PROD_URL$(dirname "$glue")/crossword-web_bg.wasm"; do
+          probe_artifact_url() {
+            url="$1"
+            samples="$2"
+            label="$3"
+            ok=0
+            http_bad=0
+            transport_bad=0
             codes=""
-            for _ in $(seq 1 10); do
-              codes="$codes$(curl -sS -o /dev/null -w '%{http_code} ' --max-time 60 "$url")"
+            transport_errors=""
+            for i in $(seq 1 "$samples"); do
+              err_file="$(mktemp)"
+              rc=0
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$url" 2>"$err_file")" || rc=$?
+              err="$(<"$err_file")"
+              rm -f "$err_file"
+              if [ "$rc" -ne 0 ] || [ "$code" = "000" ]; then
+                transport_bad=$((transport_bad + 1))
+                transport_errors="$transport_errors sample $i: curl exit $rc http $code${err:+ ($err)};"
+                continue
+              fi
+              codes="$codes$code "
+              if [ "$code" = "200" ]; then
+                ok=$((ok + 1))
+              else
+                http_bad=$((http_bad + 1))
+              fi
             done
-            bad="$(printf '%s' "$codes" | tr ' ' '\n' | grep -vc '^200$' || true)"
-            if [ "$bad" -gt 0 ]; then
-              echo "::error::production artifact $url returned non-200 in $bad/10 samples [$codes] — blank front door for those visitors"
+            if [ "$http_bad" -gt 0 ]; then
+              echo "::error::$label artifact $url returned HTTP non-200 in $http_bad/$samples completed samples [$codes] — possible poisoned edge cache entry / blank front door for those visitors"
+              [ "$transport_bad" -gt 0 ] && echo "::warning::$label artifact $url also had transport errors in $transport_bad/$samples samples:$transport_errors"
               exit 1
             fi
-            echo "ok  $url -> 200 on 10/10"
+            if [ "$ok" -eq 0 ]; then
+              echo "::error::$label artifact $url had only transport errors in $transport_bad/$samples samples:$transport_errors"
+              exit 1
+            fi
+            if [ "$transport_bad" -gt 0 ]; then
+              echo "::warning::$label artifact $url had transport errors in $transport_bad/$samples samples after retries:$transport_errors"
+            fi
+            echo "ok  $url -> 200 on $ok/$samples completed samples"
+          }
+          for url in "$PROD_URL$glue" "$PROD_URL$(dirname "$glue")/crossword-web_bg.wasm"; do
+            probe_artifact_url "$url" 10 production
           done
 
       # The probe above says "is production blank right now". This says "can it
@@ -217,7 +539,9 @@ jobs:
       # non-200, the trap is re-armed and this goes red before a visitor does.
       - name: Production origin must not cache 404s immutably
         env:
-          PROD_URL: https://crosswords.casazza.io
+          PROD_URL: ${{ inputs.prod_url || 'https://crosswords.casazza.io' }}
+        # Explicit bash, same reason as the probe above.
+        shell: bash
         run: |
           set -uo pipefail
           probe="/_assets/$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')/crossword-web.js"
@@ -238,6 +562,102 @@ jobs:
           curl -sf -H 'Content-Type: application/json' \
             -d "{\"content\":\"🚨 crosswords PRODUCTION artifact canary FAILED — blank/poisoned front door or the origin re-armed immutable-on-404 — $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
             "$DISCORD" || true
+
+  publish-observer:
+    name: Record + publish the 4-player observer video
+    needs: multiplayer-soak
+    # Run on a release or a manual dispatch. `always()` overrides the skip that
+    # `needs: multiplayer-soak` would otherwise inherit on `release`, where the
+    # soak itself is deliberately skipped (a release fires before Flux rolls the
+    # new image out). The job's own recorded soak governs pass/fail.
+    if: always() && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    # Same official image the observer script uses: ships the browsers + ffmpeg.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
+    permissions:
+      contents: write # upload observer.mp4 to the release
+    env:
+      E2E_BASE_URL: https://crosswords-staging.casazza.io
+      # E2E_RECORD turns on the soak's per-context video and the slower, more
+      # watchable round cadence (multiplayer-soak.spec.ts, RECORD mode).
+      E2E_RECORD: "1"
+      E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      E2E_EMAIL_2: ${{ secrets.E2E_EMAIL_2 }}
+      E2E_PASSWORD_2: ${{ secrets.E2E_PASSWORD_2 }}
+      E2E_EMAIL_3: ${{ secrets.E2E_EMAIL_3 }}
+      E2E_PASSWORD_3: ${{ secrets.E2E_PASSWORD_3 }}
+      E2E_EMAIL_4: ${{ secrets.E2E_EMAIL_4 }}
+      E2E_PASSWORD_4: ${{ secrets.E2E_PASSWORD_4 }}
+    steps:
+      # main's specs, same reasoning as the canary/soak jobs.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Install deps
+        working-directory: e2e
+        run: npm ci
+      # The spec owns the whole lifecycle — signup (idempotent), abandon stale
+      # attempts, start a 100%-open game, join all four, play, complete — so this
+      # job supplies credentials and records, exactly like the observer script.
+      # `--retries=1` matches the fast soak: the presence fan-out is flaky, and
+      # the recording is always taken from a PASSING attempt, so a retry cannot
+      # yield a "cheerful" video from a failed run.
+      - name: Record the four-player soak
+        working-directory: e2e
+        run: npx playwright test multiplayer-soak.spec.ts --reporter=list --retries=1
+      - name: Composite the 2x2 observer video
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The Playwright container ships the browsers (and their bundled
+          # encoders) but not the ffmpeg CLI on PATH — install it, same as the
+          # publish-demo job does before its composite.
+          apt-get update >/dev/null && apt-get install -y ffmpeg >/dev/null
+          videos=()
+          for n in 1 2 3 4; do
+            v="$(find e2e/test-results -path "*video-p${n}*" -name '*.webm' | head -1)"
+            [ -n "$v" ] || { echo "::error::no recording for player ${n}"; exit 1; }
+            videos+=("$v")
+          done
+          ffmpeg -y -loglevel error \
+            -i "${videos[0]}" -i "${videos[1]}" -i "${videos[2]}" -i "${videos[3]}" \
+            -filter_complex "[0:v]scale=960:540,setsar=1[v0];[1:v]scale=960:540,setsar=1[v1];[2:v]scale=960:540,setsar=1[v2];[3:v]scale=960:540,setsar=1[v3];[v0][v1][v2][v3]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0:fill=black[v]" \
+            -map "[v]" -c:v libx264 -crf 23 -preset veryfast -pix_fmt yuv420p -movflags +faststart \
+            observer.mp4
+          ffprobe -v error -select_streams v:0 \
+            -show_entries stream=width,height,codec_name -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 observer.mp4
+      - name: Upload observer.mp4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: observer-video
+          path: observer.mp4
+          retention-days: 14
+      - name: Publish observer.mp4
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The Playwright container has no `gh`; install it from GitHub's apt
+          # repo (publish-demo gets it free on ubuntu-latest, this job does not).
+          mkdir -p /etc/apt/keyrings
+          (type -p wget >/dev/null || apt-get install -y wget >/dev/null)
+          wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | tee /etc/apt/keyrings/githubcli.gpg >/dev/null
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" \
+            | tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+          apt-get update >/dev/null && apt-get install -y gh >/dev/null
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="demo-latest"
+            gh release view "$TAG" -R "${{ github.repository }}" >/dev/null 2>&1 || \
+              gh release create "$TAG" -R "${{ github.repository }}" \
+                --title "Latest e2e demo video" --notes "Auto-updated by the e2e-canary workflow." --prerelease
+          fi
+          gh release upload "$TAG" observer.mp4 --clobber -R "${{ github.repository }}"
+          echo "Observer video: $GITHUB_SERVER_URL/${{ github.repository }}/releases/download/$TAG/observer.mp4"
 
   publish-demo:
     name: Publish demo video
@@ -267,16 +687,20 @@ jobs:
           phone=$(find results -path '*phone*' -name '*.webm' | head -1)
           # yuv420p is load-bearing for Safari/Discord/Slack playback.
           if [ -n "$phone" ]; then
-            # Split-screen dock: the main recording scaled onto a dark 1920x1080
-            # canvas (the app's own bg color) at the left, and the second
-            # player's phone docked at the right — nothing gets covered.
+            # Split-screen dock: main recording on the left, phone on the
+            # right. A full-timeline visual review found both clips open on a
+            # blank white browser surface for their first ~1s; trim that exact
+            # lead-in from BOTH inputs so sync is preserved and the published
+            # demo begins on the app, not a browser boot flash.
             # Output length follows the main recording; the phone freezes on
             # its last frame if its clip ends first.
             ffmpeg -y -i "$v" -i "$phone" -filter_complex \
-              "[0:v]scale=1450:-2,pad=1920:1080:20:-1:color=0x121212[canvas];[1:v]scale=410:-2[phone];[canvas][phone]overlay=W-w-20:(H-h)/2:eof_action=repeat" \
-              -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+              "[0:v]trim=start=1,setpts=PTS-STARTPTS,scale=1450:-2,pad=1920:1080:20:-1:color=0x121212[canvas];[1:v]trim=start=1,setpts=PTS-STARTPTS,scale=410:-2[phone];[canvas][phone]overlay=W-w-20:(H-h)/2:eof_action=repeat,crop=1920:1080[out]" \
+              -map "[out]" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
           else
-            ffmpeg -y -i "$v" -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
+            # Same 1s browser-boot trim for the single-stream fallback.
+            ffmpeg -y -i "$v" -vf "trim=start=1,setpts=PTS-STARTPTS" \
+              -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart demo.mp4
           fi
           echo "MP4=1" >> "$GITHUB_ENV"
       - name: Publish demo.mp4

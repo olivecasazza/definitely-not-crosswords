@@ -607,6 +607,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The Playwright container ships the browsers (and their bundled
+          # encoders) but not the ffmpeg CLI on PATH — install it, same as the
+          # publish-demo job does before its composite.
+          apt-get update >/dev/null && apt-get install -y ffmpeg >/dev/null
           videos=()
           for n in 1 2 3 4; do
             v="$(find e2e/test-results -path "*video-p${n}*" -name '*.webm' | head -1)"

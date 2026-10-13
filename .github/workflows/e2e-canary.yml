@@ -638,6 +638,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The Playwright container has no `gh`; install it from GitHub's apt
+          # repo (publish-demo gets it free on ubuntu-latest, this job does not).
+          mkdir -p /etc/apt/keyrings
+          (type -p wget >/dev/null || apt-get install -y wget >/dev/null)
+          wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | tee /etc/apt/keyrings/githubcli.gpg >/dev/null
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" \
+            | tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+          apt-get update >/dev/null && apt-get install -y gh >/dev/null
           if [ "${{ github.event_name }}" = "release" ]; then
             TAG="${{ github.event.release.tag_name }}"
           else

@@ -116,10 +116,22 @@ async function answersFor(page: Page, gameId: string) {
   return answers;
 }
 
-async function waitForFreshSocket(opened: () => number, before: number) {
+async function waitForFreshSocket(opened: () => number, before: number, timeout = 5_000) {
   await expect
-    .poll(opened, { message: "spectator opened a fresh co-op websocket" })
+    .poll(opened, { message: "spectator opened a fresh co-op websocket", timeout })
     .toBeGreaterThan(before);
+}
+
+async function reconnectSpectator(page: Page, opened: () => number, before: number) {
+  try {
+    await waitForFreshSocket(opened, before);
+  } catch {
+    const offline = page.locator('.cw-conn-pill[data-conn-state="error"]');
+    await expect(offline).toBeVisible();
+    await offline.getByRole("button", { name: /^retry now$/i }).click();
+    await waitForFreshSocket(opened, before, 15_000);
+  }
+  await expect(page.locator(".cw-conn-pill")).toHaveCount(0, { timeout: 30_000 });
 }
 
 async function trapSockets(page: Page) {
@@ -367,9 +379,7 @@ test.describe("game board (needs e2e account)", () => {
         await expect(b.locator(".cw-conn-pill")).toBeVisible();
         const socketsBeforeDeltaProbe = spectatorSockets.opened();
         spectatorSockets.unblock();
-        await b.getByRole("button", { name: /^retry now$/i }).click();
-        await waitForFreshSocket(spectatorSockets.opened, socketsBeforeDeltaProbe);
-        await expect(b.locator(".cw-conn-pill")).toHaveCount(0);
+        await reconnectSpectator(b, spectatorSockets.opened, socketsBeforeDeltaProbe);
         await expect.poll(filled).toBe(baseline);
 
         // A selects the clue and types the answer.

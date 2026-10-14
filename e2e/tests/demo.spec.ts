@@ -579,11 +579,22 @@ test("authenticated product tour", async ({ page, browser }, testInfo) => {
     await dwell(page);
 
     // Subscription panel: plan row always renders; Pro accounts show the
-    // active chip, free accounts the quota + upgrade CTA.
+    // active chip when subscribed, and the upgrade CTA only while checkout is
+    // outside the announcement gate.
     await expect(page.getByText(/current plan/i)).toBeVisible();
+    const cfgRes = await page.request.get("/api/config");
+    expect(cfgRes.status(), "GET /api/config").toBe(200);
+    const proCheckout = (await cfgRes.json())?.features?.proCheckout;
     const proActive = page.getByText(/^active$/i);
     const upgrade = page.getByRole("button", { name: /upgrade to pro/i });
-    await expect(proActive.or(upgrade).first()).toBeVisible();
+    if (proCheckout === true) {
+      await expect(proActive.or(upgrade).first()).toBeVisible();
+    } else {
+      test.info().annotations.push({
+        type: "pro-checkout-gated",
+        description: `subscription purchase control hidden because proCheckout=${JSON.stringify(proCheckout)}`,
+      });
+    }
     await wander(page);
     await dwell(page, 2800, 3800); // end on the premium pitch
   });

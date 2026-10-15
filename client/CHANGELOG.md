@@ -7,6 +7,181 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.98](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.97...v0.1.98) - 2026-10-03
+
+### Fixed
+
+- *(ci)* assert buildSha on non-version production deploys instead of skipping [DEF-289] (#228)
+
+### Other
+
+- changelog for v0.1.97 [skip ci]
+
+
+## [0.1.97](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.96...v0.1.97) - 2026-10-03
+
+### Fixed
+
+- *(ci)* assert buildSha on :sha staging deploys instead of skipping [DEF-288] (#226)
+
+### Other
+
+- changelog for v0.1.96 [skip ci]
+- *(e2e)* let the four players actually play the board
+- *(e2e)* play before measuring, and show the final standings per player
+
+
+## [0.1.96](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.95...v0.1.96) - 2026-10-03
+
+### Fixed
+
+- *(load)* k6 setup used the same dead filter as the admin bot
+
+### Other
+
+- changelog for v0.1.95 [skip ci]
+
+
+## [0.1.95](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.94...v0.1.95) - 2026-10-03
+
+### Added
+
+- *(charts)* tier the Grafana dashboards into nested folders with tags
+
+### Fixed
+
+- *(scripts)* admin bot picked games with a filter that matched nothing
+
+### Other
+
+- changelog for v0.1.94 [skip ci]
+- *(e2e)* correct the game-selection fields for the fresh-board path
+- *(e2e)* fresh board per run — three auth/navigation bugs fixed
+- *(e2e)* genuinely fresh board, concurrent joins
+
+
+## [0.1.94](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.93...v0.1.94) - 2026-10-02
+
+### Fixed
+
+- *(e2e)* continue after curl probe resets (#222)
+
+### Other
+
+- changelog for v0.1.93 [skip ci]
+
+
+## [0.1.93](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.92...v0.1.93) - 2026-10-02
+
+### Fixed
+
+- *(e2e)* classify canary transport failures (#220)
+
+### Other
+
+- changelog for v0.1.92 [skip ci]
+
+
+## [0.1.92](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.91...v0.1.92) - 2026-10-02
+
+### Fixed
+
+- *(e2e)* clear wrong demo guess before retyping (#218)
+
+### Other
+
+- changelog for v0.1.91 [skip ci]
+
+
+## [0.1.91](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.90...v0.1.91) - 2026-10-02
+
+### Fixed
+
+- *(e2e)* wait for guess responses in demo tour (#216)
+
+### Other
+
+- changelog for v0.1.90 [skip ci]
+
+
+## [0.1.90](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.89...v0.1.90) - 2026-10-02
+
+### Fixed
+
+- *(ci)* unblock e2e-canary auxiliary jobs [DEF-283] (#214)
+
+### Other
+
+- changelog for v0.1.89 [skip ci]
+
+
+## [0.1.89](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.88...v0.1.89) - 2026-10-02
+
+### Fixed
+
+- *(ci)* pin bash on the e2e-canary steps that are bashisms [DEF-103] (#212)
+
+### Other
+
+- changelog for v0.1.88 [skip ci]
+
+
+## [0.1.88](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.87...v0.1.88) - 2026-10-02
+
+### Fixed
+
+- *(server)* recover outbox events lost while a pod's listener was down [DEF-275] (#210)
+
+### Other
+
+- changelog for v0.1.87 [skip ci]
+
+
+## [0.1.87](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.86...v0.1.87) - 2026-10-02
+
+### Added
+
+- *(server)* activeGame.abandon — a started game is no longer immortal
+
+### Other
+
+- changelog for v0.1.86 [skip ci]
+- *(release)* do not cut a tag for test/ci/chore-only pushes
+- *(e2e)* fresh board per run, players solve in parallel, leak reporting
+
+
+## [0.1.86](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.85...v0.1.86) - 2026-10-02
+
+### Fixed
+
+- *(load)* correct the crossing-conflict invariant; it measured the wrong thing
+
+### Other
+
+- changelog for v0.1.85 [skip ci]
+
+
+## [0.1.85](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.84...v0.1.85) - 2026-10-02
+
+### Fixed
+
+- *(server)* serialise cell writes so previousState is truthful (DEF-281)
+- *(server)* completion is exactly-once; test drives the board to solved
+
+### Other
+
+- changelog for v0.1.84 [skip ci]
+- *(e2e)* provision four bot secrets, add four-pane observer recording
+
+
+## [0.1.84](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.83...v0.1.84) - 2026-10-01
+
+### Other
+
+- changelog for v0.1.83 [skip ci]
+- *(e2e)* four-player multiplayer soak, k6 load, and self-heal bundles
+
+
 ## [0.1.83](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.82...v0.1.83) - 2026-10-01
 
 ### Fixed

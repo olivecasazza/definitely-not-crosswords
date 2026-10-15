@@ -1,9 +1,9 @@
 {
   description = "definitely-not-crosswords Rust/Dioxus frontend: crossword-core + crossword-web (wasm), built reproducibly with crane; omnix CI.";
 
-  # NOTE: `src` is a derivation (it vendors panel-kit in), so crane reads its
-  # Cargo manifests via import-from-derivation. `nix build`/Hydra allow IFD by
-  # default; only `nix flake check`'s pure-eval mode blocks it — run it with
+  # NOTE: `src` is a derivation (a `lib.fileset.toSource` store path), so crane
+  # reads its Cargo manifests via import-from-derivation. `nix build`/Hydra allow
+  # IFD by default; only `nix flake check`'s pure-eval mode blocks it — run it with
   # `--option allow-import-from-derivation true` locally.
 
   nixConfig = {
@@ -30,30 +30,103 @@
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     omnix.url = "github:juspay/omnix";
 
-    # The web crate depends on panel-kit and panel-kit-core by the absolute
-    # release-plz host path, which isn't reachable in the Nix sandbox. Pull the
-    # repository in as one input (pinned only to a pushed rev so Hydra can fetch
-    # it) and rewrite both path deps at build time (see `src` below). Local macOS
-    # verification uses the synced fork without changing this committed pin:
-    #   --override-input panel-kit path:/Users/casazza/Repositories/olivecasazza/panel-kit
-    panel-kit.url = "github:olivecasazza/panel-kit/4aad83c86285c83706e380c054a2b317ff8c6f69";
-    panel-kit.flake = false;
+    # DEF-330: there is deliberately NO `panel-kit` input here any more.
+    #
+    # It was a third copy of one revision, alongside `web/Cargo.toml`'s tag and
+    # the `rev` in `Cargo.lock`, and nothing reconciled them. It was also inert:
+    # `flake = false`, and DEF-324 had already removed the only consumer — the
+    # `vendor-panel-kit` copy in `src` below. Its last reader was
+    # `scripts/runner-toolchain/fetch-panel-kit.sh`, which sedded the rev out of
+    # this line to decide what the runner checks out, which is precisely how the
+    # runner came to check out a different commit than cargo compiled.
+    #
+    # `client/Cargo.lock` is now the single source of truth, and it is the file
+    # cargo actually resolves, so the revision the runner checks out and the
+    # revision the build compiles cannot be two different facts. Nothing in this
+    # flake reads a panel-kit revision: `cargoVendorDir` vendors the dep from
+    # the lock.
+    #
+    # TO BUMP panel-kit: change the `tag` in `web/Cargo.toml` and re-resolve the
+    # lock. There is no nix side to keep in step, which is the point — that side
+    # is what silently rotted.
   };
 
   outputs =
     inputs:
-    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
+    # flake-parts evaluates each option against the SAME attrset, but that
+    # attrset is not `rec`, so two options cannot see each other by bare name
+    # (`perSystem` referencing `packagesForImpl` is an "undefined variable",
+    # not a typo). A `let` around the `mkFlake` application gives both wrappers
+    # one shared scope — which is also what keeps the default outputs and
+    # `packagesFor` provably identical in how they resolve a sha, since they
+    # call the same function.
+    let
+      fp = inputs.flake-parts.lib;
+      # flake-parts' own nixpkgs lib: `lib.genAttrs` shapes `flake.<name>`
+      # exactly like its transposition module does.
+      lib = inputs.flake-parts.inputs.nixpkgs-lib.lib;
       systems = import inputs.systems;
 
-      perSystem =
-        { system, self', ... }:
+      # The commit this build came from, for `BUILD_SHA` (the server's
+      # `/api/config.buildSha` and the bundle's `data-build`).
+      #
+      # THE CONTRACT (DEF-317). `packagesFor` is the provenance-aware entry
+      # point; `perSystem` (i.e. `nix build ./client#…`) is the same code with
+      # no caller-supplied sha. Resolution order, most trustworthy first:
+      #
+      #   1. `CROSSWORDS_BUILD_SHA` — an explicit override, for a direct
+      #      `nix build ./client` from a shell that knows the commit.
+      #   2. `fallbackBuildSha` — what the caller passed to `packagesFor`. The
+      #      root flake passes its own `self.rev` here (DEF-317).
+      #   3. `self.rev`, then `self.dirtyRev` — set only when THIS flake is
+      #      itself evaluated from a git checkout.
+      #
+      # (3) is why (2) is needed. The ROOT flake consumes this one as
+      # `client.url = "path:./client"`, and a `path:` input carries NEITHER
+      # `rev` NOR `dirtyRev` — only `sourceInfo`/`narHash`. So under the root
+      # flake, step (3) can never fire and any bare `client.packages.${system}`
+      # yields "unknown" no matter how clean the checkout is. It is the CALLER
+      # that knows the commit when the callee is a `path:` input. Verified in
+      # isolation on nix 2.20.6 (two-flake repro, root + nested `path:./inner`):
+      #
+      #     root, clean checkout    -> self.rev = 7e1696f…, dirtyRev = ABSENT
+      #     nested path:./inner     -> rev = false,     dirtyRev = false
+      #     CROSSWORDS_BUILD_SHA set -> inner sees "abcdef1234567890"
+      #
+      # Threading it down fixes buildbot, `nix build .#dockerImage` and
+      # `nix develop` in one place, and reduces ci.yaml's CROSSWORDS_BUILD_SHA
+      # handoff to a redundant convenience rather than the load-bearing fix it
+      # was (#241).
+      #
+      # `lib` is an argument, not captured from flake scope, so this stays a
+      # plain function that `nix eval` can exercise on its own.
+      resolveBuildSha = lib: fallback:
+        let
+          fromEnv = builtins.getEnv "CROSSWORDS_BUILD_SHA";
+          fromSelf = inputs.self.rev or inputs.self.dirtyRev or "";
+          raw = if fromEnv != "" then fromEnv else (if fallback != "" then fallback else fromSelf);
+          # AC4 (DEF-317): never ship `<rev>-dirty` as a buildSha. A dirty tree
+          # is NOT the commit it names, and `<rev>-dirty` can never equal the
+          # `${TAG:0:12}` a deploy gate compares against, so shipping it would
+          # just convert a loud failure into a 30-minute red poll. Strip the
+          # suffix: the rev alone still names the base commit, which is the
+          # most useful thing to report, and an unresolvable tree still lands on
+          # "unknown" and is caught by the gates. Buildbot checks out a git ref,
+          # so its trees are clean and this arm never fires there.
+          stripped = lib.strings.removeSuffix "-dirty" raw;
+        in
+        if stripped == "" then "unknown" else builtins.substring 0 12 stripped;
+
+      # The one real implementation. `fallbackBuildSha` is resolved by
+      # `resolve`; everything else is the per-system package set.
+      packagesForImpl = resolve: fallbackBuildSha: system:
         let
           pkgs = import inputs.nixpkgs {
             inherit system;
             overlays = [ inputs.rust-overlay.overlays.default ];
           };
           inherit (pkgs) lib;
-          buildSha = builtins.substring 0 12 (inputs.self.rev or inputs.self.dirtyRev or "unknown");
+          buildSha = resolve lib fallbackBuildSha;
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
             extensions = [
@@ -65,19 +138,27 @@
           };
           craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-          # Workspace source. `web/Cargo.toml` pins panel-kit and its core crate
-          # by the absolute release-plz host path, unreachable in the sandbox.
-          # Vendor the one `panel-kit` input INTO the source at a relative path
-          # and exclude it from this workspace (it's its own workspace —
-          # excluding avoids a nested-workspace clash), then rewrite both deps
-          # to point there. A relative path keeps Cargo.toml free of store-path
-          # string references (which crane rejects). No working-tree edit — the
-          # committed Cargo.toml keeps the release-plz-compatible absolute path.
+          # Workspace source. Plain fileset — no `runCommand` wrapper, no seds.
+          #
+          # It used to copy a `panel-kit` flake input in as `vendor-panel-kit`,
+          # inject `exclude = ["vendor-panel-kit"]` into the workspace manifest,
+          # and `sed` the web crate's absolute `/home/olive/Repositories/...`
+          # path deps onto it. DEF-244 replaced those path deps with an ordinary
+          # `git = ... tag = "v1.1.1"` dep, at which point the repoint `sed`
+          # matched nothing (a silent no-op), the `exclude` protected a directory
+          # cargo never looked at, and a full panel-kit checkout was still copied
+          # into every build. crane vendors the git dep from Cargo.lock via
+          # `cargoVendorDir` below, which is the supported path and the one the
+          # CI build log shows being used. The `panel-kit` input itself stays
+          # declared (repinned to the lock's commit) because the runner toolchain
+          # reads it — but this build no longer dereferences it. See the note at
+          # the input list.
+          #
           # Ship every workspace member so cargo can resolve the workspace; each
           # nix build below compiles just one crate (-p ...). All of web, desktop,
           # server, and tools are built as packages; backend/desktop must be
           # present for workspace resolution regardless.
-          rawSrc = lib.fileset.toSource {
+          src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
               ./Cargo.toml
@@ -91,23 +172,14 @@
               ./backend
             ];
           };
-          src = pkgs.runCommand "crossword-client-src" { } ''
-            cp -r ${rawSrc} $out
-            chmod -R +w $out
-            cp -r ${inputs.panel-kit} $out/vendor-panel-kit
-            chmod -R +w $out/vendor-panel-kit
-            # exclude the vendored copy from this workspace
-            sed -i -E 's#(members = \[.*\])#\1\nexclude = ["vendor-panel-kit"]#' $out/Cargo.toml
-            # repoint both panel-kit path deps at the vendored copy
-            sed -i -E 's#/home/olive/Repositories/panel-kit#../vendor-panel-kit#g' \
-              $out/web/Cargo.toml
-          '';
 
           # Vendor deps from the plain lockfile (a real path), NOT from the
-          # runCommand-built `src` derivation — reading the lock out of a
-          # derivation at eval time is import-from-derivation, which pure eval
-          # (the github panel-kit input) forbids. Explicit pname/version below
-          # keep crane from import-from-deriving the crate name out of `src` too.
+          # fileset `src` derivation — reading the lock out of a derivation at
+          # eval time is import-from-derivation, which pure eval forbids.
+          # Explicit pname/version below keep crane from import-from-deriving
+          # the crate name out of `src` too. This is also what pins panel-kit:
+          # the lock resolves `tag = "v1.1.1"` to
+          # 503f46c32a1c2410aa4e15b2b3bf725207068906.
           cargoVendorDir = craneLib.vendorCargoDeps { src = ./.; };
 
           # onnxruntime for the generator's `ort` crate. ort rc.12's pregenerated
@@ -201,38 +273,33 @@
                 --out-dir $stage --out-name crossword-web "$wasm"
               wasm-opt -Oz -o $stage/crossword-web_bg.wasm $stage/crossword-web_bg.wasm || true
 
-              # The link-preview card (DEF-190) joins the bundle BEFORE it is
-              # hashed, and that ordering is load-bearing twice over.
+              # Browser/scraper images join the bundle BEFORE it is hashed, and
+              # that ordering is load-bearing twice over.
               #
-              # 1. It has to sit under /_assets to be reachable AT ALL. The
-              #    server mounts exactly one static dir and answers every other
-              #    path with the SPA fallback (backend/server/src/main.rs:157-196),
-              #    which returns index.html as 200 text/html. A card at the dist
-              #    root therefore "succeeds" with 200 and hands the scraper HTML
-              #    instead of an image: measured on staging before this change,
-              #    GET /og-image.png answered 200 text/html, 14923 bytes. That is
-              #    worse than no tag, which is the failure this issue exists to
-              #    prevent — so the card is placed where the server actually
-              #    serves files from, not where it would be tidier.
+              # 1. They have to sit under /_assets to be reachable AS FILES. The
+              #    server serves only /_assets from the dist tree; a file-shaped
+              #    path anywhere else is rejected by the SPA fallback as a real
+              #    404 (backend/server/src/spa.rs), so a dist-root /og-image.png
+              #    or /favicon.png is not a served static file at all.
               #
-              # 2. Being inside the hash gives it the bundle's immutability
+              # 2. Being inside the hash gives them the bundle's immutability
               #    guarantee for free: bytes at a hashed URL never change, so the
               #    edge's max-age=31536000 immutable stamp (assets.rs:50-61) can
-              #    never pin a stale card, and editing the card changes the hash
-              #    and busts every URL that points at it. A stable /og-image.png
-              #    at the dist root could not have either property, and adding a
-              #    cache-busting query to it is what DEF-140/145/152 exist to
-              #    stop.
+              #    never pin stale image bytes, and editing either image changes
+              #    the hash and busts every URL that points at it. A stable root
+              #    URL could not have either property, and adding a cache-busting
+              #    query to it is what DEF-140/145/152 exist to stop.
               #
-              # Copied in as og.png (a fixed name) because the head references one
-              # file; the content addressing is the hashed directory around it.
-              # The source is a committed asset, not generated here: the build must
-              # not depend on Pillow or a font, which are not in this closure.
-              # scripts/make-og-image.py regenerates these bytes,
+              # Copied in under fixed names because the head references one file
+              # per purpose; the content addressing is the hashed directory around
+              # them. The OG source is a committed generated asset:
+              # scripts/make-og-image.py regenerates it,
               # scripts/check-og-image.sh --regen asserts the committed file is
               # exactly what it produces, and scripts/verify-og-image-build.sh
-              # runs the steps above and asserts the head advertises this path.
+              # runs the steps above and asserts the head advertises fetchable
+              # image paths.
               cp ${./web/og-image.png} $stage/og.png
+              cp ${./web/favicon.png} $stage/favicon.png
 
               # Content-address the WHOLE bundle under one immutable prefix.
               #
@@ -354,13 +421,13 @@
                     needed: the sed runs in THIS build, the __ORIGIN__ one runs when the
                     server reads the finished index.html.
 
-                    og:image is inside /_assets because that is the only prefix the server
-                    serves as files; anything else resolves to the SPA fallback and answers
-                    200 text/html (see the copy step in this buildPhase). og:image:alt is not
-                    decoration: it is the text a scraper shows when it cannot render the
-                    image at all, so it must read as the product rather than describe a file
-                    ("1200x630 PNG" is the failure mode). It repeats the tagline and the Free
-                    plan claim already made above, in that order.
+                    og:image and the favicon are inside /_assets because that is the only
+                    prefix the server serves as files; a file-shaped path anywhere else is a
+                    404 from the SPA fallback (see the copy step in this buildPhase).
+                    og:image:alt is not decoration: it is the text a scraper shows when it
+                    cannot render the image at all, so it must read as the product rather
+                    than describe a file ("1200x630 PNG" is the failure mode). It repeats
+                    the tagline and the Free plan claim already made above, in that order.
 
                     twitter:card is summary_large_image now that there is an image to fill
                     the large box. Before DEF-190 it was summary, and deliberately so: with
@@ -370,6 +437,7 @@
               <title>definitely-not-crosswords — free real-time co-op crosswords</title>
               <meta name="description" content="Cooperative, real-time crosswords. Solve the same grid together, see every move as it happens, and finish as a team. Free plan: $0, unlimited solving." />
               <link rel="canonical" href="__ORIGIN__/" />
+              <link rel="icon" type="image/png" sizes="32x32" href="/_assets/__BUNDLE_HASH__/favicon.png" />
               <meta property="og:type" content="website" />
               <meta property="og:site_name" content="definitely-not-crosswords" />
               <meta property="og:title" content="definitely-not-crosswords — free real-time co-op crosswords" />
@@ -411,7 +479,7 @@
                  above / 533px below at a 720px viewport). Full-bleed flex centring; the
                  card keeps its own max-width:26rem above. */
               .boot-noscript{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:1.5rem}
-              .boot-mark{margin:0;font:700 .625rem/1.2 Inconsolata,ui-monospace,monospace;
+              .boot-mark{margin:0;font:700 .6875rem/1.2 Inconsolata,ui-monospace,monospace;
                 letter-spacing:.05em;text-transform:uppercase;color:var(--b-dim)}
               .boot-title{margin:0;font-size:1rem;font-weight:700}
               .boot-title:focus{outline:none}
@@ -667,17 +735,31 @@
               doInstallCargoArtifacts = false;
             }
           );
-        in
-        {
-          packages = {
-            default = crossword-web;
-            inherit
-              crossword-web
-              crossword-desktop
-              crossword-server
-              crossword-tools
-              ;
-          };
+        # Protocol-level load test for the multiplayer API. Needs a LIVE host,
+        # so it lives in `packages` and is run manually / from a scheduled GHA
+        # job — never in `checks` (see load/README.md).
+        loadScripts = pkgs.runCommand "crossword-load-scripts" { } ''
+          mkdir -p "$out"
+          cp -r ${../load} "$out/load"
+        '';
+        crossword-load = pkgs.writeShellScriptBin "crossword-load" ''
+          set -euo pipefail
+          # `nix run ./client#crossword-load -- run multiplayer.js` and
+          # `... -- version` both work: bare k6 args pass through, and any
+          # `*.js` argument is resolved against the packaged load/ directory.
+          script_dir="${loadScripts}/load"
+          if [ "$#" -gt 0 ]; then
+            args=()
+            for arg in "$@"; do
+              case "$arg" in
+                *.js) args+=("$script_dir/$arg") ;;
+                *) args+=("$arg") ;;
+              esac
+            done
+            exec ${pkgs.k6}/bin/k6 "''${args[@]}"
+          fi
+          exec ${pkgs.k6}/bin/k6 version
+        '';
 
           checks = {
             cargo-fmt = craneLib.cargoFmt {
@@ -742,9 +824,31 @@
               ;
           };
 
+          packages = {
+            default = crossword-web;
+            inherit
+              crossword-web
+              crossword-desktop
+              crossword-server
+              crossword-tools
+              crossword-load
+              ;
+          };
+        in
+        {
+          inherit checks packages;
+
+          # Returned so `packagesFor` callers and `nix eval` can read back the
+          # sha these packages bake, with no builder involved.
+          buildSha = buildSha;
+
+          # `nix develop ./client` runs these same checks on `enterShell`. This is
+          # the `checks` binding in the `let` above rather than flake-parts'
+          # `self'.checks`: there is no `self` in scope here (this function is
+          # what `perSystem` wraps, so referring back to it would be a cycle).
           devShells.default = craneLib.devShell (
             {
-              checks = self'.checks;
+              checks = checks;
               packages = with pkgs; [
                 rustToolchain
                 cargo-watch
@@ -771,19 +875,72 @@
             // ortEnv
           );
         };
+    in
+    fp.mkFlake { inherit inputs; }
+    {
+      systems = import inputs.systems;
 
-      # Hydra builds the `hydraJobs` output (NOT `checks`/`packages`), so the
-      # nixlab Hydra jobset that points at this flake (gcp-hydra,
-      # definitely-not-crosswords project, `dioxus-migration` jobset) would
-      # build nothing without this. Surface every check (which already includes
-      # the `crossword-web` bundle) as a Hydra job on the on-prem linux builders.
-      flake.hydraJobs.x86_64-linux = inputs.self.checks.x86_64-linux;
+      # The default outputs: this flake consumed directly
+      # (`nix build ./client#…`, `nix develop ./client`). Empty fallback sha, so
+      # `resolveBuildSha` falls through to CROSSWORDS_BUILD_SHA, then self.rev.
+      perSystem =
+        { system, ... }:
+        builtins.removeAttrs (packagesForImpl resolveBuildSha "" system) [ "buildSha" ];
 
-      # `om ci run` builds every flake check + package across the configured
-      # systems. The root subflake covers this flake.
-      flake.om.ci.default.root = {
-        dir = ".";
-        steps.build.enable = true;
-      };
+      # DEF-317: the two provenance outputs, keyed by system.
+      #
+      # Published through the `flake` option because it is freeform — "Any
+      # attribute can be set here" — so no `mkOption` declaration is needed and
+      # nothing has to be transposed. Measured, because the obvious routes all
+      # fail here:
+      #   * an extra key on `perSystem`'s result is dropped ("The option
+      #     `perSystem.x86_64-linux.buildSha' does not exist"): flake-parts only
+      #     publishes declared options;
+      #   * a custom top-level `options`/`config` attrset makes flake-parts
+      #     reject the module outright when the flake also sets `flake` —
+      #     "Module `:anon-17:anon-1' has an unsupported attribute `flake'" — so
+      #     declaring options here would mean deleting `flake.hydraJobs` (the
+      #     nixlab Hydra jobset) and `flake.om`;
+      #   * `mkTransposedPerSystemModule` type-checks its transposed `flake.<name>`
+      #     against the option type and rejects a plain string ("A definition for
+      #     option `flake.myStr.x86_64-linux' is not of type `string'"), so it
+      #     cannot carry a build sha.
+      # `lib.genAttrs` over `systems` is the shape flake-parts' own
+      # transposition module produces, so this reads the same as a declared one.
+      flake =
+        {
+          # The sha THIS flake resolves with no caller, per system.
+          # `nix eval .#buildSha.x86_64-linux` — no builder required, which is
+          # the only kind of proof a builderless CI runner can produce.
+          buildSha = lib.genAttrs systems (
+            system: (packagesForImpl resolveBuildSha "" system).buildSha
+          );
+
+          # client.packagesFor.${system} { buildSha = self.rev or ""; }
+          #
+          # A FUNCTION, not a resolved attrset: the sha is an INPUT to it, not an
+          # output. So `nix flake check` never coerces or builds it, and `nix
+          # eval` reads `.buildSha` straight off the result. A caller that passes
+          # no sha gets exactly what `perSystem` exposes, so the two paths cannot
+          # drift.
+          packagesFor = lib.genAttrs systems (
+            system: { buildSha ? "" }: packagesForImpl resolveBuildSha buildSha system
+          );
+        }
+        // {
+          # Hydra builds the `hydraJobs` output (NOT `checks`/`packages`), so the
+          # nixlab Hydra jobset that points at this flake (gcp-hydra,
+          # definitely-not-crosswords project, `dioxus-migration` jobset) would
+          # build nothing without this. Surface every check (which already includes
+          # the `crossword-web` bundle) as a Hydra job on the on-prem linux builders.
+          hydraJobs.x86_64-linux = inputs.self.checks.x86_64-linux;
+
+          # `om ci run` builds every flake check + package across the configured
+          # systems. The root subflake covers this flake.
+          om.ci.default.root = {
+            dir = ".";
+            steps.build.enable = true;
+          };
+        };
     };
 }

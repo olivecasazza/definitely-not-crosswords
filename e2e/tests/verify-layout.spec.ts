@@ -1,4 +1,4 @@
-import { test, expect, devices, type Page } from "@playwright/test";
+import { test, expect, devices, type Page, type WebSocketRoute } from "@playwright/test";
 
 // Geometry verification for the UX surface — objective bounding-box assertions
 // instead of eyeballing recordings. Covers the regressions that kept slipping
@@ -13,6 +13,8 @@ import { test, expect, devices, type Page } from "@playwright/test";
 
 const EMAIL = process.env.E2E_EMAIL;
 const PASSWORD = process.env.E2E_PASSWORD;
+
+const WS_GLOB = "**/api/trpc-ws";
 
 type Rect = { x: number; y: number; width: number; height: number };
 
@@ -114,6 +116,46 @@ async function answersFor(page: Page, gameId: string) {
   return answers;
 }
 
+async function waitForFreshSocket(opened: () => number, before: number, timeout = 5_000) {
+  await expect
+    .poll(opened, { message: "spectator opened a fresh co-op websocket", timeout })
+    .toBeGreaterThan(before);
+}
+
+async function reconnectSpectator(page: Page, opened: () => number, before: number) {
+  try {
+    await waitForFreshSocket(opened, before);
+  } catch {
+    const offline = page.locator('.cw-conn-pill[data-conn-state="error"]');
+    await expect(offline).toBeVisible();
+    await offline.getByRole("button", { name: /^retry now$/i }).click();
+    await waitForFreshSocket(opened, before, 15_000);
+  }
+  await expect(page.locator(".cw-conn-pill")).toHaveCount(0, { timeout: 30_000 });
+}
+
+async function trapSockets(page: Page) {
+  const state = { block: false, live: [] as WebSocketRoute[] };
+  await page.routeWebSocket(WS_GLOB, (ws) => {
+    state.live.push(ws);
+    if (state.block) ws.close();
+    else ws.connectToServer();
+  });
+  return {
+    opened: () => state.live.length,
+    drop: async () => {
+      for (const ws of state.live) await ws.close();
+      state.live = [];
+    },
+    block: () => {
+      state.block = true;
+    },
+    unblock: () => {
+      state.block = false;
+    },
+  };
+}
+
 async function openGame(page: Page): Promise<string | null> {
   await page.goto("/games");
   // The lobby shell hydrates async and can exceed the default 15s expect
@@ -122,7 +164,7 @@ async function openGame(page: Page): Promise<string | null> {
   await expect(page.getByText("Library").first()).toBeVisible({ timeout: 30_000 });
   const card = (label: string) =>
     page
-      .locator('div[style*="cursor: pointer"]')
+      .locator('[data-row="game"]')
       .and(page.locator(`[aria-label*="${label}"]`))
       .first();
   const active = card("— IN PROGRESS");
@@ -311,6 +353,7 @@ test.describe("game board (needs e2e account)", () => {
       const ctxB = await browser.newContext();
       const b = await ctxB.newPage();
       try {
+        const spectatorSockets = await trapSockets(b);
         await b.goto(url!);
         await expect(b.locator(".cw-letter").first()).toBeVisible();
 
@@ -355,6 +398,14 @@ test.describe("game board (needs e2e account)", () => {
           );
         const baseline = await filled();
 
+        spectatorSockets.block();
+        await spectatorSockets.drop();
+        await expect(b.locator(".cw-conn-pill")).toBeVisible();
+        const socketsBeforeDeltaProbe = spectatorSockets.opened();
+        spectatorSockets.unblock();
+        await reconnectSpectator(b, spectatorSockets.opened, socketsBeforeDeltaProbe);
+        await expect.poll(filled).toBe(baseline);
+
         // A selects the clue and types the answer.
         const tab = a.getByRole("button", {
           name: target!.direction === "ACROSS" ? /^across$/i : /^down$/i,
@@ -374,8 +425,8 @@ test.describe("game board (needs e2e account)", () => {
         await inputs.first().click();
         await a.keyboard.type(target!.answer, { delay: 40 });
 
-        // Watch the spectator board while A submits: sample the filled count
-        // every 25ms through the guess and the stagger window.
+        // Watch the already-live spectator board while A submits: sample the
+        // filled count every 25ms through the guess and the stagger window.
         const samples: { t: number; n: number }[] = [];
         const t0 = Date.now();
         const watcher = (async () => {

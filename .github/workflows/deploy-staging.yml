@@ -110,7 +110,33 @@ jobs:
             # is caught by the global rewrite above; add the ssh:// form here too.
             git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "git@github.com:olivecasazza/"
             git config --global url."https://x-access-token:${NIXLAB_TOKEN}@github.com/olivecasazza/".insteadOf "ssh://git@github.com/olivecasazza/"
-            nix build .#k8s-manifests
+
+            # DEF-364: nixlab STILL declares a top-level `agentctx` input
+            # (git+ssh://git@github.com/olivecasazza/agentctx.git, flake.nix:110)
+            # whose repo 404s, so Nix resolving every direct input before
+            # evaluating any output kills `nix build .#k8s-manifests` in
+            # call-flake.nix — the manifest can't regenerate even though the
+            # k8s path never consumes agentctx (only home-manager modules do).
+            # The override removal in #276 ("dropped in nixlab#560") checked out
+            # against a nixlab main that still declares it — v0.1.113, v0.1.114
+            # and v0.1.115 all failed to deploy on this exact fetch since.
+            #
+            # Override the dead input with a tiny local stub. `--override-input`
+            # is transient (it never rewrites nixlab's flake.lock) and the stub
+            # is never evaluated on the k8s-manifests path, so the generated
+            # manifest is byte-for-byte what the real input would have produced.
+            # Root-cause cleanup is to drop agentctx from nixlab for real.
+            agentctx_stub="$RUNNER_TEMP/agentctx-stub"
+            mkdir -p "$agentctx_stub"
+            printf '%s\n' \
+              '{' \
+              '  description = "Stub for the deleted olivecasazza/agentctx flake input (DEF-364).";' \
+              '  outputs = { self }: {' \
+              '    homeManagerModules.default = { };' \
+              '    lib.renderPi = _: { };' \
+              '  };' \
+              '}' > "$agentctx_stub/flake.nix"
+            nix build .#k8s-manifests --override-input agentctx "path:$agentctx_stub"
             cp -L result modules/k8s/manifests.yaml
             rm -f result
             git add modules/k8s/manifests.yaml
@@ -140,6 +166,14 @@ jobs:
         env:
           BASE_URL: https://crosswords-staging.casazza.io
           TAG: ${{ github.event.inputs.tag || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha) || github.event.workflow_run.head_branch }}
+          # DEF-317: the COMMIT behind the deployed tag, so the gate can assert
+          # buildSha on a `v*` tag. A `workflow_run` event does not populate
+          # `github.sha` with the tagged commit (it is the default branch's head),
+          # so the trigger's own `head_sha` is used — that IS the commit the tag
+          # names. Delivered as an env var rather than `git rev-parse` because
+          # neither deploy workflow checks the repository out, so there is no git
+          # tree on the runner to ask.
+          COMMIT_SHA: ${{ github.event.inputs.tag && '' || github.event.workflow_run.head_sha || '' }}
           # The budget is a variable, not a literal, so the log line and the loop
           # can never disagree about it again. See POLL_BUDGET below.
           POLL_INTERVAL: 20
@@ -161,29 +195,92 @@ jobs:
               cfg=$(curl -s --max-time 15 "$BASE_URL/api/config" 2>/dev/null) || cfg=""
               # A release/tag deploy must be serving exactly that version. Continuous
               # staging deploys a :<sha> image while /api/config reports the crate
-              # version, so only assert the version when the tag is a version tag.
+              # version, so a version tag is asserted against "version" and a :<sha>
+              # tag against "buildSha" — both are assertions, neither is a skip.
               #
-              # A version MISMATCH is a retry condition, not a verdict — same bug
-              # the production probe had. The previous pod answers 200 for the
+              # The sha arm exists because skipping it made a green run meaningless.
+              # Every continuous deploy is a :<sha> tag, so the sha arm is the only
+              # one most runs ever take; with it skipped this step degenerated to
+              # "healthz == 200", which a SURVIVING PRE-FIX POD returns perfectly
+              # well for the whole rolling update. That is exactly how PR #111
+              # (fedd69d) merged, deploy-staging went green, and staging kept
+              # serving 0.1.49 for days (DEF-124). buildSha is the first 12 chars
+              # of the git rev (client/flake.nix), so it is comparable to the tag.
+              #
+              # A MISMATCH on either arm is a retry condition, not a verdict — same
+              # bug the production probe had. The previous pod answers 200 for the
               # whole rolling update, so the first poll lands on the old build and
               # the loop bailed after ~1s of its 18m budget. A tag deploy that
-              # then completed correctly was reported red. Retry the version
-              # exactly the way the health check is retried.
+              # then completed correctly was reported red. Retry exactly the way
+              # the health check is retried.
+              # DEF-317: BOTH arms assert buildSha, and the version arm asserts
+              # version too. Previously the `v*` arm checked `version` only,
+              # which is why run 37173764985 went green against
+              # `"buildSha":"unknown"`: the crate version is correct in an image
+              # whose provenance is unknown, so `version` matching proved
+              # nothing about WHICH build was serving. A release that cannot name
+              # its own build is not a verified release.
+              #
+              # `version` alone stays insufficient for a second reason: it is the
+              # crate version, identical across every image built from that
+              # commit. buildSha is `builtins.substring 0 12` of the commit, so
+              # it is the only field that can distinguish this build from any
+              # other build of the same version.
+              version_ok=1
+              build_sha_ok=1
               case "$TAG" in
                 *v[0-9]*)
                   got=$(printf '%s' "$cfg" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
                   want="${TAG##*v}"
                   if [ "$got" != "$want" ]; then
-                    echo "healthz=200 from $BASE_URL but serving ${got:-unknown}, want $want — the previous pod is still up, rolling out — retry $i/$POLL_BUDGET"
-                    sleep "$POLL_INTERVAL"
-                    continue
+                    version_ok=0
+                    echo "healthz=200 from $BASE_URL but serving version ${got:-<none>}, want $want — the previous pod is still up, rolling out — retry $i/$POLL_BUDGET"
                   fi
-                  echo "serving expected version $got"
-                  ;;
-                *)
-                  echo "tag $TAG is not a version tag; skipping the version assertion"
                   ;;
               esac
+              # buildSha is `builtins.substring 0 12` of the COMMIT. A `v*` tag
+              # names a version, not a commit, so "${TAG:0:12}" would be
+              # "v0.1.101" — which no buildSha can ever equal. Resolve the tag to
+              # its commit first:
+              #   * on a `workflow_run` from a tag push, the trigger's head_sha IS
+              #     the tagged commit (release-plz cuts the tag ON the release
+              #     commit; measured: v0.1.101 ->
+              #     28f7bfb6ba955c2703c9c75f9ac37152fb83bedd), delivered as
+              #     COMMIT_SHA above;
+              #   * for a `:latest`/`:<sha>` image, the sha is literally the tag.
+              #
+              # If the commit cannot be resolved the gate FAILS rather than
+              # skipping: an unverifiable release is not a green release, and
+              # that skip is exactly how run 37173764985 went green.
+              got=$(printf '%s' "$cfg" | grep -o '"buildSha":"[^"]*"' | cut -d'"' -f4)
+              commit=""
+              case "$TAG" in
+                *v[0-9]*)
+                  commit="$COMMIT_SHA"
+                  if [ -z "$commit" ]; then
+                    build_sha_ok=0
+                    echo "::error::cannot resolve $TAG to a commit, so buildSha cannot be asserted — refusing to report a green deploy for an unverifiable release (DEF-317)"
+                    want=""
+                  else
+                    want="${commit:0:12}"
+                  fi
+                  ;;
+                *)
+                  want="${TAG:0:12}"
+                  ;;
+              esac
+              if [ "$build_sha_ok" -eq 1 ] && { [ -z "$got" ] || [ "$got" = "unknown" ]; }; then
+                build_sha_ok=0
+                echo "::error::healthz=200 from $BASE_URL but /api/config reports buildSha ${got:-<none>} — an image with no build identity. DEF-317 threaded the root flake's rev into BUILD_SHA so this cannot happen; if it does, the image was built from something other than this commit."
+              elif [ "$got" != "$want" ]; then
+                build_sha_ok=0
+                echo "healthz=200 from $BASE_URL but serving build $got, want $want — the previous pod is still up, rolling out — retry $i/$POLL_BUDGET"
+              fi
+              if [ "$version_ok" -eq 0 ] || [ "$build_sha_ok" -eq 0 ]; then
+                sleep "$POLL_INTERVAL"
+                continue
+              fi
+              echo "serving expected version ${TAG##*v} and build $got"
               echo "healthz=200 from $BASE_URL; /api/config -> ${cfg:-<empty>}"
               echo "::notice::Post-deploy readiness OK: $BASE_URL is serving."
               exit 0

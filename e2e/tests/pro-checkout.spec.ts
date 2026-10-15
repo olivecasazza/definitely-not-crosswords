@@ -61,30 +61,17 @@ async function signIn(page: Page, email: string, password: string) {
   await expect(page).not.toHaveURL(/\/auth\/login/, { timeout: 20_000 });
 }
 
-test("a Pro click starts a real Lemon Squeezy checkout (no purchase)", async ({
-  page,
-  baseURL,
-}) => {
+test("a Pro click starts a real Lemon Squeezy checkout (no purchase)", async ({ page }) => {
   // ── 1. What the deploy claims, before touching the UI ──────────────────────
   // Read the flag first so a missing flag is a diagnosis, not a mystery
   // timeout waiting on a button that will never render.
   const cfgRes = await page.request.get("/api/config");
   expect(cfgRes.status(), "GET /api/config").toBe(200);
   const proCheckout = (await cfgRes.json())?.features?.proCheckout;
-  const staging = !process.env.E2E_BASE_URL || /staging/i.test(baseURL ?? "");
   if (proCheckout !== true) {
-    if (staging) {
-      // Staging is where billing was turned on (DEF-167). A missing flag there
-      // means the LEMONSQUEEZY_* injection is gone — the exact "frontend and
-      // deploy disagree" state this canary exists to catch. Skip is a lie here.
-      throw new Error(
-        `staging ${baseURL}/api/config reports proCheckout=${JSON.stringify(proCheckout)} — ` +
-          `the LEMONSQUEEZY_* injection is missing, so no purchase control can render (DEF-167)`,
-      );
-    }
     test.skip(
       true,
-      `billing is off on this deployment (proCheckout=${proCheckout}) — no purchase control is rendered, by design`,
+      `Pro checkout is behind the announcement gate on this deployment (proCheckout=${proCheckout}) — no purchase control is rendered, by design`,
     );
   }
 

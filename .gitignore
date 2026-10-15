@@ -17,3 +17,4 @@ playwright/.auth/
 # The template is committed; the roster is not. See
 # data/crossword/alpha-roster.example.json.
 data/crossword/alpha-roster.json
+.impeccable/

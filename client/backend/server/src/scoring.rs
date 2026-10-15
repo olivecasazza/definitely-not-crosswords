@@ -715,7 +715,7 @@ mod tests {
         // names, sometimes the values that collided.
         let err = sqlx::Error::RowNotFound;
         let msg = crate::ctx::sanitised_db_error("save the submitted letters", &err);
-        assert_eq!(msg, "save the submitted letters failed");
+        assert_eq!(msg, "INTERNAL: save the submitted letters failed");
         // Nothing from the driver survives into the message.
         assert!(!msg.contains("RowNotFound"), "driver detail leaked: {msg}");
         assert!(

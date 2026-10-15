@@ -15,6 +15,26 @@ use gloo_storage::{LocalStorage, Storage};
 /// distinguishable from prod. KISS — just a link to GitHub's issue form.
 pub const REPORT_BUG_URL: &str = "https://github.com/olivecasazza/definitely-not-crosswords/issues/new?labels=staging&title=%5Bstaging%5D+&body=%2A%2AEnvironment%3A%2A%2A+staging+%28reported+from+the+app%29%0A%0A%2A%2AWhat+happened%3F%2A%2A%0A%0A%2A%2ASteps+to+reproduce%3A%2A%2A%0A";
 
+/// The dismiss control. At the banner's type sizes a bare ✕ is ~14px tall, so
+/// the button is a real 44px box (the strip grows to match) rather than a
+/// 14px target.
+const STAGING_CSS: &str = r#"
+.staging-banner { background: var(--color-warning); color: var(--contrast-ink);
+  font-size: var(--fs-sm); line-height: 1.4; padding: 0.4rem 0.9rem;
+  display: flex; gap: 0.75rem; align-items: center; justify-content: center;
+  flex-wrap: wrap; border-bottom: 1px solid var(--contrast-ink); }
+.staging-dismiss { position: relative; background: none; border: none; color: var(--contrast-ink);
+  font-weight: 700; cursor: pointer; padding: 0 .5rem; font-size: var(--fs-sm); min-height: 44px; }
+/* Mobile: the full beta-price sentence plus a 44px dismiss wrap the banner to
+   five lines (~130px) and push the play board past a phone viewport. Collapse
+   to one short warning; the price detail stays on desktop and in the BETA
+   popover (header.rs) once the banner is dismissed. */
+@media (max-width: 760px) {
+  .staging-banner { padding: 0.2rem 0.5rem; gap: 0.5rem; }
+  .staging-long, .staging-report { display: none; }
+}
+"#;
+
 #[component]
 pub fn StagingBanner() -> Element {
     let state = use_app_state();
@@ -22,15 +42,18 @@ pub fn StagingBanner() -> Element {
         return rsx! {};
     }
     rsx! {
+        style { {STAGING_CSS} }
         div {
-            style: "background:var(--color-warning);color:var(--contrast-ink);font-size:0.8rem;line-height:1.4;\
-                    padding:0.4rem 0.9rem;display:flex;gap:0.75rem;align-items:center;\
-                    justify-content:center;flex-wrap:wrap;border-bottom:1px solid var(--contrast-ink)",
+            class: "staging-banner",
             span {
                 b { "STAGING (beta) — " }
-                "Pro is $1 here, but this is a test environment: expect occasional data loss and unexpected changes. You're a beta tester. 🎈"
+                "test environment, data may be lost."
+            }
+            span { class: "staging-long",
+                "Beta price: Pro is $1 here (production is $10/year). You're a beta tester. 🎈"
             }
             a {
+                class: "staging-report",
                 href: REPORT_BUG_URL,
                 target: "_blank",
                 rel: "noopener",
@@ -38,8 +61,7 @@ pub fn StagingBanner() -> Element {
                 "Report a bug →"
             }
             button {
-                style: "background:none;border:none;color:var(--contrast-ink);font-weight:700;\
-                        cursor:pointer;padding:0 .25rem;font-size:0.9rem;",
+                class: "staging-dismiss",
                 aria_label: "Dismiss",
                 onclick: move |_| {
                     let _ = LocalStorage::set("staging_dismissed", true);

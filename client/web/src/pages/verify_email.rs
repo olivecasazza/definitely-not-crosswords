@@ -177,7 +177,7 @@ pub fn VerifyEmail() -> Element {
                         }
                         p {
                             class: "muted",
-                            style: "font-size: .75rem; line-height: 1.6; margin: 0;",
+                            style: "font-size: var(--fs-xs); line-height: 1.6; margin: 0;",
                             "Your email address has been successfully verified. You can now log into the application."
                         }
                         Link {
@@ -220,7 +220,7 @@ pub fn VerifyEmail() -> Element {
                         }
                         p {
                             class: "muted",
-                            style: "font-size: .75rem; line-height: 1.6; margin: 0; text-align: center;",
+                            style: "font-size: var(--fs-xs); line-height: 1.6; margin: 0; text-align: center;",
                             if msg.is_empty() {
                                 "The verification token is invalid, expired, or has already been used."
                             } else {

@@ -69,12 +69,11 @@ else
   fail "/api/config reports version '${served:-<none>}', want '$EXPECTED_VERSION'"
 fi
 
-# The Pro CTA gate (DEF-166). The bundle hides the purchase button on
-# `features.proCheckout === false`, which the server derives from the same
-# `billing.lemonSqueezy.enabled` flag that gates credential injection. A
-# release whose /api/config lost the flag ships a bundle that can no longer
-# describe whether buying Pro is possible, so assert the deployed answer
-# rather than trusting the diff.
+# The Pro CTA gate (DEF-166 / DEF-421). The bundle hides the purchase button on
+# `features.proCheckout === false`, which the server derives from both Lemon
+# Squeezy credentials and PRO_PRICE_ANNOUNCED. A release whose /api/config lost
+# the flag ships a bundle that can no longer describe whether buying Pro is
+# possible, so assert the deployed answer rather than trusting the diff.
 #
 # The served .wasm is not evidence of this flag, and the copy assertions below
 # cannot stand in for it: both copy variants are compiled into one binary and
@@ -83,7 +82,8 @@ fi
 #
 # EXPECTED_PRO_CHECKOUT is optional. Unset — the default, and what the release
 # gate uses — either value passes, because a release may legitimately ship
-# with billing on or off. Set it to pin one host to one answer (DEF-199).
+# before or after the announcement gate. Set it to pin one host to one answer
+# (DEF-199).
 pro_checkout="$(printf '%s' "$config" | grep -oE '"proCheckout":(true|false)' | head -1 || true)"
 if [ -z "$pro_checkout" ]; then
   fail "/api/config has no boolean proCheckout feature flag — the Pro CTA cannot be gated"
@@ -102,7 +102,13 @@ index="$(curl -fsS --max-time 30 "$BASE_URL/")" || {
   echo "::error::GET $BASE_URL/ failed" >&2
   exit 1
 }
-glue="$(printf '%s' "$index" | grep -o '/_assets/[^"]*crossword-web\.js' | head -1 || true)"
+# Any hash EXCEPT the literal "<64-hex>" placeholder: the served index.html
+# carries that placeholder inside the boot-card comment (client/flake.nix's BOOT
+# CSS note), and an unanchored first-match grep fetched it and 404'd on every
+# run. `[^"<>]+` still matches a hex hash and the guard suite's synthetic
+# `/_assets/deadbeef/` (a hex-only pattern silently dropped the guard's stub and
+# this suite went red on otherwise-green runs).
+glue="$(printf '%s' "$index" | grep -o '/_assets/[^"<>]\{1,\}/crossword-web\.js' | head -1 || true)"
 if [ -z "$glue" ]; then
   echo "::error::no /_assets/*/crossword-web.js in $BASE_URL/ — the bundle layout changed; update this script" >&2
   exit 1

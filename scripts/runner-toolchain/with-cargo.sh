@@ -2,15 +2,21 @@
 # Run a cargo command in the `client/` workspace on a runner where the default
 # toolchain cannot build it. Works around two environmental facts:
 #
-#   1. `client/web/Cargo.toml` pins panel-kit and panel-kit-core at the absolute
-#      release-plz host path (/home/olive/Repositories/panel-kit), which does not
-#      exist here, so cargo cannot even load the workspace manifest. Both path
-#      deps are temporarily repointed at the real panel-kit, checked out at the
-#      revision `flake.nix` pins (see `fetch-panel-kit.sh`). If that checkout is
-#      unavailable — offline, no git — they fall back to the manifest-only shim
-#      in `panel-kit-shim/`, which loads the manifest but cannot type-check
-#      anything. `[patch]` does not help: cargo fails while loading the manifest,
-#      before patch resolution.
+#   1. `client/web/Cargo.toml` pins panel-kit and panel-kit-core as git deps on
+#      `github.com/olivecasazza/panel-kit.git`, tag `v1.1.1`. That resolves on
+#      its own, so it does not break the manifest — it just means cargo fetches
+#      panel-kit itself, on its own schedule, ignoring the revision this repo
+#      pins. The pin the runner checks (fetch-panel-kit.sh) and the code the
+#      build compiles are then two different facts. So both git deps are
+#      temporarily rewritten into path deps at the real panel-kit, checked out at
+#      the revision `client/Cargo.lock` pins (see `fetch-panel-kit.sh` and
+#      `panel-kit-pin.sh`) — the same file cargo resolves, so the two cannot
+#      disagree (DEF-330; it used to read client/flake.nix, which could). If that
+#      checkout is unavailable — offline, no git — they fall back to the
+#      manifest-only shim in `panel-kit-shim/`, which loads the manifest but
+#      cannot type-check anything. `[patch]` does not help: cargo resolves
+#      patches after the manifest is loaded, and the dep here has to resolve to
+#      *a* directory first.
 #   2. `/paperclip/bin/cc` -> `zigcc` appends link flags unconditionally, so zig
 #      tries to link even for `-c` and fails. `./cc` in this directory fixes that.
 #
@@ -27,7 +33,7 @@ SHIM="$HERE/panel-kit-shim"
 SUBCMD="${1:?usage: with-cargo.sh <cargo subcommand> [args...]}"
 shift
 
-# Prefer the real panel-kit at the flake-pinned rev: that is the only way
+# Prefer the real panel-kit at the lock-pinned rev: that is the only way
 # `crossword-web`/`crossword-desktop` can be type-checked here. The shim is the
 # offline fallback, and it is not panel-kit — say so rather than let a caller
 # believe a shim build verified the frontend.
@@ -79,16 +85,36 @@ restore() {
 trap restore EXIT
 
 REL="$(realpath --relative-to="$CLIENT_DIR/web" "$PANEL_KIT")"
-sed -i \
-  -e "s#path = \"/home/olive/Repositories/panel-kit/crates/panel-kit-core\"#path = \"$REL/crates/panel-kit-core\"#" \
-  -e "s#path = \"/home/olive/Repositories/panel-kit\"#path = \"$REL\"#" \
+PK_REL="$REL/crates/panel-kit-core"
+
+# Since DEF-244 the deps are git deps, not path deps, so the old
+# `/home/olive/Repositories/panel-kit` repoint matched nothing and cargo went on
+# to resolve panel-kit itself — the checkout we just fetched was never compiled
+# against. Rewrite each `panel-kit* = { git = "<url>"… }` dep into a path dep at
+# the fetched checkout, so the revision `fetch-panel-kit.sh` resolved is the one
+# cargo builds. The tag is matched with `[^}]*` rather than spelled out so that
+# bumping the pin in web/Cargo.toml cannot silently turn this into another no-op.
+#
+# `-core` is listed first and both patterns are `^`-anchored: `panel-kit =` must
+# not be allowed to match the head of `panel-kit-core =`.
+sed -i -E \
+  -e "s#^panel-kit-core = \{ git = \"[^\"]*panel-kit\.git\"[^}]*\}\$#panel-kit-core = { path = \"$PK_REL\" }#" \
+  -e "s#^panel-kit = \{ git = \"[^\"]*panel-kit\.git\"[^}]*\}\$#panel-kit = { path = \"$REL\" }#" \
   "$CLIENT_DIR/web/Cargo.toml"
 
-# Both path deps must have moved off the host path, or the workspace still
-# points at a directory that does not exist and cargo fails at manifest load
-# with an error that has nothing to do with the real problem.
-if grep -q '/home/olive/Repositories/panel-kit' "$CLIENT_DIR/web/Cargo.toml"; then
-  echo "repointing panel-kit failed; the host path is still in web/Cargo.toml" >&2
+# Both deps must now be path deps. A leftover `git =` means the pattern drifted
+# from the manifest again — cargo would resolve panel-kit itself and quietly build
+# something other than the pinned checkout, so fail loudly instead.
+if grep -qE '^(panel-kit|panel-kit-core) = \{.*git =' "$CLIENT_DIR/web/Cargo.toml"; then
+  echo "repointing panel-kit failed; web/Cargo.toml still declares a panel-kit git dep" >&2
+  exit 1
+fi
+# And both must point where we said they point. The grep above only proves the
+# git dep is gone; this proves the checkout actually took.
+if ! grep -qE "^panel-kit = \{ path = \"$REL\" \}\$" "$CLIENT_DIR/web/Cargo.toml" ||
+  ! grep -qE "^panel-kit-core = \{ path = \"$PK_REL\" \}\$" "$CLIENT_DIR/web/Cargo.toml"; then
+  echo "repointing panel-kit failed; expected panel-kit deps at $REL in web/Cargo.toml" >&2
+  grep -nE '^panel-kit(-core)? = ' "$CLIENT_DIR/web/Cargo.toml" >&2 || true
   exit 1
 fi
 

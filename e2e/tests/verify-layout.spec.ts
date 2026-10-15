@@ -158,7 +158,10 @@ async function trapSockets(page: Page) {
 
 async function openGame(page: Page): Promise<string | null> {
   await page.goto("/games");
-  await expect(page.getByText("Library").first()).toBeVisible();
+  // The lobby shell hydrates async and can exceed the default 15s expect
+  // budget under CI load (a red canary run saw the /games heading missing for
+  // >15s). Gate on the heading with explicit headroom before reading the list.
+  await expect(page.getByText("Library").first()).toBeVisible({ timeout: 30_000 });
   const card = (label: string) =>
     page
       .locator('[data-row="game"]')
@@ -296,6 +299,27 @@ test.describe("game board (needs e2e account)", () => {
       test.skip(!url, "no playable game on staging");
       const viewport = page.viewportSize()!;
       const screen: Rect = { x: 0, y: 0, width: viewport.width, height: viewport.height };
+      // The board panel stacks under the players strip on mobile, and the strip
+      // is not at its final height the instant `.cw-letter` first paints: the
+      // socket's connect pill appears then clears and the roster fills in, so a
+      // box sampled mid-settle was ~16px too low (canary run 38569927588).
+      // Wait for the area to come to rest inside the viewport before asserting
+      // instead of sampling a transient frame.
+      await expect
+        .poll(
+          async () => {
+            const a = await bbox(page, ".cw-board-area");
+            if (!a) return false;
+            return (
+              a.x >= screen.x - 2 &&
+              a.y >= screen.y - 2 &&
+              a.x + a.width <= screen.x + screen.width + 2 &&
+              a.y + a.height <= screen.y + screen.height + 2
+            );
+          },
+          { timeout: 20_000, message: "phone board area settles inside the viewport" },
+        )
+        .toBe(true);
       await expectPageFitsViewport(page, "board/phone");
       const area = await bbox(page, ".cw-board-area");
       const board = await bbox(page, ".cw-board");

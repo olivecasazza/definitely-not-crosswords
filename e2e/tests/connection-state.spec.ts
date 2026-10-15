@@ -157,7 +157,11 @@ async function signIn(page: Page, email: string, password: string) {
 async function openPlayScreen(page: Page): Promise<boolean> {
   await signIn(page, EMAIL!, PASSWORD!);
   await page.goto("/games");
-  await expect(page.getByText("Library").first()).toBeVisible();
+  // The lobby shell hydrates async and can exceed the default 15s expect
+  // budget under CI load (canary run 38569927588 timed out on exactly this
+  // locator). Give the heading explicit headroom, then wait for a card before
+  // deciding there is nothing to play — an instant count() races the query.
+  await expect(page.getByText("Library").first()).toBeVisible({ timeout: 30_000 });
 
   const card = (label: string) =>
     page
@@ -166,6 +170,11 @@ async function openPlayScreen(page: Page): Promise<boolean> {
       .first();
   const active = card("— IN PROGRESS");
   const unstarted = card("— NEW");
+  try {
+    await active.or(unstarted).first().waitFor({ state: "visible", timeout: 20_000 });
+  } catch {
+    return false;
+  }
   if (await active.count()) {
     await active.click();
     await expect(page).toHaveURL(/\/game\/[^/]+$/, { timeout: 60_000 });

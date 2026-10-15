@@ -540,6 +540,8 @@ test("the roving cell's focus ring clears 3:1 before any clue is picked (DEF-188
   if (!(await openPlayScreen(page))) {
     test.skip(true, "no playable game available on staging");
   }
+  // Wait for board to fully render and settle after navigation
+  await expect(page.locator(".cw-letter").first()).toBeVisible({ timeout: 10_000 });
   // Before a clue is picked there is no derived cursor, so the roving tabindex
   // parks on the first non-block cell in row-major order — a bare .cw-letter.
   // That is the case the old --fill-ink ring was invisible in.

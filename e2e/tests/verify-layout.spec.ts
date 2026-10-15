@@ -252,6 +252,8 @@ test.describe("game board (needs e2e account)", () => {
       await signIn(page, EMAIL!, PASSWORD!);
       const url = await openGame(page);
       test.skip(!url, "no playable game on staging");
+      // Wait for layout to stabilize after board mounts on mobile
+      await page.waitForTimeout(1000);
       const viewport = page.viewportSize()!;
       const screen: Rect = { x: 0, y: 0, width: viewport.width, height: viewport.height };
       await expectPageFitsViewport(page, "board/phone");

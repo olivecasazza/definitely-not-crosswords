@@ -76,7 +76,7 @@ async fn get_status(ctx: &Ctx) -> Result<Value, String> {
             -- currentPeriodEnd is stored UTC-naive, so to_char + the literal Z
             -- suffix yields a correct ISO-8601 UTC instant.
             to_char(s."currentPeriodEnd", '{TS_FMT}') AS current_period_end,
-            {PRO_PREDICATE_COLUMNS}
+            {PRO_PREDICATE_COLUMNS},
             -- Month comparison done in SQL to avoid needing the sqlx chrono feature.
             -- Mirrors TS: resetDate.getUTCFullYear/Month === now.getUTCFullYear/Month
             CASE

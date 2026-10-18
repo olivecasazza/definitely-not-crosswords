@@ -19,12 +19,14 @@ pub const REPORT_BUG_URL: &str = "https://github.com/olivecasazza/definitely-not
 /// the button is a real 44px box (the strip grows to match) rather than a
 /// 14px target.
 const STAGING_CSS: &str = r#"
-.staging-banner { background: var(--color-warning); color: var(--contrast-ink);
-  font-size: var(--fs-sm); line-height: 1.4; padding: 0.4rem 0.9rem;
-  display: flex; gap: 0.75rem; align-items: center; justify-content: center;
-  flex-wrap: wrap; border-bottom: 1px solid var(--contrast-ink); }
-.staging-dismiss { position: relative; background: none; border: none; color: var(--contrast-ink);
-  font-weight: 700; cursor: pointer; padding: 0 .5rem; font-size: var(--fs-sm); min-height: 44px; }
+.staging-banner { background: color-mix(in srgb, var(--color-warning) 10%, var(--bg-app));
+  color: var(--text-secondary); font-size: var(--fs-xs); line-height: 1.4;
+  padding: 0.3rem 0.9rem; display: flex; gap: 0.6rem; align-items: center;
+  justify-content: center; flex-wrap: wrap; border-bottom: 1px solid var(--border-app); }
+.staging-banner b { color: var(--text-primary); }
+.staging-dismiss { position: relative; background: none; border: none; color: var(--text-secondary);
+  font-weight: 700; cursor: pointer; padding: 0 .5rem; font-size: var(--fs-xs); min-height: 44px; }
+.staging-dismiss:hover { color: var(--text-primary); }
 /* Mobile: the full beta-price sentence plus a 44px dismiss wrap the banner to
    five lines (~130px) and push the play board past a phone viewport. Collapse
    to one short warning; the price detail stays on desktop and in the BETA

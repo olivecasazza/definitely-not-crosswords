@@ -188,15 +188,14 @@ const HEADER_CSS: &str = "
 .site-header .navlink-user { display: inline-flex; align-items: center; gap: .4rem; }
 .resume-btn { white-space: nowrap; }
 .beta-wrap { position: relative; }
-/* Outlined tag, not the old filled black-bordered box: it was the loudest
-   thing in a strip whose only real action is Sign in. Hue stays --pastel-
-   yellow (14.7:1 dark / 6.1:1 light), so it reads as the env warning without
-   shouting. */
+/* Subtle warning text, not a boxed chip: the header's only boxed control is the
+   one filled primary (Sign in / Resume). A yellow border + transparent bg made
+   BETA the loudest thing in the strip; keep the hue as a quiet cue but drop
+   the box so it reads like the nav links beside it. */
 .beta-chip {
   font-family: var(--mono); font-size: var(--fs-2xs); font-weight: 700;
   letter-spacing: .08em; padding: .2rem .45rem; cursor: pointer;
   background: transparent; color: var(--color-warning);
-  border: 1px solid var(--color-warning);
 }
 .beta-pop {
   position: absolute; top: calc(100% + .5rem); right: 0; z-index: 60;
@@ -207,14 +206,15 @@ const HEADER_CSS: &str = "
 .beta-pop a { text-decoration: underline; font-weight: 700; }
 /* Plain mono text, not a boxed chip: the header carries exactly one real
    control (Sign in / Resume) and everything else is information. The warn
-   state keeps the filled pill because that one time it is an alert. */
+   state switches the text to the warning hue rather than filling a pill, so
+   it alerts without adding a second boxed control. */
 .quota-chip {
   font-family: var(--mono); font-size: var(--fs-2xs); font-weight: 700;
   letter-spacing: .05em; padding: .25rem .35rem;
   color: var(--text-secondary); text-decoration: none;
 }
 .quota-chip:hover { color: var(--text-primary); }
-.quota-chip-warn { color: var(--contrast-ink); background: var(--color-warning); border-color: var(--color-warning); }
+.quota-chip-warn { color: var(--color-warning); }
 /* Borderless 44px icon control for the theme toggle — the glyph carries the
    meaning, a box around it only added weight. */
 .site-header .icon-btn {

@@ -37,7 +37,9 @@ use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
+use std::time::Instant;
 use uuid::Uuid;
 
 #[tokio::main]
@@ -443,6 +445,66 @@ async fn trpc_get(
     envelope(routers::dispatch(&proc, &input, &ctx).await)
 }
 
+// ── Mail-endpoint rate limiting ─────────────────────────────────────────────
+// `signup`, `requestPasswordReset` and `resendVerification` all send mail.
+// Without a limit a caller can (a) bomb one target address, or (b) burn the
+// SMTP quota across many addresses. Keyed by the normalized recipient, with a
+// global backstop per window. Sliding window, in memory, per process — enough
+// to stop abuse without adding a new dependency.
+static MAIL_RATE: LazyLock<Mutex<HashMap<String, Vec<Instant>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+const MAIL_WINDOW: Duration = Duration::from_secs(600);
+const MAIL_PER_ADDRESS_MAX: usize = 3;
+const MAIL_GLOBAL_MAX: usize = 200;
+const MAIL_PROCS: [&str; 3] = [
+    "user.signup",
+    "user.requestPasswordReset",
+    "user.resendVerification",
+];
+
+/// False when this mail-sending call should be refused with `RATE_LIMITED`.
+fn mail_within_rate(proc: &str, input: &Value) -> bool {
+    if !MAIL_PROCS.contains(&proc) {
+        return true;
+    }
+    let email = input
+        .get("email")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_lowercase())
+        .unwrap_or_default();
+    let mut guard = match MAIL_RATE.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let now = Instant::now();
+    // Address first: a bombed recipient is refused even before the global cap.
+    if !record_mail_hit(
+        &mut guard,
+        &format!("email:{email}"),
+        MAIL_PER_ADDRESS_MAX,
+        now,
+    ) {
+        return false;
+    }
+    record_mail_hit(&mut guard, "__global__", MAIL_GLOBAL_MAX, now)
+}
+
+fn record_mail_hit(
+    guard: &mut HashMap<String, Vec<Instant>>,
+    key: &str,
+    max: usize,
+    now: Instant,
+) -> bool {
+    let hits = guard.entry(key.to_string()).or_default();
+    hits.retain(|t| now.duration_since(*t) < MAIL_WINDOW);
+    if hits.len() >= max {
+        return false;
+    }
+    hits.push(now);
+    true
+}
+
 async fn trpc_post(
     Path(proc): Path<String>,
     State(st): State<AppState>,
@@ -450,6 +512,9 @@ async fn trpc_post(
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
     let input = body.get("0").cloned().unwrap_or(Value::Null);
+    if !mail_within_rate(&proc, &input) {
+        return envelope(Err("RATE_LIMITED".to_string()));
+    }
     let ctx = Ctx {
         pool: st.pool.clone(),
         auth: st.auth.authenticate(&req_auth(&headers)),

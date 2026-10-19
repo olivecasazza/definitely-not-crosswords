@@ -15,7 +15,6 @@ use crossword_core::fmt::format_date;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CompletedGameData {
-    id: String,
     /// Source `Game` id — powers the rematch button. Optional so responses from
     /// an older server (which doesn't send it) still parse; we then hide rematch.
     #[serde(default)]
@@ -56,7 +55,6 @@ struct GameStats {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MemberScore {
-    id: String,
     score: i64,
     correct_guesses: i64,
     incorrect_guesses: i64,

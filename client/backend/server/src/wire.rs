@@ -24,6 +24,8 @@ pub fn envelope(res: Result<Value, String>) -> Json<Value> {
                 ("FORBIDDEN", 403)
             } else if e == "UNAUTHORIZED" {
                 ("UNAUTHORIZED", 401)
+            } else if e == "RATE_LIMITED" {
+                ("RATE_LIMITED", 429)
             } else if let Some(rest) = e.strip_prefix("INTERNAL: ") {
                 // Genuine server error: surface the underlying message but with
                 // a 500 envelope so the client doesn't loop on a known-bad call.

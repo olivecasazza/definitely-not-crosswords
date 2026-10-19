@@ -608,10 +608,19 @@ fn event_data_for(path: &str, ev: &AppEvent) -> Option<Value> {
 }
 
 /// `GET /api/grids/:id` — retrieve a generated grid as JSON.
-async fn grid_get(State(st): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+///
+/// Authenticated: the response carries every question's answer, so it must not
+/// be readable by an anonymous caller who guesses a game id. The session cookie
+/// is the same one `activeGame.*` uses (`req_auth`), and `rest_get_grid` then
+/// requires either a published game or ownership by the caller.
+async fn grid_get(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
     let ctx = Ctx {
         pool: st.pool.clone(),
-        auth: st.auth.authenticate(&req_auth(&HeaderMap::new())),
+        auth: st.auth.authenticate(&req_auth(&headers)),
         events: st.events.clone(),
         mailer: st.mailer.clone(),
     };

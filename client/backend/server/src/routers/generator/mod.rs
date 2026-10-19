@@ -470,9 +470,14 @@ fn parse_params(input: &Value) -> Result<(Params, Value, Option<String>), String
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .ok_or("topic is required")?;
+    // Bound the grid dimensions: the solver allocates width×height cells and
+    // runs a search before `max_attempts` stops it, so an unbounded caller-
+    // supplied size is a cheap CPU/memory DoS. 50 is far above any real
+    // crossword (the shipped daily is 21×21).
+    const MAX_GRID_DIM: i32 = 50;
     let p = Params {
-        width: geti("width", 21),
-        height: geti("height", 21),
+        width: geti("width", 21).clamp(3, MAX_GRID_DIM),
+        height: geti("height", 21).clamp(3, MAX_GRID_DIM),
         min_len: geti("minWordLength", 3),
         max_len: geti("maxWordLength", 12),
         target: geti("targetWords", 42),
@@ -1017,12 +1022,18 @@ pub async fn rest_create_job(ctx: &Ctx, params_json: Value) -> Result<Value, (St
 /// }
 /// ```
 ///
-/// Returns 404 if the grid does not exist or is not a generated game.
+/// Returns 401 when unsigned, 403 when the caller neither owns the game nor may
+/// read a published one, and 404 if the grid does not exist or is not a
+/// generated game.
 pub async fn rest_get_grid(ctx: &Ctx, id: &str) -> Result<Value, (String, i32)> {
+    // The body is the answer key, so an anonymous caller must not reach it by
+    // guessing a UUID. Same session cookie the tRPC procedures use.
+    let user = ctx.require_user().map_err(|e| (e.to_string(), 401))?;
+
     let row = sqlx::query(
         r#"
         SELECT g.id, g.title, g.source::text AS source,
-               g."createdAt", g."updatedAt", g.published
+               g."createdAt", g."updatedAt", g.published, g."createdById"
         FROM "Game" g
         WHERE g.id = $1
         "#,
@@ -1036,6 +1047,14 @@ pub async fn rest_get_grid(ctx: &Ctx, id: &str) -> Result<Value, (String, i32)> 
         Some(r) => r,
         None => return Err(("Grid not found.".to_string(), 404)),
     };
+
+    // Published games are readable (they are the public puzzle surface); a
+    // private game is readable only by the account that created it.
+    let published: bool = row.try_get("published").unwrap_or(false);
+    let created_by: Option<String> = row.try_get("createdById").ok().flatten();
+    if !published && created_by.as_deref() != Some(user.id.as_str()) {
+        return Err(("Forbidden.".to_string(), 403));
+    }
 
     let source: String = row.get("source");
     if source != "GENERATED" {

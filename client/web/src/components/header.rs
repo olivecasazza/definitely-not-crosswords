@@ -196,6 +196,9 @@ const HEADER_CSS: &str = "
   font-family: var(--mono); font-size: var(--fs-2xs); font-weight: 700;
   letter-spacing: .08em; padding: .2rem .45rem; cursor: pointer;
   background: transparent; color: var(--color-warning);
+  /* A <button> with no border falls back to the UA's 2px outset, which reads
+     as yet another boxed control. Reset it explicitly. */
+  border: none;
 }
 .beta-pop {
   position: absolute; top: calc(100% + .5rem); right: 0; z-index: 60;

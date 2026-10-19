@@ -9,6 +9,7 @@ pub mod ctx;
 pub mod mailer;
 pub mod origin;
 pub mod pg_events;
+pub mod rate_limit;
 pub mod routers;
 pub mod scoring;
 pub mod seo;

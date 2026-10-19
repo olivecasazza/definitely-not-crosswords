@@ -634,7 +634,7 @@ pub fn GamePlay(id: String) -> Element {
             while let Some(mut latest) = rx.next().await {
                 // VUs/components share no state, but one component owns this
                 // receiver; draining here is the single coalescing point.
-                while let Ok(Some(newer)) = rx.try_next() {
+                while let Ok(newer) = rx.try_recv() {
                     latest = newer;
                 }
                 let _ = net::mutation("activeGame.publishPresence", Some(latest)).await;

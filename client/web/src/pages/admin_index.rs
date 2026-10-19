@@ -48,7 +48,6 @@ struct RoleOption {
 #[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct JobRow {
-    id: String,
     status: String,
     topic: String,
     width: i64,
@@ -60,7 +59,6 @@ struct JobRow {
 #[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResultGame {
-    id: String,
     title: String,
     published: bool,
 }
@@ -74,7 +72,6 @@ struct Discount {
     amount_type: String,
     amount: i64,
     duration: String,
-    duration_in_months: Option<i64>,
     max_redemptions: Option<i64>,
     times_redeemed: i64,
     expires_at: Option<String>,

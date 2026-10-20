@@ -296,7 +296,11 @@ fn browser_online() -> bool {
 /// That is exactly how DEF-175 c3 presented: `Reconnecting… (2/5)` for 90s, no
 /// panic, no third attempt, and nothing in the trace to read.
 fn trace_conn(msg: impl std::fmt::Display) {
-    web_sys::console::debug_1(&format!("conn: {msg}").into());
+    // `log`, not `debug`: a debug-level breadcrumb did not reach Playwright's
+    // console listener (the empty `connection-state.log` attachment from the
+    // first instrumented run), while this module's `console::error_1` lines do
+    // appear. Transitions and exits only, so this stays quiet.
+    web_sys::console::log_1(&format!("conn: {msg}").into());
 }
 
 /// Delay before the retry after `attempt` failed: 1s, 2s, 4s, 8s, 16s, ±20%

@@ -32,6 +32,35 @@ const PASSWORD2 = process.env.E2E_PASSWORD_2;
 
 test.skip(!EMAIL || !PASSWORD, "E2E_EMAIL / E2E_PASSWORD not set");
 
+/**
+ * The state machine's own breadcrumbs, attached to every failing test here.
+ *
+ * `net.rs` logs every transition and every exit as `conn: …` (transitions and
+ * exits only, so a handful per outage). Without them a frozen pill is
+ * indistinguishable from a hang: DEF-175 c3 sat on "Reconnecting… (2/5)" for
+ * 90s with no panic, no further attempt and nothing in the trace naming which
+ * exit the loop took. Read this attachment before guessing.
+ */
+const connLog = new WeakMap<Page, string[]>();
+
+test.beforeEach(async ({ page }) => {
+  const lines: string[] = [];
+  connLog.set(page, lines);
+  page.on("console", (m) => {
+    const text = m.text();
+    if (text.startsWith("conn:")) lines.push(text);
+  });
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  const lines = connLog.get(page) ?? [];
+  if (!lines.length) return;
+  await testInfo.attach("connection-state.log", {
+    body: lines.join("\n"),
+    contentType: "text/plain",
+  });
+});
+
 /** The co-op subscription endpoint. Blocked/closed by the tests below. */
 const WS_GLOB = "**/api/trpc-ws";
 

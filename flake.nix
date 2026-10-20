@@ -125,6 +125,9 @@
         hydraJobs = {
           inherit crossword-server dockerImage;
           web = crossword-web;
+          # Pre-build the exact environment Paperclip activates so fresh runner
+          # pods substitute it instead of compiling the Rust/Dioxus closure.
+          paperclip-environment = clientFor.devShells.paperclip;
         };
 
         # buildbot-nix evaluates `.#checks.<system>` per PR and reports a GitHub

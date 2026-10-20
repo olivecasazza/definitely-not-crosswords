@@ -288,6 +288,17 @@ fn browser_online() -> bool {
         .unwrap_or(true)
 }
 
+/// Console breadcrumb for the connection state machine.
+///
+/// Transitions and exits only — never per frame, so the volume is a handful per
+/// outage. Without them a loop that stops for a reason nobody predicted leaves
+/// the pill frozen on its last value with no evidence of which exit it took.
+/// That is exactly how DEF-175 c3 presented: `Reconnecting… (2/5)` for 90s, no
+/// panic, no third attempt, and nothing in the trace to read.
+fn trace_conn(msg: impl std::fmt::Display) {
+    web_sys::console::debug_1(&format!("conn: {msg}").into());
+}
+
 /// Delay before the retry after `attempt` failed: 1s, 2s, 4s, 8s, 16s, ±20%
 /// jitter.
 ///
@@ -443,16 +454,18 @@ async fn supervise(
     // same moment; without this the play screen would re-render — and
     // re-reconcile — once per socket.
     fn report(conn: &mut Conn, on_state: &mut impl FnMut(ConnectionState), state: ConnectionState) {
-        let changed = {
+        let (changed, previous) = {
             let mut cur = conn.state.write();
             if *cur == state {
-                false
+                (false, state)
             } else {
+                let previous = *cur;
                 *cur = state;
-                true
+                (true, previous)
             }
         };
         if changed {
+            trace_conn(format!("{previous:?} -> {state:?}"));
             on_state(state);
         }
     }
@@ -477,7 +490,10 @@ async fn supervise(
 
         if attempt > 0 && !parked_deliberately {
             match wait_backoff(attempt, &mut cancel, &mut cmds).await {
-                Wait::Cancelled => return,
+                Wait::Cancelled => {
+                    trace_conn("exit: cancelled during backoff");
+                    return;
+                }
                 Wait::Restart => {
                     attempt = 0;
                     continue;
@@ -496,11 +512,17 @@ async fn supervise(
             // browser coming back, or the screen going away.
             report(&mut conn, &mut on_state, ConnectionState::Offline);
             futures::select! {
-                _ = cancel => return,
+                _ = cancel => {
+                    trace_conn("exit: cancelled while parked");
+                    return;
+                }
                 msg = cmds.next() => match msg {
                     Some(Cmd::Retry) => attempt = 0,
                     Some(Cmd::Offline) => {}
-                    None => return,
+                    None => {
+                        trace_conn("exit: command channel closed while parked");
+                        return;
+                    }
                 },
             }
             continue;
@@ -541,7 +563,10 @@ async fn supervise(
         };
 
         match outcome {
-            Attempt::Cancelled => return,
+            Attempt::Cancelled => {
+                trace_conn("exit: cancelled mid-attempt");
+                return;
+            }
             Attempt::Restart => attempt = 0,
             Attempt::WentOffline => {
                 // Park now and report it: the browser is offline, so the rest

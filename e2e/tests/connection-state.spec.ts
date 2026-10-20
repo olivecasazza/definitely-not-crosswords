@@ -336,6 +336,12 @@ test("navigator.onLine parks the pill at offline without waiting (DEF-175 c5)", 
 });
 
 test("a reconnect reconciles the board without a reload (DEF-175 c3)", async ({ page }) => {
+  // The exhausted ladder is five attempts, each bounded at 5s for the open and
+  // 5s for the acknowledgement, plus 1+2+4+8+16s of jittered backoff — ~81s
+  // worst case, then the reconcile assertions. The config's 60s test timeout
+  // fired first, so the 90s expect below could never be used; `test.slow()`
+  // triples the budget.
+  test.slow();
   if (!EMAIL2 || !PASSWORD2) {
     test.skip(true, "E2E_EMAIL_2 / E2E_PASSWORD_2 not set");
   }

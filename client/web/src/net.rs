@@ -296,7 +296,11 @@ fn browser_online() -> bool {
 /// That is exactly how DEF-175 c3 presented: `Reconnecting… (2/5)` for 90s, no
 /// panic, no third attempt, and nothing in the trace to read.
 fn trace_conn(msg: impl std::fmt::Display) {
-    web_sys::console::debug_1(&format!("conn: {msg}").into());
+    // `log`, not `debug`: the first instrumented run produced an empty
+    // `connection-state.log` attachment. The strings are in the served wasm, so
+    // they fired and were dropped — a debug-level console line does not reach
+    // Playwright's listener, while this module's `console::error_1` lines do.
+    web_sys::console::log_1(&format!("conn: {msg}").into());
 }
 /// Delay before the retry after `attempt` failed: 1s, 2s, 4s, 8s, 16s, ±20%
 /// jitter.
@@ -391,9 +395,28 @@ async fn attempt_once(
         "method": "subscription",
         "params": { "path": proc, "input": input.cloned().unwrap_or(Value::Null) },
     });
-    if let Err(e) = write.send(Message::Text(start.to_string())).await {
-        web_sys::console::error_1(&format!("ws start frame failed: {e}").into());
-        return Attempt::Lost;
+    // Bound the connect phase. `send` waits for the socket to open, and a
+    // socket the browser is still handshaking blocks here for ~11s measured (a
+    // blocked route leaves it CONNECTING until the browser gives up). Bounding
+    // only the acknowledgement left the per-attempt cost unbounded, so five
+    // attempts overran the test budget before the ladder could reach `Offline`
+    // — the other half of DEF-175 c3 alongside the unbounded ack wait.
+    let open_deadline = TimeoutFuture::new(ATTEMPT_DEADLINE_MS).fuse();
+    futures::pin_mut!(open_deadline);
+    let start_frame = write.send(Message::Text(start.to_string())).fuse();
+    futures::pin_mut!(start_frame);
+    match futures::future::select(start_frame, open_deadline).await {
+        futures::future::Either::Right(_) => {
+            web_sys::console::error_1(
+                &format!("ws did not open within {ATTEMPT_DEADLINE_MS}ms").into(),
+            );
+            return Attempt::Lost;
+        }
+        futures::future::Either::Left((Err(e), _)) => {
+            web_sys::console::error_1(&format!("ws start frame failed: {e}").into());
+            return Attempt::Lost;
+        }
+        futures::future::Either::Left((Ok(()), _)) => {}
     }
 
     // Wait for the server's `started` acknowledgement before claiming Live.

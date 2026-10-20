@@ -1118,11 +1118,11 @@ test.describe("four-player multiplayer soak", () => {
       // testing, because `complete` reads membership and the ActiveGame row in
       // two separate pool queries before opening its transaction.
       await test.step("completion happens exactly once", async () => {
-        const data = await trpcGet(pages[0], "activeGame.get", { id: activeGameId });
+        const first = await trpcGet(pages[0], "activeGame.get", { id: activeGameId });
         // `/api/grids` is keyed by the PARENT game, which `activeGame.get`
         // returns as `gameId` — not by the activeGameId we navigated to.
-        const answers = await answersFor(pages[0], data.gameId!);
-        const all: AnswerClue[] = (data?.game?.questions ?? [])
+        const answers = await answersFor(pages[0], first.gameId!);
+        const all: AnswerClue[] = (first?.game?.questions ?? [])
           .map((c: Clue) => ({ ...c, answer: answers.get(clueKey(c)) }))
           .filter((c: Clue & { answer?: string }): c is AnswerClue => Boolean(c.answer));
 
@@ -1137,20 +1137,34 @@ test.describe("four-player multiplayer soak", () => {
         //
         // Completion is a cell invariant. Deduplicate crossing coordinates and
         // repair only cells whose newest GameAction is not correctGuess.
-        const latest = latestStates(data?.actions ?? []);
-        const wanted = new Map<string, string>();
-        for (const clue of all) {
-          clueCells(clue).forEach(([x, y], i) => {
-            const key = `${x},${y}`;
-            if (latest.get(key)?.actionType !== "correctGuess") {
-              wanted.set(key, (clue.answer ?? "")[i] ?? "");
-            }
-          });
-        }
-        console.log(`COMPLETION: ${wanted.size} cells left of ${all.length} clues`);
-
-        if (wanted.size > 0) {
-          let solved = false;
+        let solved = false;
+        for (let attempt = 1; attempt <= 3 && !solved; attempt++) {
+          // Re-read on every attempt. The UI is still in flight when this step
+          // starts — the reserved-clue solve above lands a beat later — so a
+          // snapshot taken once can be stale by the time the fill reaches the
+          // server. That is exactly how this failed: cell (4,0) was correct in
+          // the snapshot, a trailing write put a wrong letter there, and the
+          // fill (already decided from the snapshot) never repaired it, so the
+          // board finished 157/158 with `solved` false. Completion is a cell
+          // invariant, so drive it from the board as it is, not as it was.
+          const data = await trpcGet(pages[0], "activeGame.get", { id: activeGameId });
+          const latest = latestStates(data?.actions ?? []);
+          const wanted = new Map<string, string>();
+          for (const clue of all) {
+            clueCells(clue).forEach(([x, y], i) => {
+              const key = `${x},${y}`;
+              if (latest.get(key)?.actionType !== "correctGuess") {
+                wanted.set(key, (clue.answer ?? "")[i] ?? "");
+              }
+            });
+          }
+          console.log(
+            `COMPLETION attempt ${attempt}: ${wanted.size} cells left of ${all.length} clues`,
+          );
+          if (wanted.size === 0) {
+            solved = true;
+            break;
+          }
           if (RECORD) {
             // A watchable completion: one cell per real mutation, and do not
             // send the next until the board visibly marks this one correct.
@@ -1213,8 +1227,8 @@ test.describe("four-player multiplayer soak", () => {
             expect(failures.map((f) => f.error), "every fill batch was accepted").toEqual([]);
             solved = filled.some((r) => r.data?.solved === true);
           }
-          expect(solved, "the board reports solved after the final fill").toBe(true);
         }
+        expect(solved, "the board reports solved after the final fill").toBe(true);
 
         // The race: four members call complete() in one tick.
         completedCalls = await Promise.all(

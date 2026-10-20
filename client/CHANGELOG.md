@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Other
+
+- *(ci)* run the active-game concurrency regression in a hermetic Nix/Postgres check
+
 ## [0.1.98](https://github.com/olivecasazza/definitely-not-crosswords/compare/v0.1.97...v0.1.98) - 2026-10-03
 
 ### Fixed

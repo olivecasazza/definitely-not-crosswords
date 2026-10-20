@@ -152,6 +152,10 @@
           # derivation itself lives beside the shell it exercises.
           runner-environment = clientFor.checks.runner-environment;
 
+          # The nested client flake owns the hermetic DB setup; expose its
+          # x86_64-linux check here so buildbot's root checks discover it.
+          active-game-concurrency = clientFor.checks.active-game-concurrency;
+
           # Migrations are applied by the `migrate-db` init container at pod
           # start, so before this gate the FIRST place any migration ever ran
           # was a real database. That is how prod silently lost

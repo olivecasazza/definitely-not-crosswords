@@ -1032,19 +1032,26 @@ pub fn GamePlay(id: String) -> Element {
     let heartbeat_tx = presence_tx.clone();
     let heartbeat_id = id.clone();
     let heartbeat_selected = selected;
-    use_hook(move || {
-        spawn_local(async move {
-            let mut ticks = IntervalStream::new(10_000);
+    use_future(move || {
+        // `use_future`, not `use_hook` + `spawn_local`: a detached task outlives
+        // the component and then panics with `Dropped(ValueDroppedError)` on the
+        // first heartbeat after the play screen goes away — the same class of
+        // panic the soak's second page logged against `game_play.rs`. A
+        // scope-bound future is dropped with the scope.
+        let mut ticks = IntervalStream::new(10_000);
+        let tx = heartbeat_tx.clone();
+        let game_id = heartbeat_id.clone();
+        async move {
             while ticks.next().await.is_some() {
                 if let Some((number, direction)) = *heartbeat_selected.peek() {
-                    let _ = heartbeat_tx.unbounded_send(json!({
-                        "id": heartbeat_id,
+                    let _ = tx.unbounded_send(json!({
+                        "id": game_id,
                         "number": number,
                         "direction": dir_str(direction),
                     }));
                 }
             }
-        });
+        }
     });
     // Snapshot the in-progress word for a question, pre-filling current letters.
     let publish_for_select = publish_presence.clone();

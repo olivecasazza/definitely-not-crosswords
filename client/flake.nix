@@ -35,16 +35,12 @@
     # It was a third copy of one revision, alongside `web/Cargo.toml`'s tag and
     # the `rev` in `Cargo.lock`, and nothing reconciled them. It was also inert:
     # `flake = false`, and DEF-324 had already removed the only consumer — the
-    # `vendor-panel-kit` copy in `src` below. Its last reader was
-    # `scripts/runner-toolchain/fetch-panel-kit.sh`, which sedded the rev out of
-    # this line to decide what the runner checks out, which is precisely how the
-    # runner came to check out a different commit than cargo compiled.
+    # `vendor-panel-kit` copy in `src` below.
     #
     # `client/Cargo.lock` is now the single source of truth, and it is the file
-    # cargo actually resolves, so the revision the runner checks out and the
-    # revision the build compiles cannot be two different facts. Nothing in this
-    # flake reads a panel-kit revision: `cargoVendorDir` vendors the dep from
-    # the lock.
+    # cargo actually resolves. Nothing in this flake reads a panel-kit revision:
+    # `cargoVendorDir` vendors the dep from the lock, and the dev shell exposes
+    # only the locked toolchain.
     #
     # TO BUMP panel-kit: change the `tag` in `web/Cargo.toml` and re-resolve the
     # lock. There is no nix side to keep in step, which is the point — that side
@@ -149,10 +145,8 @@
           # cargo never looked at, and a full panel-kit checkout was still copied
           # into every build. crane vendors the git dep from Cargo.lock via
           # `cargoVendorDir` below, which is the supported path and the one the
-          # CI build log shows being used. The `panel-kit` input itself stays
-          # declared (repinned to the lock's commit) because the runner toolchain
-          # reads it — but this build no longer dereferences it. See the note at
-          # the input list.
+          # CI build log shows being used. There is no `panel-kit` input to
+          # dereference; see the note at the input list.
           #
           # Ship every workspace member so cargo can resolve the workspace; each
           # nix build below compiles just one crate (-p ...). All of web, desktop,
@@ -206,6 +200,44 @@
             ORT_LIB_LOCATION = "${ortLib}/lib";
             ORT_SKIP_DOWNLOAD = "1";
           };
+
+          # The single tool/package definition both dev shells share. Anything a
+          # Paperclip agent needs (or a human developer) is stated exactly once
+          # here; adding a tool is a one-line change, not two lists to keep in
+          # sync.
+          devShellPackages = with pkgs; [
+            rustToolchain
+            cargo-watch
+            rust-analyzer
+            dioxus-cli
+            wasm-bindgen-cli
+            lld
+            inputs.omnix.packages.${system}.default
+            # Desktop (Tauri) toolchain — `cargo-tauri` for `tauri dev/build`
+            # plus the GTK/WebKit libs the native crate links against.
+            cargo-tauri
+            pkg-config
+            webkitgtk_4_1
+            libsoup_3
+            gtk3
+          ];
+
+          # `nix develop ./client` includes these same checks in its
+          # `inputsFrom`, so entering the human shell can reuse the check
+          # closure. This is the `checks` binding in this `let`, not
+          # flake-parts' `self'.checks`: there is no `self` in scope here (this
+          # function is what `perSystem` wraps, so referring back to it would
+          # be a cycle).
+          devShellBase = {
+            checks = checks;
+            packages = devShellPackages;
+            # Local dev is the "local" environment: the server registers the
+            # dev-admin bypass route and /api/config turns on its button.
+            # staging/prod set APP_ENV via the Helm chart (default production).
+            APP_ENV = "local";
+            # So `cargo build -p crossword-server` finds the vendored onnxruntime
+            # (no download-binaries, no network) inside `nix develop`.
+          } // ortEnv;
 
           commonArgs = {
             inherit src cargoVendorDir;
@@ -762,6 +794,60 @@
         '';
 
           checks = {
+            # Proves the dev-shell/Paperclip environment rather than restating
+            # it: the same packages the shell exports, a real C compile-only
+            # and link/run against the vendored static ORT archive, and
+            # GTK/WebKit pkg-config resolution. It does not compile the
+            # workspace — that is what the cargo-* checks below are for.
+            runner-environment = pkgs.runCommand "runner-environment"
+              {
+                nativeBuildInputs = [
+                  pkgs.gcc
+                  pkgs.pkg-config
+                ];
+                # The same packages the dev shell exposes, so pkg-config's setup
+                # hook sees the GTK/WebKit/Soup .pc dirs exactly as it does in
+                # `nix develop`.
+                buildInputs = devShellPackages;
+              }
+              ''
+                set -euo pipefail
+
+                # Every command the dev shell puts on PATH must resolve.
+                for cmd in cc gcc cargo rustc rustdoc rustfmt cargo-clippy \
+                           cargo-watch rust-analyzer dx wasm-bindgen lld om \
+                           cargo-tauri pkg-config; do
+                  command -v "$cmd" >/dev/null || { echo "missing command: $cmd" >&2; exit 1; }
+                done
+
+                # The wasm target ships with the shell's rustc.
+                sysroot=$(rustc --print sysroot)
+                [ -d "$sysroot/lib/rustlib/wasm32-unknown-unknown" ] \
+                  || { echo "wasm32-unknown-unknown target missing" >&2; exit 1; }
+
+                # The vendored ORT archive is at the path ORT_LIB_LOCATION names.
+                [ -f "${ortLib}/lib/libonnxruntime.a" ] \
+                  || { echo "ORT static archive missing" >&2; exit 1; }
+
+                # Real cc: compile-only, then link and run against the archive.
+                cat > ort.c <<'EOF'
+                extern void *OrtGetApiVersion(void);
+                int main(void) { return OrtGetApiVersion() != 0 ? 0 : 1; }
+                EOF
+                cc -c ort.c -o ort.o
+                cc ort.c "${ortLib}/lib/libonnxruntime.a" \
+                  -lstdc++ -lm -ldl -lpthread -lrt -o ort
+                ./ort
+                echo "ok: cc compile-only + link/run"
+
+                # GTK/WebKit must resolve through pkg-config.
+                for pkg in webkit2gtk-4.1 libsoup-3.0 gtk+-3.0; do
+                  pkg-config --exists "$pkg" || { echo "pkg-config missing $pkg" >&2; exit 1; }
+                  echo "ok: $pkg $(pkg-config --modversion "$pkg")"
+                done
+
+                touch $out
+              '';
             cargo-fmt = craneLib.cargoFmt {
               inherit src;
               pname = "crossword-client";
@@ -842,37 +928,18 @@
           # sha these packages bake, with no builder involved.
           buildSha = buildSha;
 
-          # `nix develop ./client` runs these same checks on `enterShell`. This is
-          # the `checks` binding in the `let` above rather than flake-parts'
-          # `self'.checks`: there is no `self` in scope here (this function is
-          # what `perSystem` wraps, so referring back to it would be a cycle).
-          devShells.default = craneLib.devShell (
-            {
-              checks = checks;
-              packages = with pkgs; [
-                rustToolchain
-                cargo-watch
-                rust-analyzer
-                dioxus-cli
-                wasm-bindgen-cli
-                lld
-                inputs.omnix.packages.${system}.default
-                # Desktop (Tauri) toolchain — `cargo-tauri` for `tauri dev/build`
-                # plus the GTK/WebKit libs the native crate links against.
-                cargo-tauri
-                pkg-config
-                webkitgtk_4_1
-                libsoup_3
-                gtk3
-              ];
-              # Local dev is the "local" environment: the server registers the
-              # dev-admin bypass route and /api/config turns on its button.
-              # staging/prod set APP_ENV via the Helm chart (default production).
-              APP_ENV = "local";
-              # So `cargo build -p crossword-server` finds the vendored onnxruntime
-              # (no download-binaries, no network) inside `nix develop`.
+          devShells.default = craneLib.devShell devShellBase;
+
+          # Paperclip runner shell: same packages and environment, deliberately
+          # without the `checks` closure (crane adds it to `inputsFrom`, so this
+          # keeps the shell small) and with a silent shellHook. This locked
+          # shell is the only runner environment; there is no ad-hoc fallback.
+          devShells.paperclip = craneLib.devShell (
+            devShellBase
+            // {
+              checks = { };
+              shellHook = "";
             }
-            // ortEnv
           );
         };
     in

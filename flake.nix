@@ -144,6 +144,11 @@
             dockerImage
             ;
 
+          # The client flake's dev-shell/Paperclip environment proof. Surfaced
+          # here because buildbot evaluates the ROOT flake's `.#checks`; the
+          # derivation itself lives beside the shell it exercises.
+          runner-environment = clientFor.checks.runner-environment;
+
           # Migrations are applied by the `migrate-db` init container at pod
           # start, so before this gate the FIRST place any migration ever ran
           # was a real database. That is how prod silently lost

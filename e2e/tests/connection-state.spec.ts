@@ -348,9 +348,15 @@ test("a reconnect reconciles the board without a reload (DEF-175 c3)", async ({ 
     timeout: 90_000,
   });
 
-  // Let the observer back in. The reconcile path re-fetches `activeGame.get`
-  // after the re-subscribe lands, so the letter arrives with no reload.
+  // Let the observer back in. `Offline` is terminal by design (DEF-175 §3): the
+  // ladder parks and only "Retry now" — or an `online` event — restarts it. This
+  // test's outage is a blocked socket on a working network, so no `online` event
+  // will ever fire; drive the retry the way a player would. (Before the attempts
+  // had a deadline the ladder never actually parked, so waiting happened to work.)
   sockets.unblock();
+  await page.locator(".cw-conn-retry").click();
+  // The reconcile path re-fetches `activeGame.get` after the re-subscribe lands,
+  // so the letter arrives with no reload.
   await expect(pill(page)).toHaveCount(0, { timeout: 60_000 });
   await expect(page.locator(".cw-char").filter({ hasText: /s/i }).first()).toBeVisible({
     timeout: 30_000,

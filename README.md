@@ -86,6 +86,13 @@ The test drives two concurrent `activeGame.addActions` calls and verifies the
 client-visible empty → first-letter `previousState` chain plus persisted rows
 and action identity.
 
+Future DB regressions should join this explicit integration-target list and the
+same check convention rather than starting a second database harness or
+switching to package-wide `--ignored` execution. The check pins PostgreSQL 16
+to match the deployed `postgres:16-alpine` database; move that pin deliberately
+when the supported production major changes. On a failed build, the harness
+emits PostgreSQL startup/cleanup diagnostics before removing its private log.
+
 ## Plans & pricing
 
 | | Free | Pro |

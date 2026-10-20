@@ -341,8 +341,11 @@ test("a reconnect reconciles the board without a reload (DEF-175 c3)", async ({ 
   await p2.getByRole("button", { name: /^guess$/i }).click();
 
   // Let the pill climb its backoff ladder while the socket cannot come back.
+  // Budget: five attempts of up to 5s each plus 1+2+4+8+16s of jittered
+  // backoff, so ~62s worst case. The old 60s could expire while the ladder was
+  // still being honest about a connection that genuinely had not failed yet.
   await expect(page.locator('.cw-conn-pill[data-conn-state="error"]')).toBeVisible({
-    timeout: 60_000,
+    timeout: 90_000,
   });
 
   // Let the observer back in. The reconcile path re-fetches `activeGame.get`

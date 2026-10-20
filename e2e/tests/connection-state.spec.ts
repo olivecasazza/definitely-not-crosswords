@@ -101,10 +101,13 @@ async function tokenColor(page: Page, token: string): Promise<string> {
  */
 function luminance(colour: string): number {
   const rgb = colour.match(/rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)/);
+  const hex = colour.match(/^#([0-9a-f]{6})$/i);
   const srgb = colour.match(/color\(\s*srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
   const channels = rgb
     ? [Number(rgb[1]) / 255, Number(rgb[2]) / 255, Number(rgb[3]) / 255]
-    : srgb
+    : hex
+      ? [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16) / 255)
+      : srgb
       ? [Number(srgb[1]), Number(srgb[2]), Number(srgb[3])]
       : null;
   if (!channels) throw new Error(`not a parseable colour: ${colour}`);
@@ -141,10 +144,28 @@ async function inEachTheme(
   );
   try {
     for (const theme of ["dark", "light"] as const) {
-      await page.evaluate(
-        (t) => document.documentElement.classList.toggle("light-mode", t === "light"),
-        theme,
+      // The class flip reaches `:root` immediately, but the inherited value
+      // inside the panel tree resolves lazily: read too early, the cell still
+      // reports the PREVIOUS theme's ink (white-on-white, 1.03:1, which looked
+      // like a contrast regression rather than a stale read). Only wait when
+      // the theme is actually changing — the first pass is often already dark,
+      // and a poll for "it changed" would never settle.
+      const isLight = await page.evaluate(() =>
+        document.documentElement.classList.contains("light-mode"),
       );
+      if (isLight !== (theme === "light")) {
+        const probeToken = () =>
+          page.evaluate(() => {
+            const el = document.querySelector(".cw-cell") ?? document.body;
+            return getComputedStyle(el).getPropertyValue("--text-primary").trim();
+          });
+        const before = await probeToken();
+        await page.evaluate(
+          (t) => document.documentElement.classList.toggle("light-mode", t === "light"),
+          theme,
+        );
+        await expect.poll(probeToken, { timeout: 5_000 }).not.toBe(before);
+      }
       await body(theme);
     }
   } finally {
@@ -546,10 +567,46 @@ async function staleRingCell(page: Page) {
     const cell = document.querySelector<HTMLElement>(".cw-cell.cw-ring-stale");
     if (!cell) throw new Error("no .cw-cell.cw-ring-stale on the board");
     const cs = getComputedStyle(cell);
+    const letterEl = cell.querySelector<HTMLElement>(".cw-char");
+    const parse = (value: string): [number, number, number, number] | null => {
+      const rgb = value.match(/rgba?\(([^)]+)\)/);
+      if (rgb) {
+        const parts = rgb[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+        return [parts[0], parts[1], parts[2], parts.length > 3 ? parts[3] : 1];
+      }
+      const srgb = value.match(/color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?\)/);
+      if (srgb)
+        return [
+          Number(srgb[1]) * 255,
+          Number(srgb[2]) * 255,
+          Number(srgb[3]) * 255,
+          srgb[4] ? Number(srgb[4]) : 1,
+        ];
+      return null;
+    };
+    // The glyph does not sit on the cell's own colour: the stale ring paints a
+    // 15%-alpha color-mix as the cell background, so reading that as opaque pale
+    // green reported 1.28:1 for near-white ink on a dark board. Collect the
+    // translucent layers up to the first opaque one and flatten them.
+    const layers: Array<[number, number, number, number]> = [];
+    for (let node: HTMLElement | null = cell; node; node = node.parentElement) {
+      const bg = parse(getComputedStyle(node).backgroundColor);
+      if (bg && bg[3] > 0) layers.push(bg);
+      if (bg && bg[3] === 1) break;
+    }
+    const base = layers.pop() ?? [0, 0, 0, 1];
+    let [r, g, b] = base;
+    for (const [lr, lg, lb, la] of layers.reverse()) {
+      r = lr * la + r * (1 - la);
+      g = lg * la + g * (1 - la);
+      b = lb * la + b * (1 - la);
+    }
     return {
-      letter: cell.querySelector<HTMLElement>(".cw-char")?.textContent ?? "",
-      colour: cs.color,
-      background: cs.backgroundColor,
+      letter: letterEl?.textContent ?? "",
+      // The cell's own `color` is not what a player reads: the glyph is the
+      // `.cw-char` span, which can carry its own ink.
+      colour: letterEl ? getComputedStyle(letterEl).color : cs.color,
+      background: `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`,
       opacity: cs.opacity,
       ring: cs.boxShadow,
       insetBands: cs.boxShadow.match(/inset/g)?.length ?? 0,
@@ -725,7 +782,7 @@ test("a stale presence ring never dims the letter it surrounds and announces las
     expect(cell.insetBands, `stale ring inset bands in ${theme}: ${cell.ring}`).toBe(2);
     expect(
       contrast(cell.colour, cell.background),
-      `letter on a stale ring in ${theme}: ${ratio(contrast(cell.colour, cell.background))}`,
+      `letter on a stale ring in ${theme}: ${ratio(contrast(cell.colour, cell.background))} (${cell.colour} on ${cell.background})`,
     ).toBeGreaterThanOrEqual(4.5);
   });
   await other.close();

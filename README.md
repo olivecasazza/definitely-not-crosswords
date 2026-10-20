@@ -52,6 +52,40 @@ DATABASE_URL=…  cargo run -p crossword-tools --bin seed_admin    # admin users
 
 `docker-compose.yaml` provides a local Postgres for development.
 
+## Testing
+
+The server's concurrent same-cell `previousState` regression is an automatic,
+hermetic x86_64-linux Nix check. It starts a private temporary PostgreSQL
+instance on a Unix socket, applies the real sqlx migrations through
+`crossword-tools`, runs exactly the ignored `active_game_concurrency` test, and
+stops/removes the database on success or failure:
+
+```bash
+# Root flake: the buildbot-discovered check.
+nix build .#checks.x86_64-linux.active-game-concurrency
+
+# Equivalent nested client-flake check.
+nix build ./client#checks.x86_64-linux.active-game-concurrency
+```
+
+For a focused local diagnostic outside Nix, a disposable database can still be
+used with the direct command below. It is not the CI gate:
+
+```bash
+# Point this at an already-migrated disposable database; do not use production.
+: "${DATABASE_URL:?set DATABASE_URL to an already-migrated disposable Postgres}"
+DATABASE_URL="$DATABASE_URL" \
+  nix develop ./client --command cargo test \
+    --manifest-path client/Cargo.toml \
+    -p crossword-server \
+    --test active_game_concurrency \
+    -- --ignored --nocapture
+```
+
+The test drives two concurrent `activeGame.addActions` calls and verifies the
+client-visible empty → first-letter `previousState` chain plus persisted rows
+and action identity.
+
 ## Plans & pricing
 
 | | Free | Pro |

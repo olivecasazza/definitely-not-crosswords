@@ -728,6 +728,16 @@ test("the roving cell's focus ring clears 3:1 before any clue is picked (DEF-188
   // Before a clue is picked there is no derived cursor, so the roving tabindex
   // parks on the first non-block cell in row-major order — a bare .cw-letter.
   // That is the case the old --fill-ink ring was invisible in.
+  //
+  // This must stay real Tab presses: `element.focus()` does not arm
+  // `:focus-visible` on a `div[tabindex]`, so the ring under test would never
+  // exist and the assertions below would pass vacuously. That is also why this
+  // test currently fails — from a cold load the document's last tab stop is the
+  // workspace root (.ws-root, tabindex=0) and Tab returns to the browser chrome
+  // instead of entering the panel, while exactly one .cw-cell carries
+  // tabindex="0" (measured on staging). The gap is panel-kit's focus order, not
+  // the ring: it is reported separately, and it must not be papered over here
+  // because the whole point is the ring a keyboard player would see.
   expect(
     await tabIntoBoard(page),
     "Tab never reached the crossword board (roving cell stayed unfocused)",

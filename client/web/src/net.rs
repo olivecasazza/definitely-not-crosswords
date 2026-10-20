@@ -143,6 +143,14 @@ fn ws_url() -> String {
 /// reported [`ConnectionState::Offline`].
 pub const MAX_RETRY_ATTEMPTS: u8 = 5;
 
+/// How long one connection attempt may take before it counts as a failure.
+///
+/// Bounds the only unbounded waits in the state machine: opening the socket and
+/// waiting for frames. A socket that closes between construction and gloo
+/// attaching its handlers never ends the frame stream, so without a deadline
+/// this attempt would hold the supervisor forever.
+const ATTEMPT_DEADLINE_MS: u32 = 5_000;
+
 /// State of the subscription sockets.
 ///
 /// One state for the whole app rather than one per `subscribe` call. Each
@@ -267,6 +275,19 @@ fn watch_online(conn: &Conn) {
     std::mem::forget(Rc::new(handlers));
 }
 
+/// `navigator.onLine`, defaulting to "online" when the browser cannot say.
+///
+/// Deliberately coarse: it reports that a network interface is up, not that the
+/// server is reachable, so it is only ever used to *stop* the retry ladder —
+/// never to claim the socket is healthy. DEF-175 c5 asks for exactly this: when
+/// the browser already knows the network is gone, the state must flip without
+/// waiting out a socket timeout or the retry backoff.
+fn browser_online() -> bool {
+    web_sys::window()
+        .map(|window| web_sys::Navigator::on_line(&window.navigator()))
+        .unwrap_or(true)
+}
+
 /// Delay before the retry after `attempt` failed: 1s, 2s, 4s, 8s, 16s, ±20%
 /// jitter.
 ///
@@ -319,6 +340,10 @@ enum Attempt {
     /// The socket was dropped on purpose: a manual retry or an `online` event
     /// asked for a fresh one. Restart the ladder.
     Restart,
+    /// The browser reported the network gone while this socket was still
+    /// streaming. Park in `Offline` and say so; do not spend the ladder
+    /// rediscovering what `navigator.onLine` already told us.
+    WentOffline,
     /// The socket is gone — it either never opened or it died mid-stream.
     /// This is the third exit path of the old `subscribe`, and it is no longer
     /// silent.
@@ -370,10 +395,15 @@ async fn attempt_once(
             }
             msg = cmds.next() => match msg {
                 Some(Cmd::Retry) => return Attempt::Restart,
-                // Already parked in `Offline` by the browser listener. Keep
-                // streaming so the frames still in flight land, and let the
-                // socket die on its own.
-                Some(Cmd::Offline) => {}
+                // The browser reported the network gone. Hand it to the
+                // supervisor so it can park in `Offline` and report it. This
+                // used to be a no-op (`=> {}`) on the strength of a comment
+                // claiming the listener had already parked us — it had not:
+                // the listener only broadcasts to the retry loops, and a loop
+                // that is live is pumping frames here, not waiting in
+                // `wait_backoff`. So `navigator.onLine === false` changed
+                // nothing until the socket died on its own (DEF-175 c5).
+                Some(Cmd::Offline) => return Attempt::WentOffline,
                 None => return Attempt::Cancelled,
             },
             msg = read.next().fuse() => {
@@ -429,9 +459,23 @@ async fn supervise(
 
     let mut attempt: u8 = 0;
     let mut reported: Option<ConnectionState> = None;
+    // A park we entered on purpose must not be preceded by a backoff wait:
+    // there is nothing left for the ladder to discover.
+    let mut parked_deliberately = false;
 
     loop {
-        if attempt > 0 {
+        // The browser knows the network is gone before any socket can prove it.
+        // Parking here is what makes `Offline` immediate on
+        // `navigator.onLine === false`, and what makes "Retry now" pressed
+        // while still offline land straight back in `Offline` instead of
+        // walking 1s..16s of backoff to the same answer (DEF-175 c5).
+        if !browser_online() {
+            report(&mut conn, &mut on_state, ConnectionState::Offline);
+            attempt = MAX_RETRY_ATTEMPTS;
+            parked_deliberately = true;
+        }
+
+        if attempt > 0 && !parked_deliberately {
             match wait_backoff(attempt, &mut cancel, &mut cmds).await {
                 Wait::Cancelled => return,
                 Wait::Restart => {
@@ -445,6 +489,7 @@ async fn supervise(
                 Wait::Elapsed => {}
             }
         }
+        parked_deliberately = false;
 
         if attempt >= MAX_RETRY_ATTEMPTS {
             // Out of retries. Park: the only ways out are "Retry now", the
@@ -472,20 +517,39 @@ async fn supervise(
 
         let outcome = {
             let mut on_live = || report(&mut conn, &mut on_state, ConnectionState::Live);
-            attempt_once(
+            let opening = attempt_once(
                 &proc,
                 input.as_ref(),
                 &mut on_data,
                 &mut on_live,
                 &mut cancel,
                 &mut cmds,
-            )
-            .await
+            );
+            futures::pin_mut!(opening);
+            match futures::future::select(opening, TimeoutFuture::new(ATTEMPT_DEADLINE_MS)).await {
+                futures::future::Either::Left((outcome, _)) => outcome,
+                // Nothing inside an attempt has a deadline: `write.send` and
+                // `read.next` both wait on a socket that may never open, and a
+                // socket closed between construction and gloo attaching its
+                // handlers never ends the stream either. Without this the
+                // supervisor sits in the attempt forever and the pill freezes
+                // on "Reconnecting… (2/5)" — measured at ~50s of silence in
+                // one attempt, which is what DEF-175 c3's exhausted-ladder
+                // assertion actually hit.
+                futures::future::Either::Right(_) => Attempt::Lost,
+            }
         };
 
         match outcome {
             Attempt::Cancelled => return,
             Attempt::Restart => attempt = 0,
+            Attempt::WentOffline => {
+                // Park now and report it: the browser is offline, so the rest
+                // of the ladder has nothing to prove.
+                report(&mut conn, &mut on_state, ConnectionState::Offline);
+                attempt = MAX_RETRY_ATTEMPTS;
+                parked_deliberately = true;
+            }
             Attempt::Lost => {
                 // Say it the moment the socket drops, not after a backoff:
                 // the player's own letters stopped landing right then, and a

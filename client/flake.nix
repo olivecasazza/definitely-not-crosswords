@@ -831,8 +831,8 @@
 
                 # Real cc: compile-only, then link and run against the archive.
                 cat > ort.c <<'EOF'
-                extern void *OrtGetApiVersion(void);
-                int main(void) { return OrtGetApiVersion() != 0 ? 0 : 1; }
+                extern const void *OrtGetApiBase(void);
+                int main(void) { return OrtGetApiBase() != 0 ? 0 : 1; }
                 EOF
                 cc -c ort.c -o ort.o
                 cc ort.c "${ortLib}/lib/libonnxruntime.a" \

@@ -336,6 +336,12 @@ test("navigator.onLine parks the pill at offline without waiting (DEF-175 c5)", 
 });
 
 test("a reconnect reconciles the board without a reload (DEF-175 c3)", async ({ page }) => {
+  // The exhausted ladder is five attempts, each bounded at 5s for the open and
+  // 5s for the acknowledgement, plus 1+2+4+8+16s of jittered backoff — ~81s
+  // worst case, then the reconcile assertions. The config's 60s test timeout
+  // fired first, so the 90s expect below could never be used; `test.slow()`
+  // triples the budget.
+  test.slow();
   if (!EMAIL2 || !PASSWORD2) {
     test.skip(true, "E2E_EMAIL_2 / E2E_PASSWORD_2 not set");
   }
@@ -359,6 +365,7 @@ test("a reconnect reconciles the board without a reload (DEF-175 c3)", async ({ 
   await signIn(p2, EMAIL2, PASSWORD2);
   await p2.goto(url);
   await expect(p2.locator(".cw-letter").first()).toBeVisible({ timeout: 60_000 });
+  await joinIfPrompted(p2);
 
   const row = p2.locator(".cw-clue-row").first();
   await row.click();
@@ -467,6 +474,24 @@ async function firstChipBorderBottomStyle(page: Page) {
   return page.locator(".cw-chip").first().evaluate((chip) => getComputedStyle(chip).borderBottomStyle);
 }
 
+/**
+ * Join the game if this account is not a member yet.
+ *
+ * `publish_presence` and `addActions` both gate on a `GameMember` row, so a
+ * second account that merely *opens* the game publishes nothing: no ring, no
+ * letters, and the observer waits on presence that can never arrive. In CI the
+ * membership happened to exist because the soak's provisioning step joins
+ * players 2-4 — a run without that provisioning left these assertions stuck.
+ */
+async function joinIfPrompted(page: Page) {
+  const join = page.getByRole("button", { name: /^join game$/i });
+  const prompted = await join
+    .waitFor({ state: "visible", timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (prompted) await join.click();
+}
+
 async function staleChip(page: Page) {
   return page.evaluate(() => {
     const chip = document.querySelector<HTMLElement>(".cw-chip-stale");
@@ -479,6 +504,10 @@ async function staleChip(page: Page) {
       // The hidden last-known span must not appear here, so it is subtracted
       // back out of textContent and compared against the live chip.
       visibleText: [...chip.childNodes]
+        // Comments are Dioxus hydration anchors (they read "placeholder"), not
+        // text a player can see. Including them made this comparison depend on
+        // how many conditional blocks the chip happened to render.
+        .filter((node) => node.nodeType === Node.TEXT_NODE || node.nodeType === Node.ELEMENT_NODE)
         .filter((node) => !(node instanceof HTMLElement && node.classList.contains("cw-sr-only")))
         .map((node) => node.textContent ?? "")
         .join("")
@@ -569,8 +598,18 @@ test("a stale roster chip keeps its name above AA and announces last-known state
   }
   // Snapshot the live chip BEFORE going stale: A15 is a before/after
   // comparison, so the baseline has to be the unhidden rendering.
+  // Both sides of the A15 comparison must be computed the same way. Dioxus
+  // leaves a comment node reading "placeholder" for every conditional block it
+  // hydrates, and `textContent` includes those — so the raw textContent of a
+  // live chip and the filtered visible text of a stale one differed by the
+  // hydration comments rather than by anything a player can see.
   const liveChip = await page.locator(".cw-chip").first().evaluate((chip) => ({
-    visibleText: (chip.textContent ?? "").trim(),
+    visibleText: [...chip.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE || node.nodeType === Node.ELEMENT_NODE)
+      .filter((node) => !(node instanceof HTMLElement && node.classList.contains("cw-sr-only")))
+      .map((node) => node.textContent ?? "")
+      .join("")
+      .trim(),
     height: chip.getBoundingClientRect().height,
   }));
   await inEachTheme(page, async (theme) => {
@@ -637,6 +676,7 @@ test("a stale presence ring never dims the letter it surrounds and announces las
   await signIn(p2, EMAIL2!, PASSWORD2!);
   await p2.goto(url);
   await expect(p2.locator(".cw-letter").first()).toBeVisible({ timeout: 60_000 });
+  await joinIfPrompted(p2);
   await p2.locator(".cw-clue-row").first().click();
   await expect(page.locator('[title*="is working here"]').first()).toBeVisible({
     timeout: 30_000,
@@ -688,6 +728,16 @@ test("the roving cell's focus ring clears 3:1 before any clue is picked (DEF-188
   // Before a clue is picked there is no derived cursor, so the roving tabindex
   // parks on the first non-block cell in row-major order — a bare .cw-letter.
   // That is the case the old --fill-ink ring was invisible in.
+  //
+  // This must stay real Tab presses: `element.focus()` does not arm
+  // `:focus-visible` on a `div[tabindex]`, so the ring under test would never
+  // exist and the assertions below would pass vacuously. That is also why this
+  // test currently fails — from a cold load the document's last tab stop is the
+  // workspace root (.ws-root, tabindex=0) and Tab returns to the browser chrome
+  // instead of entering the panel, while exactly one .cw-cell carries
+  // tabindex="0" (measured on staging). The gap is panel-kit's focus order, not
+  // the ring: it is reported separately, and it must not be papered over here
+  // because the whole point is the ring a keyboard player would see.
   expect(
     await tabIntoBoard(page),
     "Tab never reached the crossword board (roving cell stayed unfocused)",

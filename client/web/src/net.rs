@@ -351,7 +351,9 @@ enum Attempt {
 }
 
 /// Open a socket, send the subscription start frame, and pump frames until the
-/// socket dies. `on_live` fires the moment the start frame has landed.
+/// socket dies. `on_live` fires once the server *acknowledges* the subscription
+/// (its `result.type == "started"` frame), not when the request is merely
+/// written.
 ///
 /// Ordering is load-bearing (DEF-175 §3): a caller that reconciles after
 /// reconnecting must see `Live` only once the re-subscription is actually on the
@@ -383,7 +385,60 @@ async fn attempt_once(
         web_sys::console::error_1(&format!("ws start frame failed: {e}").into());
         return Attempt::Lost;
     }
-    on_live();
+
+    // Wait for the server's `started` acknowledgement before claiming Live.
+    //
+    // This phase — not the whole attempt — is what needs a deadline. A socket
+    // that closes between construction and gloo attaching its handlers never
+    // ends the frame stream, so without a bound the attempt would sit here
+    // unseen by the supervisor and the ladder would never reach `Offline`
+    // (DEF-175 c3: the pill froze on "Reconnecting… (2/5)" for ~50s).
+    //
+    // The pump below must stay unbounded: a healthy, idle subscription sends
+    // nothing for minutes, so a lifetime cap there would kill live sockets
+    // every few seconds.
+    let handshake = TimeoutFuture::new(ATTEMPT_DEADLINE_MS).fuse();
+    futures::pin_mut!(handshake);
+    let mut acknowledged = false;
+    while !acknowledged {
+        futures::select! {
+            _ = cancel => {
+                let stop = serde_json::json!({ "id": 1, "method": "subscription.stop" });
+                let _ = write.send(Message::Text(stop.to_string())).await;
+                return Attempt::Cancelled;
+            }
+            _ = handshake => {
+                web_sys::console::error_1(
+                    &format!("ws never acknowledged the subscription within {ATTEMPT_DEADLINE_MS}ms")
+                        .into(),
+                );
+                return Attempt::Lost;
+            }
+            msg = cmds.next() => match msg {
+                Some(Cmd::Retry) => return Attempt::Restart,
+                Some(Cmd::Offline) => return Attempt::WentOffline,
+                None => return Attempt::Cancelled,
+            },
+            msg = read.next().fuse() => {
+                match msg {
+                    Some(Ok(Message::Text(t))) => {
+                        if let Ok(v) = serde_json::from_str::<Value>(&t) {
+                            match v["result"]["type"].as_str() {
+                                Some("started") => {
+                                    acknowledged = true;
+                                    on_live();
+                                }
+                                Some("data") => on_data(v["result"]["data"].clone()),
+                                _ => {}
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Bytes(_))) => {}
+                    _ => return Attempt::Lost, // closed or error
+                }
+            }
+        }
+    }
 
     loop {
         futures::select! {
@@ -517,27 +572,18 @@ async fn supervise(
 
         let outcome = {
             let mut on_live = || report(&mut conn, &mut on_state, ConnectionState::Live);
-            let opening = attempt_once(
+            // No deadline here on purpose: `attempt_once` returns only when the
+            // socket dies, and a live subscription is legitimately quiet for
+            // minutes. The bounded phase is its handshake, inside.
+            attempt_once(
                 &proc,
                 input.as_ref(),
                 &mut on_data,
                 &mut on_live,
                 &mut cancel,
                 &mut cmds,
-            );
-            futures::pin_mut!(opening);
-            match futures::future::select(opening, TimeoutFuture::new(ATTEMPT_DEADLINE_MS)).await {
-                futures::future::Either::Left((outcome, _)) => outcome,
-                // Nothing inside an attempt has a deadline: `write.send` and
-                // `read.next` both wait on a socket that may never open, and a
-                // socket closed between construction and gloo attaching its
-                // handlers never ends the stream either. Without this the
-                // supervisor sits in the attempt forever and the pill freezes
-                // on "Reconnecting… (2/5)" — measured at ~50s of silence in
-                // one attempt, which is what DEF-175 c3's exhausted-ladder
-                // assertion actually hit.
-                futures::future::Either::Right(_) => Attempt::Lost,
-            }
+            )
+            .await
         };
 
         match outcome {

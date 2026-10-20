@@ -87,20 +87,32 @@ async function tokenColor(page: Page, token: string): Promise<string> {
 }
 
 /**
- * WCAG 2.x relative luminance of a computed `rgb()` / `rgba()` colour.
+ * WCAG 2.x relative luminance of a computed colour.
  *
  * Computed styles are the only place the resolved value exists: `getPropertyValue`
  * on a custom property hands back its own text, and the `color-mix()` staleness
  * DIM1 introduced has no text form at all.
+ *
+ * Two serialisations reach here. Plain colours come back `rgb()`/`rgba()` with
+ * channels in 0..255; `color-mix()` results come back `color(srgb r g b / a)`
+ * with channels already in 0..1. Assuming only the first shape is what failed
+ * the stale-ring test: it threw `not an rgb() colour: color(srgb 0.658824 …)`
+ * before ever comparing a ratio.
  */
 function luminance(colour: string): number {
-  const m = colour.match(/rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)/);
-  if (!m) throw new Error(`not an rgb() colour: ${colour}`);
-  const channel = (raw: string) => {
-    const c = Number(raw) / 255;
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  };
-  return 0.2126 * channel(m[1]) + 0.7152 * channel(m[2]) + 0.0722 * channel(m[3]);
+  const rgb = colour.match(/rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)/);
+  const srgb = colour.match(/color\(\s*srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+  const channels = rgb
+    ? [Number(rgb[1]) / 255, Number(rgb[2]) / 255, Number(rgb[3]) / 255]
+    : srgb
+      ? [Number(srgb[1]), Number(srgb[2]), Number(srgb[3])]
+      : null;
+  if (!channels) throw new Error(`not a parseable colour: ${colour}`);
+  // sRGB gamma → linear light, the WCAG 2.x definition.
+  const [r, g, b] = channels.map((c) =>
+    c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4),
+  );
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
 /** WCAG 2.x contrast ratio between two computed colours: 1:1 … 21:1. */

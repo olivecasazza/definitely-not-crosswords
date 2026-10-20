@@ -164,6 +164,9 @@
               # repopulates it from the crossword-web derivation at build time.
               ./desktop
               ./backend
+              # Keep this integration target explicit in the filtered source;
+              # do not rely on broad Git discovery for a new test.
+              ./backend/server/tests/active_game_concurrency.rs
             ];
           };
 
@@ -908,6 +911,68 @@
               crossword-server
               crossword-tools
               ;
+          }
+          // lib.optionalAttrs (system == "x86_64-linux") {
+            # This is the live-DB regression's CI gate. It is deliberately
+            # separate from cargo-test-server: the latter must remain a
+            # no-database check, while this one owns a private PostgreSQL
+            # instance and runs exactly one ignored integration target.
+            active-game-concurrency = craneLib.cargoTest (
+              serverArgs
+              // {
+                pname = "crossword-active-game-concurrency";
+                cargoArtifacts = serverCargoArtifacts;
+                cargoTestExtraArgs = "--test active_game_concurrency -- --ignored --nocapture";
+                # The deployed app DB StatefulSets are postgres:16-alpine.
+                nativeBuildInputs = [ pkgs.postgresql_16 crossword-tools ];
+                CARGO_NET_OFFLINE = "true";
+                preCheck = ''
+                  set -eo pipefail
+                  pgdata=$(mktemp -d)
+                  pgsock=$(mktemp -d)
+                  pglog=$(mktemp)
+                  cleanup() {
+                    status=$?
+                    stop_status=0
+                    remove_status=0
+                    if [ -f "$pgdata/postmaster.pid" ]; then
+                      pg_ctl -D "$pgdata" -m immediate stop >/dev/null || stop_status=$?
+                    fi
+                    if [ "$status" -ne 0 ] || [ "$stop_status" -ne 0 ]; then
+                      echo "active-game-concurrency cleanup: status=$status stop=$stop_status" >&2
+                      tail -n 80 "$pglog" >&2 || true
+                    fi
+                    rm -rf "$pgdata" "$pgsock" "$pglog" || remove_status=$?
+                    if [ "$remove_status" -ne 0 ]; then
+                      echo "active-game-concurrency cleanup: remove=$remove_status" >&2
+                    fi
+                    if [ "$status" -ne 0 ]; then
+                      exit "$status"
+                    elif [ "$stop_status" -ne 0 ]; then
+                      exit "$stop_status"
+                    else
+                      exit "$remove_status"
+                    fi
+                  }
+                  trap cleanup EXIT
+
+                  initdb --no-locale --encoding=UTF8 -U ci --auth=trust "$pgdata" >/dev/null
+                  pg_ctl -D "$pgdata" \
+                    -o "-k $pgsock -c listen_addresses=\"\"" \
+                    -l "$pglog" \
+                    -w start >/dev/null
+                  createdb -h "$pgsock" -U ci crossword_test
+
+                  # Keep the URL's authority non-empty for sqlx while forcing
+                  # libpq/Postgres to use the private Unix socket. No TCP
+                  # listener, credentials, Docker, or external network exists.
+                  export DATABASE_URL="postgresql://ci@localhost/crossword_test?host=$pgsock"
+                  echo "Applying real SQL migrations through crossword-tools"
+                  ${crossword-tools}/bin/migrate
+                  echo "Running exactly active_game_concurrency (ignored)"
+                '';
+              }
+            );
           };
 
           packages = {

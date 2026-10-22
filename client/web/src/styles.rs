@@ -309,6 +309,31 @@ a { color: inherit; text-decoration: none; }
 .tap-44::after { width: max(100%, 44px); height: max(100%, 44px); }
 .tap-24::after { width: max(100%, 24px); height: max(100%, 24px); }
 
+/* ── Panel chrome: traffic lights ───────────────────────────────────────────
+   panel-kit ships the three dots as 12px circles with a 24px pointer target
+   and a 6px gap. The geometry is wrong twice over: the buttons sit 18px apart,
+   so each target overlaps its neighbour by 6px and the later sibling wins the
+   overlap — aiming at the blue dot's left half pressed minimise. And a 24px
+   target is 2px taller than the 22px header, so its bottom edge hangs over the
+   board and swallows board clicks.
+
+   Fixed by giving every light its own box, clamped to the header. The dots keep
+   their size and colour; they sit 24px apart instead of 18px, which is the
+   honest cost of targets that cannot overlap. Because the dot is centred in its
+   wider box, the first one started 6px further from the panel edge than
+   panel-kit puts it (15px instead of 9px), so the cluster is pulled back by half
+   the added width: the edge gap is upstream's again, and the dots stay evenly
+   spaced.
+
+   Focus was the other half. The only affordance panel-kit ships is a
+   zero-offset halo of the dot's own colour: decoration rather than a focus
+   indicator, and colour-only. Keyboard focus gets the app's ring; the halo
+   stays as hover feedback. */
+.panel-head .lights { gap: 0; margin-inline-start: calc((24px - 12px) / -2); }
+.panel-head .light { width: 24px; height: 22px; flex: 0 0 24px; }
+.panel-head .light::before { width: 100%; height: 100%; }
+.panel-head .light:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+
 /* ── Post-mount render-error panel (PageErrorPanel, main.rs) ─────────────────
    Atoms rather than five inline `style` attributes: the panel is the one place
    that cannot be re-themed or reduced-motion-tuned without editing Rust, and an

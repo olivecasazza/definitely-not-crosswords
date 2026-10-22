@@ -174,21 +174,37 @@ pub const DESIGN: &str = r#"
   --presence-4: #a8386b;
 }
 
-/* Map ALL of panel-kit's theme variables onto the app tokens so the panel
-   chrome (surface, title bars, borders, badges, inverse chips) flips with the
-   theme too. Anything left unmapped keeps panel-kit's dark default and breaks
-   light mode. The fixed accent lights (--blue/--yellow/--pink/--red/--green)
-   are intentionally left as panel-kit's — they read on both themes. */
+/* Map panel-kit's theme roles onto the app tokens so the panel chrome (surface,
+   title bars, borders, badges, inverse chips, focus ring) flips with the theme
+   too. Anything left unmapped keeps panel-kit's dark default — which, after
+   panel-kit 1.2 renamed every slot from short names to role names, was every
+   one of them: the app palette stopped reaching the chrome and every panel fell
+   back to near-black while the board kept its own tokens.
+
+   The role names are the contract now. The legacy shorts below stay only
+   because app components still spell them. --blue/--yellow/--pink/--red/--green
+   are gone upstream: the traffic lights read --color-primary/secondary/tertiary,
+   which the app already defines for its own accent system. */
 :root {
-  --bg: var(--bg-app);          /* workspace background, behind panels */
-  --panel: var(--bg-card);      /* panel surface + title bar */
-  --fg: var(--text-primary);
-  --dim: var(--text-secondary);
-  --line: var(--border-app);
-  --line2: var(--border-hover);
+  --color-background: var(--bg-app);          /* workspace, behind panels */
+  --color-surface: var(--bg-card);            /* panel surface + title bar */
+  --color-text: var(--text-primary);
+  --color-text-muted: var(--text-secondary);
+  --color-divider: var(--border-app);
+  --color-border: var(--border-hover);
+  --color-inverse-background: var(--text-primary);
+  --color-inverse-text: var(--bg-app);
+  --color-focus-ring: var(--text-primary);
+  /* Legacy shorts, still spelled by app components. */
+  --bg: var(--color-background);
+  --panel: var(--color-surface);
+  --fg: var(--color-text);
+  --dim: var(--color-text-muted);
+  --line: var(--color-divider);
+  --line2: var(--color-border);
   --accent: var(--color-primary);
-  --inv-bg: var(--text-primary); /* inverse chip: contrasts the surface */
-  --inv-fg: var(--bg-app);
+  --inv-bg: var(--color-inverse-background);
+  --inv-fg: var(--color-inverse-text);
   --badge-bg: var(--bg-cell-letter);
   --badge-fg: var(--text-primary);
   --badge-c: var(--text-secondary);

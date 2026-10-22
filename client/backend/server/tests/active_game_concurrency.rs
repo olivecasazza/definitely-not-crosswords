@@ -342,5 +342,5 @@ async fn concurrent_same_cell_writes_return_a_serialised_previous_state_chain() 
         response_identity, persisted_identity,
         "the returned action ids/users/states must match persisted rows"
     );
-    assert!(false, "intentional Buildbot negative gate probe");
+    eprintln!("BUILD BOT POSITIVE PROBE 271d7a37310e002ee22f85a79f81451f09deaa59");
 }

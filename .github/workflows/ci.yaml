@@ -325,8 +325,10 @@ jobs:
     #
     # The runner environment is verified by the flake's `runner-environment`
     # check (checks.x86_64-linux), not by a GitHub Actions job.
+    # Never opt in drafts: draft PRs are for probes/in-progress work and must
+    # not be auto-merged even when their fast checks happen to pass.
     needs: [ conventional-commits-check, approval-check, rust-test, guards ]
-    if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
+    if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false' && github.event.pull_request.draft != true
     steps:
       - name: Enable Auto-Merge
         env:

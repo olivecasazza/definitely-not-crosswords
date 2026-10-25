@@ -141,8 +141,9 @@
         };
 
         # buildbot-nix evaluates `.#checks.<system>` per PR and reports a GitHub
-        # commit status for each; GitHub Actions runs no Nix. The four
-        # deliverables, the deployable image, and the migration gate.
+        # commit status for each; GitHub Actions runs no Nix checks. The four
+        # deliverables, the deployable image, migration gate, and the canonical
+        # client workspace checks all live in this root projection.
         #
         # x86_64-linux only: the buildbot workers are all x86_64-linux, and the
         # other systems' checks fail at eval time (the client's fileset `src` is
@@ -155,6 +156,17 @@
             crossword-tools
             crossword-desktop
             dockerImage
+            ;
+
+          # Keep Buildbot's root projection on the exact derivations owned by
+          # the client flake. These are aliases, not duplicate recipes: Nix
+          # shares each derivation with the nested package/check graph.
+          inherit (clientFor.checks)
+            cargo-fmt
+            cargo-clippy
+            cargo-clippy-web
+            cargo-test
+            cargo-test-server
             ;
 
           # The client flake's dev-shell/Paperclip environment proof. Surfaced

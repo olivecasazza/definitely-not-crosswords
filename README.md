@@ -67,6 +67,10 @@ nix build .#checks.x86_64-linux.active-game-concurrency
 # Equivalent nested client-flake check.
 nix build ./client#checks.x86_64-linux.active-game-concurrency
 ```
+The root check projection also includes the client workspace's canonical
+`cargo-fmt`, `cargo-clippy`, `cargo-clippy-web`, `cargo-test`, and
+`cargo-test-server` derivations. Buildbot evaluates these checks for pull
+requests; GitHub Actions keeps only the lightweight script guards on that path.
 
 For a focused local diagnostic outside Nix, a disposable database can still be
 used with the direct command below. It is not the CI gate:

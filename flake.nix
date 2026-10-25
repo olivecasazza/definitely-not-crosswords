@@ -242,7 +242,7 @@
       inherit systems;
       packageSystems = systems;
       checkSystems = [ "x86_64-linux" ];
-      hydraSystems = systems;
+      hydraSystems = [ "x86_64-linux" "aarch64-linux" ];
       buildFor = system: perSystem.${system};
     };
   in

@@ -5,6 +5,10 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     sops-nix.url = "github:Mic92/sops-nix";
+    hydra-src = {
+      url = "github:olivecasazza/hydra/4060fb888f85b3c273ac56cae665e7c99e99fe1c";
+      flake = false;
+    };
     # The Rust workspace (crossword-server / crossword-web / crossword-desktop)
     # is its own flake; this one consumes its packages for deployment.
     client.url = "path:./client";
@@ -17,14 +21,20 @@
       flake-utils,
       sops-nix,
       client,
+      hydra-src,
     }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
-      let
-        pkgs = import nixpkgs {
-          inherit system;
-          config.allowUnfree = true;
-        };
+    let
+      systems = flake-utils.lib.defaultSystems;
+      ci = import "${hydra-src}/lib/ci.nix" {
+        inherit (nixpkgs) lib;
+      };
+      buildFor =
+        system:
+        let
+          pkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfree = true;
+          };
 
         # DEF-317: `client` is a `path:` input, and a `path:` input carries
         # NEITHER `rev` NOR `dirtyRev` — only `sourceInfo`/`narHash`. So the
@@ -138,7 +148,7 @@
         # other systems' checks fail at eval time (the client's fileset `src` is
         # built during evaluation and no darwin/aarch64 builder exists), so they
         # only produced red statuses. Packages for other systems are unaffected.
-        checks = nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+        checks = {
           inherit
             crossword-server
             crossword-web
@@ -226,6 +236,19 @@
             fi
           '';
         };
-      }
-    );
+      };
+    perSystem = nixpkgs.lib.genAttrs systems buildFor;
+    ciOutputs = ci.mkOutputs {
+      inherit systems;
+      packageSystems = systems;
+      checkSystems = [ "x86_64-linux" ];
+      hydraSystems = systems;
+      buildFor = system: perSystem.${system};
+    };
+  in
+  (flake-utils.lib.eachDefaultSystem (
+    system: {
+      inherit (perSystem.${system}) buildSha devShells;
+    }
+  )) // ciOutputs;
 }

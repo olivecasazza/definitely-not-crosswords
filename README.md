@@ -132,6 +132,10 @@ The generator's embedding model and WordNet dictionary are fetched and hash-veri
 by the flake (`.#assets`) — there is no separate asset-download step. The deploy image
 serves the frontend and API on one origin and carries `migrate`/`seed` for init jobs;
 it ships to the registry via CI and is reconciled onto the cluster by Flux.
+The root flake follows the shared CI consumer convention: it pins the helper
+repository as a `flake = false` source input, imports `lib/ci.nix`, and keeps
+the caller-owned derivations as the single source for packages, checks, and
+Hydra jobs.
 
 ### Cutting a release
 

@@ -254,7 +254,9 @@
       inherit systems;
       packageSystems = systems;
       checkSystems = [ "x86_64-linux" ];
-      hydraSystems = systems;
+      # Hydra's deployed machine pool is x86_64-linux; package/check systems
+      # remain unchanged for local/development consumers.
+      hydraSystems = [ "x86_64-linux" ];
       buildFor = system: perSystem.${system};
     };
   in

@@ -30,12 +30,17 @@ env:
   WIF_SERVICE_ACCOUNT: crosswords-ci@casazza-identity.iam.gserviceaccount.com
 
 jobs:
-  # Build and migration gates run on buildbot-nix (flake `checks`: the
-  # deliverables, dockerImage and `migrations`), which reports GitHub
-  # statuses; GitHub Actions runs no Nix builds for PRs.
+  # Build, test, lint, and migration gates run on buildbot-nix (the root flake's
+  # `checks` projection), which reports GitHub statuses; GitHub Actions runs no
+  # Nix checks for PRs.
   #
-  # FOLLOW-UP: build-and-push still builds the image with Nix here. Per the
-  # CI policy it should publish Hydra's `hydraJobs.dockerImage` output.
+  # BLOCKED ARTIFACT TRANSITION: build-and-push still builds the image with Nix
+  # here because Hydra is unavailable and Buildbot does not publish GAR
+  # artifacts. Do not replace this with a fake or unverified artifact source;
+  # move it to Hydra only after Hydra's exact-commit artifact path is healthy.
+  #
+  # The root flake aliases the canonical client checks directly, so removing the
+  # former GHA Nix test job does not remove unit-test, fmt, or clippy coverage.
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
@@ -149,56 +154,6 @@ jobs:
             -f tag="${GITHUB_SHA}"
           echo "Dispatched a staging deploy of ${GITHUB_SHA}."
 
-  # Every `#[test]` in the workspace was an unexecuted assertion: no job in any
-  # workflow invoked cargo, so the 77 natively-runnable tests (23 in
-  # core/db/auth/events, 54 in the server) had never been run by any pipeline.
-  # The flake already defined a `cargo-test` check, but nothing executed it —
-  # see the note on `build-and-push` about GitHub Actions running no Nix builds,
-  # and note that the buildbot-nix enrolment described in buildbot-nix.toml is
-  # not reporting statuses, so these checks have no other runner.
-  #
-  # The wasm crate's 23 tests are excluded on purpose: `crossword-web` needs
-  # wasm-bindgen-test in a browser, which no runner here provides.
-  #
-  # This runs the two `cargo-test*` checks from the client flake rather than a
-  # bare `cargo test`, so the suite is built by the same pinned, reproducible
-  # toolchain as the image — including the vendored onnxruntime the server needs
-  # to link at all, which a plain `cargo test` on a stock runner cannot do.
-  rust-test:
-    name: Rust Test Suite
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read   # actions/checkout
-    # pull_request_review is listed because `auto-merge` fires on it and waits on
-    # this job (see its `needs`). Without the event here, a review would skip
-    # this job and the merge would be gated on a result that never came — a
-    # permanently-pending `needs` entry blocks the dependent job for good.
-    # It costs one cached Nix test build per review; the gate is worth it.
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'pull_request_review' || github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Cache Nix store
-        uses: cachix/cachix-action@v17
-        with:
-          name: nix-community
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-      # `cargo-test` covers the four bare-sandbox crates; `cargo-test-server`
-      # covers the backend, which is the half that needs onnxruntime. Building
-      # the check runs the tests — crane's cargoTest executes them, and a
-      # non-zero test result fails the build.
-      - name: Run the workspace test suite
-        env:
-          CROSSWORDS_BUILD_SHA: ${{ github.sha }}
-        run: |
-          nix build --option allow-import-from-derivation true --no-link --print-out-paths \
-            ./client#checks.x86_64-linux.cargo-test \
-            ./client#checks.x86_64-linux.cargo-test-server
 
   # The `scripts/` guard suites encode the rules that keep a bad send, a wrong
   # release, or a rotted deploy from being reported as a success, and until now
@@ -218,8 +173,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read   # actions/checkout
-    # Same condition as `rust-test`: the suites must gate a PR before merge, and
-    # must still run on a direct push/dispatch to main so a hand-merged or
+    # Same condition as the former Nix test job: the suites must gate a PR
+    # before merge, and must still run on a direct push/dispatch to main so a
     # bot-dispatched commit is checked the same way.
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'pull_request_review' || github.event_name == 'workflow_dispatch'
     steps:
@@ -305,27 +260,13 @@ jobs:
       contents: write
       pull-requests: write
       actions: write
-    # `rust-test` is in `needs` because a test job nothing waits on is advice,
-    # not a gate. This job is the thing that actually lands commits, so a red
-    # suite must stop it here.
+    # Buildbot owns the Nix checks through the root flake's `checks` projection.
+    # `guards` remains here because its lightweight, non-Nix suites run in GHA
+    # and must fail closed before this job enables a merge.
     #
-    # `guards` is here for the same reason and it is cheap enough to cost
-    # nothing: the scripts/ suites run in seconds on a stock runner with no Nix
-    # and no credentials, and they are the only thing standing between a PR that
-    # silently rots `alpha-invite-send.sh` / `verify-release-copy.sh` and a
-    # release that reports a send or a deploy that never happened. Since this
-    # job calls `gh pr merge --auto` and then dispatches the main build that
-    # deploys to staging, a rotted guard must not be able to ride that path.
-    #
-    # `Rust Test Suite` is ALSO a required status check on `main`
-    # (branch protection, applied 2026-10-03 under DEF-220), which is the
-    # backstop for merges that never reach this job — a maintainer merging
-    # from the UI. Keep both: `needs` fails closed inside the workflow, and the
-    # required check fails closed server-side.
-    #
-    # The runner environment is verified by the flake's `runner-environment`
-    # check (checks.x86_64-linux), not by a GitHub Actions job.
-    needs: [ conventional-commits-check, approval-check, rust-test, guards ]
+    # The runner environment and the canonical fmt/clippy/unit checks are
+    # Buildbot checks, not GitHub Actions jobs.
+    needs: [ conventional-commits-check, approval-check, guards ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
     steps:
       - name: Enable Auto-Merge

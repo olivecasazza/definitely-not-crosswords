@@ -13,15 +13,13 @@ serde_json.workspace = true
 # olive's laptop; every other machine (CI, runner containers, contributors) fails
 # at manifest load with "failed to read .../panel-kit/Cargo.toml". See DEF-244.
 #
-# Pinned to tag v1.1.1, which is what this crate's code is actually written
-# against: web/src/workspace.rs uses panel_kit::SnapPolicy,
-# panel::panel_shell_with_events, the 4-arg widgets::dock(.., extras) and
-# panel_kit_core::reducer::ReduceContext.snap. None of those exist in v1.0.0
-# (commit 0f5c9b2), so the previous "keep 1.0.0 semantics" idea does not compile.
-# The version bump in Cargo.lock (1.0.0 -> 1.1.1) is therefore this change's
-# real content, not incidental churn.
-panel-kit = { git = "https://github.com/olivecasazza/panel-kit.git", rev = "cdec58fed2559fefaff6fc4a9abbec63138f1367" }
-panel-kit-core = { git = "https://github.com/olivecasazza/panel-kit.git", rev = "cdec58fed2559fefaff6fc4a9abbec63138f1367" }
+# Pinned to panel-kit main at 72b0510. web/src/workspace.rs depends on
+# panel_kit::SnapPolicy, panel::panel_shell_with_events, the 4-arg
+# widgets::dock(.., extras), panel_kit_core::reducer::ReduceContext.snap,
+# input::tile_drag_pointer_event and input::use_tile_drag_frames. Cargo.lock
+# holds the resolved revision; bump the `rev` and re-resolve the lock together.
+panel-kit = { git = "https://github.com/ocasazza/panel-kit.git", rev = "72b0510a7b9dee1416d78555d87a313cc4127614" }
+panel-kit-core = { git = "https://github.com/ocasazza/panel-kit.git", rev = "72b0510a7b9dee1416d78555d87a313cc4127614" }
 gloo-storage = "0.3"
 gloo-net = { version = "0.6", features = ["http", "websocket", "json"] }
 gloo-timers = { version = "0.3", features = ["futures"] }

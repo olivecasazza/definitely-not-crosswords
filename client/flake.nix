@@ -42,7 +42,7 @@
     # `cargoVendorDir` vendors the dep from the lock, and the dev shell exposes
     # only the locked toolchain.
     #
-    # TO BUMP panel-kit: change the `tag` in `web/Cargo.toml` and re-resolve the
+    # TO BUMP panel-kit: change the `rev` in `web/Cargo.toml` and re-resolve the
     # lock. There is no nix side to keep in step, which is the point — that side
     # is what silently rotted.
   };
@@ -175,8 +175,8 @@
           # eval time is import-from-derivation, which pure eval forbids.
           # Explicit pname/version below keep crane from import-from-deriving
           # the crate name out of `src` too. This is also what pins panel-kit:
-          # the lock resolves `tag = "v1.1.1"` to
-          # 503f46c32a1c2410aa4e15b2b3bf725207068906.
+          # the lock resolves `rev = "72b0510a7b9dee1416d78555d87a313cc4127614"`
+          # to that same commit.
           cargoVendorDir = craneLib.vendorCargoDeps { src = ./.; };
 
           # onnxruntime for the generator's `ort` crate. ort rc.12's pregenerated

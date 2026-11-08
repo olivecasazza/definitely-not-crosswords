@@ -9,7 +9,8 @@ use std::rc::Rc;
 use dioxus::events::{KeyboardEvent, PointerEvent as DioxusPointerEvent, WheelEvent};
 use dioxus::prelude::*;
 use panel_kit::input::{
-    clear_selection, keyboard_event, pointer_event, release_pointer, wheel_event,
+    clear_selection, keyboard_event, pointer_event, release_pointer, tile_drag_pointer_event,
+    use_tile_drag_frames, wheel_event,
 };
 use panel_kit::store::LocalStorageLayoutStore;
 use panel_kit::surface::{observe_viewport, surface_profile, viewport_size};
@@ -90,6 +91,15 @@ pub(crate) fn use_panel_workspace<K: PanelKind>(
         save_policy: SavePolicy::OnSettle,
     };
     mount_viewport_observer(&workspace);
+    // Core reads no clock: while a tile drag animates, one animation frame at a
+    // time is requested and reaches the reducer as `WorkspaceEvent::Tick`.
+    let animating = workspace
+        .snapshot
+        .read()
+        .tile_drag
+        .as_ref()
+        .is_some_and(|tile| tile.animating());
+    use_tile_drag_frames(animating, workspace_event_handler(&workspace));
     workspace
 }
 
@@ -134,7 +144,7 @@ where
                 handle_pointer_up(&pointer_up_workspace, &event)
             },
             onpointercancel: move |event: DioxusPointerEvent| {
-                handle_pointer_up(&pointer_cancel_workspace, &event)
+                handle_pointer_cancel(&pointer_cancel_workspace, &event)
             },
             onkeydown: move |event: KeyboardEvent| {
                 if !panel_kit::input::is_editing() {
@@ -275,24 +285,44 @@ fn handle_key<K: PanelKind>(workspace: &PanelWorkspace<K>, event: &KeyboardEvent
 }
 
 fn handle_pointer_move<K: PanelKind>(workspace: &PanelWorkspace<K>, event: &DioxusPointerEvent) {
-    let kind = if workspace.snapshot.read().drag.is_some() {
-        PointerEventKind::Drag(PointerButton::Primary)
+    let workspace_event = if workspace.snapshot.read().tile_drag.is_some() {
+        // A held or lifted tile resolves its target against the painted slots.
+        let snapshot = workspace.snapshot.read();
+        let mut scratch = workspace.scratch.borrow_mut();
+        let frame = project_workspace(&snapshot, &mut scratch);
+        let tile_event = tile_drag_pointer_event(&frame, event);
+        tile_event
     } else {
-        PointerEventKind::Moved
+        let kind = if workspace.snapshot.read().drag.is_some() {
+            PointerEventKind::Drag(PointerButton::Primary)
+        } else {
+            PointerEventKind::Moved
+        };
+        pointer_event(HitTarget::Workspace, event, kind)
     };
-    reduce_and_persist(workspace, pointer_event(HitTarget::Workspace, event, kind));
+    reduce_and_persist(workspace, workspace_event);
 }
 
 fn handle_pointer_up<K: PanelKind>(workspace: &PanelWorkspace<K>, event: &DioxusPointerEvent) {
-    release_pointer(event);
-    let changed = reduce_and_persist(
+    finish_pointer(
         workspace,
-        pointer_event(
-            HitTarget::Workspace,
-            event,
-            PointerEventKind::Up(PointerButton::Primary),
-        ),
+        event,
+        PointerEventKind::Up(PointerButton::Primary),
     );
+}
+
+/// A cancelled pointer must never commit a drag, so it maps to `Cancel`, not `Up`.
+fn handle_pointer_cancel<K: PanelKind>(workspace: &PanelWorkspace<K>, event: &DioxusPointerEvent) {
+    finish_pointer(workspace, event, PointerEventKind::Cancel);
+}
+
+fn finish_pointer<K: PanelKind>(
+    workspace: &PanelWorkspace<K>,
+    event: &DioxusPointerEvent,
+    kind: PointerEventKind,
+) {
+    release_pointer(event);
+    let changed = reduce_and_persist(workspace, pointer_event(HitTarget::Workspace, event, kind));
     if changed {
         clear_selection();
     }

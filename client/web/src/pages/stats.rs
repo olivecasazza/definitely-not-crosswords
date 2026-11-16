@@ -671,8 +671,8 @@ pub fn Stats() -> Element {
                             span { class: "muted", style: "font-size: var(--fs-2xs); text-transform: uppercase; margin-top: .125rem;", "Compare your career performance side-by-side" }
                         }
                         select {
-                            class: "app-input",
-                            style: "padding: .5rem .75rem; font-size: var(--fs-md); font-family: monospace; text-transform: uppercase; font-weight: 700; max-width: 20rem;",
+                            class: "app-input pk-select",
+                            style: "padding: .5rem 1.75rem .5rem .75rem; font-size: var(--fs-md); font-family: monospace; text-transform: uppercase; font-weight: 700; max-width: 20rem;",
                             value: "{selected_opponent_id}",
                             onchange: move |e| selected_opponent_id.clone().set(e.value()),
                             option { value: "", disabled: true, "-- CHOOSE PLAYER --" }

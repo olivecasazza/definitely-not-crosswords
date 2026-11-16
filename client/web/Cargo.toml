@@ -13,13 +13,14 @@ serde_json.workspace = true
 # olive's laptop; every other machine (CI, runner containers, contributors) fails
 # at manifest load with "failed to read .../panel-kit/Cargo.toml". See DEF-244.
 #
-# Pinned to panel-kit main at 72b0510. web/src/workspace.rs depends on
+# Pinned to panel-kit 4303e84. web/src/workspace.rs depends on
 # panel_kit::SnapPolicy, panel::panel_shell_with_events, the 4-arg
 # widgets::dock(.., extras), panel_kit_core::reducer::ReduceContext.snap,
-# input::tile_drag_pointer_event and input::use_tile_drag_frames. Cargo.lock
-# holds the resolved revision; bump the `rev` and re-resolve the lock together.
-panel-kit = { git = "https://github.com/ocasazza/panel-kit.git", rev = "72b0510a7b9dee1416d78555d87a313cc4127614" }
-panel-kit-core = { git = "https://github.com/ocasazza/panel-kit.git", rev = "72b0510a7b9dee1416d78555d87a313cc4127614" }
+# input::tile_drag_pointer_event and input::use_tile_drag_frames; the selects
+# take panel-kit's `.pk-select` control class. Cargo.lock holds the resolved
+# revision; bump the `rev` and re-resolve the lock together.
+panel-kit = { git = "https://github.com/ocasazza/panel-kit.git", rev = "4303e845cd2769368547f00ec1a4e225ac7d32db" }
+panel-kit-core = { git = "https://github.com/ocasazza/panel-kit.git", rev = "4303e845cd2769368547f00ec1a4e225ac7d32db" }
 gloo-storage = "0.3"
 gloo-net = { version = "0.6", features = ["http", "websocket", "json"] }
 gloo-timers = { version = "0.3", features = ["futures"] }

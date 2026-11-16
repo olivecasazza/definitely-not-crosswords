@@ -294,6 +294,10 @@ a { color: inherit; text-decoration: none; }
    needs no placeholder-based disambiguation. `opacity: 1` stops the UA
    applying its own extra fade on top of the token. */
 .app-input::placeholder { color: var(--text-secondary); opacity: 1; }
+/* A <select> keeps the .app-input box. panel-kit's .pk-select drops the UA
+   appearance (the platform's own popup-button chrome painted over the box)
+   and draws the chevron, which needs this room on the right. */
+select.app-input.pk-select { padding-right: 1.75rem; }
 
 /* ── Touch-target expansion (WCAG 2.5.5 / 2.5.8) ────────────────────────────
    Some controls must stay VISUALLY small — a BETA chip, a ✕, a direction

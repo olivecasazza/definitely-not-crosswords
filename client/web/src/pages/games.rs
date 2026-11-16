@@ -882,7 +882,7 @@ pub fn Games() -> Element {
                                 on_select: move |i: usize| filter.set(Filter::TABS[i]),
                             }
                             select {
-                                class: "app-input games-sort",
+                                class: "app-input pk-select games-sort",
                                 aria_label: "Sort games",
                                 value: "{sort().value()}",
                                 onchange: move |e| sort.set(Sort::from_value(&e.value())),

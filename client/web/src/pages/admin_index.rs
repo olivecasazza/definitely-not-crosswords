@@ -1384,7 +1384,7 @@ pub fn AdminIndex() -> Element {
                         label { class: "col muted admin-label",
                             "Role"
                             select {
-                                class: "app-input",
+                                class: "app-input pk-select",
                                 value: "{new_role}",
                                 oninput: move |e| new_role.set(e.value()),
                                 for opt in role_options.read().iter() {
@@ -1574,7 +1574,7 @@ pub fn AdminIndex() -> Element {
                                                                 let uid2 = uid_role.clone();
                                                                 rsx! {
                                                                     select {
-                                                                        class: "app-input",
+                                                                        class: "app-input pk-select",
                                                                         disabled: is_saving,
                                                                         value: "{user_role}",
                                                                         oninput: move |e| set_role(uid2.clone(), e.value()),
@@ -1675,7 +1675,7 @@ pub fn AdminIndex() -> Element {
                     label { class: "col muted admin-label",
                         "Amount type"
                         select {
-                            class: "app-input",
+                            class: "app-input pk-select",
                             value: "{f_amount_type}",
                             oninput: move |e| f_amount_type.set(e.value()),
                             option { value: "PERCENT", "Percent" }
@@ -1715,7 +1715,7 @@ pub fn AdminIndex() -> Element {
                     label { class: "col muted admin-label",
                         "Duration"
                         select {
-                            class: "app-input",
+                            class: "app-input pk-select",
                             value: "{f_duration}",
                             oninput: move |e| f_duration.set(e.value()),
                             option { value: "ONCE", "Once (first payment only)" }
@@ -2012,7 +2012,7 @@ pub fn AdminIndex() -> Element {
                                 label { class: "col muted admin-label",
                                     "Role"
                                     select {
-                                        class: "app-input",
+                                        class: "app-input pk-select",
                                         disabled: role_saving,
                                         value: "{user_role}",
                                         oninput: move |e| set_role(uid_role.clone(), e.value()),

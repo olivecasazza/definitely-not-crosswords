@@ -175,7 +175,7 @@
           # eval time is import-from-derivation, which pure eval forbids.
           # Explicit pname/version below keep crane from import-from-deriving
           # the crate name out of `src` too. This is also what pins panel-kit:
-          # the lock resolves `rev = "72b0510a7b9dee1416d78555d87a313cc4127614"`
+          # the lock resolves `rev = "4303e845cd2769368547f00ec1a4e225ac7d32db"`
           # to that same commit.
           cargoVendorDir = craneLib.vendorCargoDeps { src = ./.; };
 

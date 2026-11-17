@@ -166,6 +166,13 @@ fn default_layout() -> Vec<PanelWin<Panel>> {
             ))
         })
         .unwrap_or((1440.0, 900.0));
+    let vp = crate::workspace::current_viewport();
+    if crate::workspace::is_compact(vp) {
+        return crate::workspace::compact_defaults(
+            Panel::Library,
+            &[Panel::Continue, Panel::Featured, Panel::Progress],
+        );
+    }
     const M: f64 = 16.0;
     const GAP: f64 = 16.0;
     let side_w = (vw * 0.24).clamp(300.0, 460.0);

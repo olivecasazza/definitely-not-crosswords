@@ -11,7 +11,7 @@ use crossword_core::auth::Role;
 use crossword_core::fmt::format_date;
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, Storage};
-use panel_kit::{LayoutBuilder, Mode, PanelKind, PanelWin};
+use panel_kit::{Mode, PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
@@ -47,14 +47,18 @@ impl PanelKind for Panel {
 /// Vec order is the mobile stack order: Identity → Security → Subscription →
 /// Preferences → Danger.
 fn default_layout() -> Vec<PanelWin<Panel>> {
-    let mut b = LayoutBuilder::new();
-    vec![
-        b.at(Panel::Identity, 16.0, 16.0, 640.0, 460.0),
-        b.at(Panel::Security, 16.0, 492.0, 640.0, 472.0),
-        b.at(Panel::Subscription, 672.0, 16.0, 608.0, 460.0),
-        b.at(Panel::Preferences, 672.0, 492.0, 608.0, 472.0),
-        b.at(Panel::Danger, 1296.0, 16.0, 608.0, 948.0),
-    ]
+    crate::workspace::grid_defaults(
+        &[
+            Panel::Identity,
+            Panel::Subscription,
+            Panel::Danger,
+            Panel::Security,
+            Panel::Preferences,
+        ],
+        3,
+        16.0,
+        16.0,
+    )
 }
 
 /// The router's fallthrough for procedures that haven't landed yet

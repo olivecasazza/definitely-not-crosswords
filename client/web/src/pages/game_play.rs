@@ -467,6 +467,9 @@ fn board_panel_height(board_width: f64, viewport_height: f64, margin: f64) -> f6
 }
 
 fn default_layout() -> Vec<panel_kit::PanelWin<PanelId>> {
+    if crate::workspace::is_compact_now() {
+        return crate::workspace::compact_defaults(PanelId::Board, &[PanelId::Clues]);
+    }
     let (vw, vh) = viewport();
     const M: f64 = 16.0; // workspace margin / inter-panel gap
     let left_w = (vw * 0.42).clamp(360.0, 900.0);

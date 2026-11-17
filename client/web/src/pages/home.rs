@@ -61,6 +61,12 @@ impl PanelKind for GuestPanel {
 /// viewport fraction: both panels hold a fixed block of copy, so stretching
 /// them to 55% of a tall screen only parks dead space under the last line.
 fn guest_layout() -> Vec<PanelWin<GuestPanel>> {
+    if crate::workspace::is_compact_now() {
+        return crate::workspace::compact_defaults(
+            GuestPanel::Welcome,
+            &[GuestPanel::Start],
+        );
+    }
     let (vw, vh) = viewport();
     const GAP: f64 = 20.0;
     let welcome_w = (vw * 0.30).clamp(380.0, 620.0);
@@ -316,6 +322,9 @@ fn viewport() -> (f64, f64) {
 /// each panel two thirds of a tall screen and left most of it blank. Play Now
 /// then takes the height of the side column so the two columns line up.
 fn dash_layout() -> Vec<PanelWin<Panel>> {
+    if crate::workspace::is_compact_now() {
+        return crate::workspace::compact_defaults(Panel::PlayNow, &[Panel::Pulse, Panel::Learn]);
+    }
     let (vw, vh) = viewport();
     const GAP: f64 = 16.0;
     let play_w = (vw * 0.52).clamp(460.0, 960.0);

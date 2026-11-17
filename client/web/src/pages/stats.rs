@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use panel_kit::{LayoutBuilder, PanelKind, PanelWin};
+use panel_kit::{PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -436,13 +436,17 @@ impl PanelKind for Panel {
 }
 
 fn default_layout() -> Vec<PanelWin<Panel>> {
-    let mut b = LayoutBuilder::new();
-    vec![
-        b.at(Panel::Leaderboard, 16.0, 16.0, 620.0, 948.0),
-        b.at(Panel::Career, 652.0, 16.0, 620.0, 466.0),
-        b.at(Panel::Compare, 652.0, 498.0, 620.0, 466.0),
-        b.at(Panel::Teams, 1288.0, 16.0, 616.0, 948.0),
-    ]
+    crate::workspace::grid_defaults(
+        &[
+            Panel::Leaderboard,
+            Panel::Career,
+            Panel::Teams,
+            Panel::Compare,
+        ],
+        3,
+        16.0,
+        16.0,
+    )
 }
 
 // ---------------------------------------------------------------------------

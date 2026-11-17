@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use dioxus::prelude::*;
-use panel_kit::{LayoutBuilder, PanelKind, PanelWin};
+use panel_kit::{PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -85,7 +85,7 @@ fn Silhouette(questions: Vec<SilhouetteQ>) -> Element {
             view_box: "{view_box}",
             role: "img",
             "aria-label": "Puzzle grid silhouette",
-            style: "display: block; width: {natural_px}px; max-width: 100%; height: auto;",
+            style: "display: block; width: min(100%, {natural_px}px); height: auto;",
             for (x, y) in rects {
                 rect {
                     x: "{x}",
@@ -326,11 +326,7 @@ impl PanelKind for Panel {
 }
 
 fn default_layout() -> Vec<PanelWin<Panel>> {
-    let mut b = LayoutBuilder::new();
-    vec![
-        b.at(Panel::Puzzle, 16.0, 16.0, 1240.0, 948.0),
-        b.at(Panel::Start, 1272.0, 16.0, 632.0, 948.0),
-    ]
+    crate::workspace::split_defaults(Panel::Puzzle, Panel::Start, 0.72, 16.0, 16.0)
 }
 
 #[component]
@@ -607,7 +603,9 @@ pub fn GameNew(id: String) -> Element {
                             }
                             // Grid silhouette (only when the server sent coordinates)
                             if !details.questions.is_empty() {
-                                Silhouette { questions: details.questions.clone() }
+                                div { class: "gn-silhouette",
+                                    Silhouette { questions: details.questions.clone() }
+                                }
                             }
                             // Play-state status line
                             if details.active_game_id.is_some() {
@@ -882,6 +880,16 @@ const NEW_CSS: &str = "
   font-size: var(--fs-xs); font-family: var(--mono, monospace); text-transform: uppercase;
   letter-spacing: .05em; color: var(--text-secondary); white-space: nowrap; }
 .gn-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .75rem; }
+/* The silhouette takes the panel's remaining height and scales inside it —
+   a fixed-pixel svg in a viewport-sized panel parks half the canvas empty. */
+.gn-silhouette {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gn-silhouette svg { max-width: min(100%, 560px); max-height: 100%; height: auto; }
 .gn-status { font-size: var(--fs-sm); font-family: var(--mono, monospace); text-transform: uppercase;
   letter-spacing: .05em; color: var(--text-secondary); margin: 0; }
 .gn-invite { border: 1px solid var(--border-app); background: var(--bg-cell-empty); padding: .75rem;

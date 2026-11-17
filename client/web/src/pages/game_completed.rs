@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use panel_kit::{LayoutBuilder, PanelKind, PanelWin};
+use panel_kit::{PanelKind, PanelWin};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::rc::Rc;
@@ -127,11 +127,7 @@ impl PanelKind for Panel {
 }
 
 fn default_layout() -> Vec<PanelWin<Panel>> {
-    let mut b = LayoutBuilder::new();
-    vec![
-        b.at(Panel::Rankings, 16.0, 16.0, 1240.0, 948.0),
-        b.at(Panel::NextUp, 1272.0, 16.0, 632.0, 948.0),
-    ]
+    crate::workspace::split_defaults(Panel::Rankings, Panel::NextUp, 0.72, 16.0, 16.0)
 }
 
 #[component]

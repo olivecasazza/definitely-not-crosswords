@@ -13,8 +13,7 @@ mod styles;
 mod workspace;
 
 use components::{
-    footer::AppFooter, header::AppHeader, staging_banner::StagingBanner, tab_bar::TabBar,
-    ui::ToastHost,
+    header::AppHeader, staging_banner::StagingBanner, tab_bar::TabBar, ui::ToastHost,
 };
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, Storage};
@@ -111,8 +110,8 @@ fn App() -> Element {
 }
 
 /// Layout shell wrapping every route: sticky header, routed `Outlet`, toasts,
-/// footer+dock (desktop), tab bar (mobile). The admin view owns its own workspace
-/// chrome (panels + dock) — no extra nav strips here.
+/// dock band with app meta (desktop), tab bar (mobile). The admin view owns its
+/// own workspace chrome (panels + dock) — no extra nav strips here.
 #[component]
 fn Shell() -> Element {
     // DEF-148: bumped by the error panel's "Try again" / "Go home" to make this
@@ -151,7 +150,6 @@ fn Shell() -> Element {
                     Outlet::<Route> {}
                 }
             }
-            AppFooter {}
             ToastHost {}
             TabBar {}
         }

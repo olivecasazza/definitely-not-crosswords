@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::components::footer::FooterMeta;
 use dioxus::events::{KeyboardEvent, PointerEvent as DioxusPointerEvent, WheelEvent};
 use dioxus::prelude::*;
 use panel_kit::input::{
@@ -16,8 +17,8 @@ use panel_kit::store::LocalStorageLayoutStore;
 use panel_kit::surface::{observe_viewport, surface_profile, viewport_size};
 use panel_kit::widgets::{dock, panel, root};
 use panel_kit::{
-    Clamp, CommandStep, FocusContext, Mode, PanelCommand, PanelKind, PanelWin, PointerButton,
-    PointerEventKind, SnapPolicy, SurfaceClass, Units,
+    Clamp, CommandStep, FocusContext, LayoutBuilder, Mode, PanelCommand, PanelKind, PanelWin,
+    PointerButton, PointerEventKind, SnapPolicy, SurfaceClass, Units, WinState,
 };
 use panel_kit_core::frame::{
     project_into, ChromeProjectionInput, Placement, ProjectedFrame, ProjectionBuffer,
@@ -177,7 +178,7 @@ where
                     }
                 }
             }
-            {dock::dock(frame.dock, &workspace.catalog, emit, None)}
+            {dock::dock(frame.dock, &workspace.catalog, emit, Some(rsx! { FooterMeta {} }))}
         }
     }
 }
@@ -378,13 +379,131 @@ fn reduce_context<K: PanelKind>(snapshot: &Snapshot<K>) -> ReduceContext<'static
     }
 }
 
-fn current_viewport() -> Viewport {
+pub(crate) fn current_viewport() -> Viewport {
     let (width, height) = viewport_size();
     Viewport {
         width,
         height,
         units: Units::CssPx,
     }
+}
+
+/// Whether this viewport is the Compact surface tier (phones): panels tile
+/// without window-management chrome, so one panel fills the workspace and the
+/// rest wait in the dock.
+pub(crate) fn is_compact(vp: Viewport) -> bool {
+    surface_profile(vp.width).class == SurfaceClass::Compact
+}
+
+/// [`is_compact`] for the live viewport.
+pub(crate) fn is_compact_now() -> bool {
+    is_compact(current_viewport())
+}
+
+/// Defaults for a two-region page. Regular/Tablet: `primary_share` of the
+/// width to the primary, the rest to the secondary. Compact: the primary fills
+/// the workspace and the secondary waits in the dock.
+pub(crate) fn split_defaults<K: PanelKind>(
+    primary: K,
+    secondary: K,
+    primary_share: f64,
+    margin: f64,
+    gap: f64,
+) -> Vec<PanelWin<K>> {
+    let vp = current_viewport();
+    let mut b = LayoutBuilder::new();
+    if is_compact(vp) {
+        return compact_pair(&mut b, primary, secondary, vp, margin);
+    }
+    let inner_w = vp.width - 2.0 * margin - gap;
+    let left_w = (inner_w * primary_share).max(280.0);
+    let right_w = (inner_w - left_w).max(240.0);
+    let h = (vp.height - 2.0 * margin).max(360.0);
+    vec![
+        b.at(primary, margin, margin, left_w, h),
+        b.at(secondary, margin + left_w + gap, margin, right_w, h),
+    ]
+}
+
+/// Defaults for a row-major grid of equal regions (Regular/Tablet) that docks
+/// down to the primary on Compact.
+pub(crate) fn grid_defaults<K: PanelKind>(
+    panels: &[K],
+    columns: usize,
+    margin: f64,
+    gap: f64,
+) -> Vec<PanelWin<K>> {
+    let vp = current_viewport();
+    let mut b = LayoutBuilder::new();
+    if is_compact(vp) {
+        let mut wins = compact_pair(&mut b, panels[0], panels[1], vp, margin);
+        for kind in &panels[2..] {
+            wins.push(docked_panel(&mut b, *kind));
+        }
+        return wins;
+    }
+    let rows = panels.len().div_ceil(columns);
+    let inner_w = vp.width - 2.0 * margin - gap * (columns - 1) as f64;
+    let inner_h = (vp.height - 2.0 * margin - gap * (rows - 1) as f64).max(360.0);
+    let w = (inner_w / columns as f64).max(240.0);
+    let h = (inner_h / rows as f64).max(220.0);
+    let mut wins = Vec::with_capacity(panels.len());
+    for (index, kind) in panels.iter().enumerate() {
+        let col = (index % columns) as f64;
+        let row = (index / columns) as f64;
+        wins.push(b.at(
+            *kind,
+            margin + col * (w + gap),
+            margin + row * (h + gap),
+            w,
+            h,
+        ));
+    }
+    wins
+}
+
+/// Compact tier: the primary fills the workspace, the rest wait in the dock.
+pub(crate) fn compact_defaults<K: PanelKind>(primary: K, docked: &[K]) -> Vec<PanelWin<K>> {
+    let vp = current_viewport();
+    let mut b = LayoutBuilder::new();
+    let margin = 8.0;
+    let mut wins = vec![b.at(
+        primary,
+        margin,
+        margin,
+        vp.width - 2.0 * margin,
+        vp.height - 2.0 * margin,
+    )];
+    for kind in docked {
+        wins.push(docked_panel(&mut b, *kind));
+    }
+    wins
+}
+
+/// Compact tier pair used by the shared default helpers.
+fn compact_pair<K: PanelKind>(
+    b: &mut LayoutBuilder,
+    primary: K,
+    secondary: K,
+    vp: Viewport,
+    margin: f64,
+) -> Vec<PanelWin<K>> {
+    let mut wins = vec![b.at(
+        primary,
+        margin,
+        margin,
+        vp.width - 2.0 * margin,
+        vp.height - 2.0 * margin,
+    )];
+    wins.push(docked_panel(b, secondary));
+    wins
+}
+
+/// A panel waiting in the dock: same rect as the primary (restore re-clamps).
+fn docked_panel<K: PanelKind>(b: &mut LayoutBuilder, kind: K) -> PanelWin<K> {
+    let mut win = b.at(kind, 0.0, 0.0, 0.0, 0.0);
+    win.state = WinState::Minimized;
+    win
 }
 
 fn restore_or_default<K: PanelKind>(

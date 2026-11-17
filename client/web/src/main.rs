@@ -12,7 +12,9 @@ mod store;
 mod styles;
 mod workspace;
 
-use components::{header::AppHeader, staging_banner::StagingBanner, tab_bar::TabBar, ui::ToastHost};
+use components::{
+    header::AppHeader, staging_banner::StagingBanner, tab_bar::TabBar, ui::ToastHost,
+};
 use dioxus::prelude::*;
 use gloo_storage::{LocalStorage, Storage};
 use panel_kit::CSS as PANEL_CSS;

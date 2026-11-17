@@ -62,10 +62,7 @@ impl PanelKind for GuestPanel {
 /// them to 55% of a tall screen only parks dead space under the last line.
 fn guest_layout() -> Vec<PanelWin<GuestPanel>> {
     if crate::workspace::is_compact_now() {
-        return crate::workspace::compact_defaults(
-            GuestPanel::Welcome,
-            &[GuestPanel::Start],
-        );
+        return crate::workspace::compact_defaults(GuestPanel::Welcome, &[GuestPanel::Start]);
     }
     let (vw, vh) = viewport();
     const GAP: f64 = 20.0;

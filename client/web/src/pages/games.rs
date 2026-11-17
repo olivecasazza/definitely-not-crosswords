@@ -643,7 +643,7 @@ pub fn Games() -> Element {
                     guest_featured(&daily())
                 } else {
                     signed_out(kind)
-                }
+                };
             }
             Some(Some(_)) => {}
         }

@@ -1058,7 +1058,37 @@ pub fn GamePlay(id: String) -> Element {
     });
     // Snapshot the in-progress word for a question, pre-filling current letters.
     let publish_for_select = publish_presence.clone();
+    // Submit the current word as a placeholder save (a draft). Write feedback,
+    // retry batch and the optimistic local letters live in `commit_actions` —
+    // shared with the guess path.
+    let id_for_save = id.clone();
+    let submit_placeholder = move || {
+        // Only persist letters the player actually changed. Saving the whole
+        // prefilled word would restamp every cell — including correct guesses
+        // — as a placeholder, hiding them behind placeholder styling.
+        let slots = placeholder_slots(game_action_data.peek().as_slice());
+        if slots.is_empty() {
+            return;
+        }
+        // commit_actions already merges the optimistic local letters. The id
+        // is cloned into a local: an `async move` block that borrows a
+        // capture moves it, which would make this closure FnOnce and break
+        // every caller that unselects twice.
+        let game_id = id_for_save.clone();
+        spawn_local(async move {
+            commit_actions(&game_id, &slots, false, actions, sync, failed_batch).await;
+        });
+    };
+    let save_draft_for_select = submit_placeholder.clone();
     let select_question = move |key: QKey| {
+        if *selected.peek() == Some(key) {
+            // Re-selecting the active word (clicking its row again, toggling
+            // the direction filter) keeps its draft and cursor.
+            return;
+        }
+        // Switching words persists the outgoing draft first: typed letters
+        // are placeholder saves, never something the next click throws away.
+        save_draft_for_select();
         let maps = answer_maps.peek();
         if let Some(m) = maps.iter().find(|m| qkey(&m.question) == key) {
             let slots: Vec<ActionSlot> = m
@@ -1088,28 +1118,6 @@ pub fn GamePlay(id: String) -> Element {
         }
     };
 
-    // Submit the current word as a placeholder save (used by unselect).
-    // Write feedback, retry batch and the optimistic local letters live in
-    // `commit_actions` — shared with the guess path.
-    let id_for_save = id.clone();
-    let submit_placeholder = move || {
-        // Only persist letters the player actually changed. Saving the whole
-        // prefilled word would restamp every cell — including correct guesses
-        // — as a placeholder, hiding them behind placeholder styling.
-        let slots = placeholder_slots(game_action_data.peek().as_slice());
-        if slots.is_empty() {
-            return;
-        }
-        // commit_actions already merges the optimistic local letters. The id
-        // is cloned into a local: an `async move` block that borrows a
-        // capture moves it, which would make this closure FnOnce and break
-        // every caller that unselects twice.
-        let game_id = id_for_save.clone();
-        spawn_local(async move {
-            commit_actions(&game_id, &slots, false, actions, sync, failed_batch).await;
-        });
-    };
-
     // Clear the active selection: drop the in-progress word and stop
     // broadcasting presence. `save_progress` first persists the typed letters
     // as a placeholder (unselect / direction-toggle); a correct guess already
@@ -1132,23 +1140,6 @@ pub fn GamePlay(id: String) -> Element {
 
     let mut clear_for_unselect = clear_selection.clone();
     let unselect = move |_| clear_for_unselect(true);
-
-    // Click a board cell → select a covering question (current dir first).
-    let mut select_question_for_coords = select_question.clone();
-    let select_coordinates = move |x: i32, y: i32| {
-        let maps = answer_maps.peek();
-        let dir = *selected_direction.peek();
-        let covers =
-            |m: &QuestionWithAnswerMap| m.answer_map.iter().any(|c| c.cord_x == x && c.cord_y == y);
-        let found = maps
-            .iter()
-            .find(|m| dir.map(|d| m.question.direction == d).unwrap_or(false) && covers(m))
-            .or_else(|| maps.iter().find(|m| covers(m)));
-        if let Some(m) = found {
-            let key = qkey(&m.question);
-            select_question_for_coords(key);
-        }
-    };
 
     // --- draft letter write, shared by the inline editor and the board --------
     // The single place a letter enters the local draft. Both the editor's
@@ -1183,8 +1174,9 @@ pub fn GamePlay(id: String) -> Element {
     // Three things this has to get right that a click does not:
     //
     //  1. The keyboard resolves a target cell to a `(clue, index)` pair with
-    //     `select_at`, NOT with `select_coordinates` — see there. A click is
-    //     allowed to land on the word start; an arrow press is not.
+    //     `select_at`, NOT with `select_coordinates` — see there. A click may
+    //     toggle the direction (second click on the cursor cell); an arrow
+    //     press never does.
     //  2. `select_question` always starts a word at index 0, so every path
     //     that crosses into another word re-points `focused_index` at the cell
     //     actually moved to.
@@ -1206,15 +1198,11 @@ pub fn GamePlay(id: String) -> Element {
         }
     };
 
-    // Coordinate -> (clue, index) resolver, used ONLY by the keyboard layer.
+    // Coordinate -> (clue, index) resolver.
     //
-    // It cannot go through `select_coordinates`: that calls `select_question`,
-    // which unconditionally sets `focused_index = Some(0)`, so every cursor
-    // move would land on the FIRST letter of whatever word covers the target
-    // and arrows would be unusable. (The click path has the same quirk — a
-    // click lands on the word start, not the clicked cell — but that is
-    // pre-existing and `select_question`/`select_coordinates` are left
-    // byte-identical here, per spec.)
+    // It does not go through `select_coordinates`: that handler toggles the
+    // direction on a second click of the cursor cell, and lands the cursor on
+    // the clicked cell either way — an arrow press must never toggle.
     //
     // Covering-clue preference is deliberately the same order
     // `select_coordinates` uses — the working direction first, then any
@@ -1251,6 +1239,39 @@ pub fn GamePlay(id: String) -> Element {
         // `select_question` parks the cursor at index 0; the arrow is asking
         // for THIS cell, so override it.
         focused_index.set(Some(idx));
+    };
+
+    // Click a board cell: land the cursor on the clicked cell itself (the
+    // covering-clue preference is the same one `select_at` uses — the working
+    // direction first, then any direction). Clicking the cursor cell a second
+    // time flips across/down: the covering word of the OTHER direction at that
+    // cell takes over, with the cursor staying on the cell. When no word
+    // crosses there, the second click is a no-op — the word keeps the cell.
+    let mut select_at_for_click = select_at.clone();
+    let mut select_question_for_toggle = select_question.clone();
+    let select_coordinates = move |x: i32, y: i32| {
+        if selected.peek().is_some() && cursor_coord() == Some((x, y)) {
+            let maps = answer_maps.peek();
+            let covers = |m: &QuestionWithAnswerMap| {
+                m.answer_map.iter().any(|c| c.cord_x == x && c.cord_y == y)
+            };
+            let other = maps
+                .iter()
+                .find(|m| covers(m) && Some(m.question.direction) != *selected_direction.peek());
+            if let Some(m) = other {
+                let key = qkey(&m.question);
+                let idx = m
+                    .answer_map
+                    .iter()
+                    .position(|c| c.cord_x == x && c.cord_y == y)
+                    .unwrap_or(0);
+                drop(maps);
+                select_question_for_toggle(key);
+                focused_index.set(Some(idx));
+            }
+            return;
+        }
+        select_at_for_click(x, y);
     };
 
     // `select_at` is a closure over another closure, so it is `Clone` but not
@@ -1309,10 +1330,11 @@ pub fn GamePlay(id: String) -> Element {
     //
     // `select_question` already leaves `focused_index` at 0, which is exactly
     // where a click on that clue row puts it. There is deliberately no
-    // "first empty slot" seek and no draft save: the spec asks for parity with
-    // the mouse path, and the mouse path does neither.
+    // "first empty slot" seek: an empty cell under the cursor is where the
+    // player expects typing to continue, and the clue switch itself saves the
+    // outgoing word's draft (select_question persists it).
     let mut select_for_step = select_question.clone();
-    let mut step_clue = move |forward: bool| {
+    let step_clue = move |forward: bool| {
         let dir = selected_direction.peek().unwrap_or(Direction::Across);
         let keys: Vec<QKey> = answer_maps
             .peek()
@@ -1337,15 +1359,10 @@ pub fn GamePlay(id: String) -> Element {
 
     // Space switches to the word running the OTHER way through the cell under
     // the cursor, and leaves the cursor on that same cell (its index in the new
-    // word) — the behaviour a click on that clue row produces, including the
-    // consequence that the outgoing word's unsaved draft is dropped.
-    //
-    // Deliberately NO save here. `clear_selection(true)` would persist the
-    // typed letters as a placeholder, which is what the mouse's direction TAB
-    // does; but the mouse's own cross-word click does not save, and the spec
-    // asks for parity with that path. Saving here would make Space the one
-    // keyboard action that quietly writes to the server.
-    let mut switch_direction = move |new_dir: Direction| {
+    // word) — the behaviour a click on that clue row produces. The outgoing
+    // word's draft is saved by `select_question` on the switch, the same as
+    // every other word change.
+    let switch_direction = move |new_dir: Direction| {
         let Some((x, y)) = cursor_coord() else {
             // No cursor to switch around: flip the clue-list filter, which is
             // all the signal means on its own.
@@ -1388,6 +1405,8 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     let mut clear_for_escape = clear_selection.clone();
+    let mut step_for_board = step_clue.clone();
+    let mut switch_for_board = switch_direction.clone();
     let handle_board_key = move |e: KeyboardEvent| {
         // The clue editor owns Backspace and the arrows while it has focus, and
         // a letter typed into a letter box must not also move the grid cursor.
@@ -1436,7 +1455,7 @@ pub fn GamePlay(id: String) -> Element {
                     Some(Direction::Across) => Direction::Down,
                     _ => Direction::Across,
                 };
-                switch_direction(next);
+                switch_for_board(next);
                 absorb(&e);
             }
             Key::Character(c) if c.chars().any(|ch| ch.is_ascii_alphabetic()) => {
@@ -1461,7 +1480,7 @@ pub fn GamePlay(id: String) -> Element {
                 absorb(&e);
             }
             Key::Tab => {
-                step_clue(!e.modifiers().shift());
+                step_for_board(!e.modifiers().shift());
                 absorb(&e);
             }
             // Escape is the way out of the grid. Tab and Shift+Tab both stay
@@ -1502,6 +1521,7 @@ pub fn GamePlay(id: String) -> Element {
 
     // --- guess submission ----------------------------------------------------
     let id_for_guess = id.clone();
+    let clear_for_hk = clear_selection.clone();
     let submit_guess = move || {
         let slots = game_action_data.peek().clone();
         if slots.is_empty() {
@@ -1582,36 +1602,98 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     // --- keyboard handling for the active clue (input auto-advance, etc.) -----
-    let handle_key = move |index: usize, key: Key| match key {
-        Key::Backspace => {
-            let cur_empty = game_action_data
-                .peek()
-                .get(index)
-                .map(|s| s.state.is_empty())
-                .unwrap_or(true);
-            if cur_empty && index > 0 {
-                {
+    // Takes the whole event so a key can be both handled and consumed: Tab and
+    // Space must not leak to the browser or panel-kit's panel-focus cycle, the
+    // way they do when they fall through.
+    let mut hk_step = step_clue.clone();
+    let mut hk_switch = switch_direction.clone();
+    let hk_guess = submit_guess.clone();
+    let mut hk_clear = clear_for_hk.clone();
+    let handle_key = move |index: usize, e: KeyboardEvent| {
+        let key = e.key();
+        match &key {
+            Key::Backspace => {
+                let cur_empty = game_action_data
+                    .peek()
+                    .get(index)
+                    .map(|s| s.state.is_empty())
+                    .unwrap_or(true);
+                if cur_empty && index > 0 {
+                    {
+                        let mut g = game_action_data.write();
+                        if let Some(s) = g.get_mut(index - 1) {
+                            s.state = String::new();
+                        }
+                    }
+                    focused_index.set(Some(index - 1));
+                } else {
                     let mut g = game_action_data.write();
-                    if let Some(s) = g.get_mut(index - 1) {
+                    if let Some(s) = g.get_mut(index) {
                         s.state = String::new();
                     }
                 }
-                focused_index.set(Some(index - 1));
-            } else {
-                let mut g = game_action_data.write();
-                if let Some(s) = g.get_mut(index) {
-                    s.state = String::new();
+            }
+            Key::ArrowLeft | Key::ArrowRight => {
+                // Along an across word the arrows walk the boxes; in a down
+                // word they point across, so they take the crossing across
+                // word through the cursor cell (no-op when nothing crosses).
+                if *selected_direction.peek() == Some(Direction::Down) {
+                    hk_switch(Direction::Across);
+                } else if key == Key::ArrowLeft && index > 0 {
+                    focused_index.set(Some(index - 1));
+                } else {
+                    let len = game_action_data.peek().len();
+                    if index + 1 < len {
+                        focused_index.set(Some(index + 1));
+                    }
                 }
             }
-        }
-        Key::ArrowLeft if index > 0 => focused_index.set(Some(index - 1)),
-        Key::ArrowRight => {
-            let len = game_action_data.peek().len();
-            if index + 1 < len {
-                focused_index.set(Some(index + 1));
+            Key::ArrowUp | Key::ArrowDown => {
+                // Mirror image: along a down word the arrows walk the boxes;
+                // in an across word they take the crossing down word.
+                if *selected_direction.peek() == Some(Direction::Across) {
+                    hk_switch(Direction::Down);
+                } else if key == Key::ArrowUp && index > 0 {
+                    focused_index.set(Some(index - 1));
+                } else {
+                    let len = game_action_data.peek().len();
+                    if index + 1 < len {
+                        focused_index.set(Some(index + 1));
+                    }
+                }
             }
+            Key::Tab => {
+                // Tab walks the puzzle's clues (next/previous), not the next
+                // panel: the player is typing words, and the next thing they
+                // want is the next word. The draft rides along — switching
+                // clues saves it.
+                hk_step(!e.modifiers().shift());
+                absorb(&e);
+            }
+            Key::Character(c) if c.as_str() == " " => {
+                // Same flip as the board's Space: the other direction through
+                // this cell. Also keeps a stray space out of the letter box.
+                let next = match *selected_direction.peek() {
+                    Some(Direction::Across) => Direction::Down,
+                    _ => Direction::Across,
+                };
+                hk_switch(next);
+                absorb(&e);
+            }
+            Key::Enter => {
+                // The how-to-play has promised this all along: "Enter saves
+                // and checks the word".
+                hk_guess();
+                absorb(&e);
+            }
+            Key::Escape => {
+                // Close the editor, saving the draft (the same thing the
+                // Cancel button does).
+                hk_clear(true);
+                absorb(&e);
+            }
+            _ => {}
         }
-        _ => {}
     };
 
     // A letter box taking focus hands the surface back to the editor, so the
@@ -1778,7 +1860,7 @@ pub fn GamePlay(id: String) -> Element {
                 select_question.clone(),
                 toggle_dir.clone(),
                 handle_letter_input,
-                handle_key,
+                handle_key.clone(),
                 editor_focus,
                 unselect.clone(),
                 submit_guess.clone(),
@@ -2205,7 +2287,7 @@ fn render_clues(
     select_question: impl FnMut(QKey) + Clone + 'static,
     mut toggle_dir: impl FnMut(Direction) + Clone + 'static,
     handle_letter_input: impl FnMut(usize, String) + Clone + 'static,
-    handle_key: impl FnMut(usize, Key) + Clone + 'static,
+    handle_key: impl FnMut(usize, KeyboardEvent) + Clone + 'static,
     editor_focus: impl FnMut() + Clone + 'static,
     unselect: impl FnMut(Event<MouseData>) + Clone + 'static,
     submit_guess: impl FnMut() + Clone + 'static,
@@ -2349,7 +2431,7 @@ fn render_clues(
                                                                             }
                                                                         },
                                                                         oninput: move |e| hi(index, e.value()),
-                                                                        onkeydown: move |e| hk(index, e.key()),
+                                                                        onkeydown: move |e| hk(index, e),
                                                                         onfocus: move |_| ef(),
                                                                     }
                                                                 }

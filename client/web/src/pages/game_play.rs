@@ -1536,35 +1536,26 @@ pub fn GamePlay(id: String) -> Element {
         // and hands back the reply plus this word's verdict map.
         let id_complete = id_for_guess.clone();
         let mut clear_for_guess = clear_selection.clone();
-        // The word this guess is about, snapshotted now. A `QKey` would be
-        // wrong: the player can select another clue while the request is in
-        // flight, and the reply belongs to the word it was asked about.
-        let word_for_reply: Vec<(i32, i32)> = game_action_data
-            .peek()
-            .iter()
-            .map(|s| (s.cord_x, s.cord_y))
-            .collect();
         let nav = navigator();
         let game_id = id_for_guess.clone();
         // Dioxus `spawn`: `nav.push` below needs the runtime scope (raw
         // spawn_local panics resolving the history context).
         spawn(async move {
-            let Some((res, from_reply)) =
+            let Some((res, _from_reply)) =
                 commit_actions(&game_id, &slots, true, actions, sync, failed_batch).await
             else {
                 return;
             };
-            // A right guess ends the word, so the editor closes. This is what
-            // `a46ff5c` (DEF-243) dropped: it computed `is_correct` against an
-            // answer the client was still being sent, and when the answer moved
-            // to the server the clear went with it and nothing replaced it. A
-            // correct word in a puzzle with others left therefore kept its
-            // entry row, and the letters the player had just submitted stayed
-            // editable over the now-green cells. Only the server's verdict can
-            // say this.
-            if word_solved(&word_for_reply, &from_reply) {
-                clear_for_guess(false);
-            }
+            // The verdict is in: right or wrong, the word leaves the editor.
+            // A right word closes because it is solved; a wrong one closes so
+            // someone else can try — the how-to-play promises exactly that,
+            // and DEF-243's refactor regressed it to clear only on correct
+            // (a46ff5c: the clear used to key off a client-side answer; when
+            // the answer moved to the server, only the correct half survived).
+            // Either way the board keeps the styling: correct cells read
+            // green from the verdict actions, wrong ones stay red, and the
+            // verdict line above the list says the score.
+            clear_for_guess(false);
             if !res.get("solved").and_then(|v| v.as_bool()).unwrap_or(false) {
                 return;
             }

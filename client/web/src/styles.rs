@@ -29,7 +29,15 @@ pub const DESIGN: &str = r#"
   --pastel-red: #ff8c8c;
   --pastel-green: #a8e6cf;
   --pastel-yellow: #feea99;
+  /* The panel lights (tiling/minimize/maximize) read as one set: three
+     pastels of the same value family. Pink and peach previously fell back to
+     panel-kit's saturated #ff5fc3/#ffbd2e, which next to the pale yellow read
+     as pink + brown. */
+  --pastel-pink: #f6c9e4;
+  --pastel-peach: #ffd9a6;
   --color-primary: var(--pastel-yellow);
+  --color-secondary: var(--pastel-pink);
+  --color-tertiary: var(--pastel-peach);
   --color-success: var(--pastel-green);
   --color-warning: var(--pastel-yellow);
   --color-error: var(--pastel-red);
@@ -137,6 +145,21 @@ pub const DESIGN: &str = r#"
   --pastel-red: #b02a20;
   --pastel-green: #0d6a4e;
   --pastel-yellow: #775600;
+  /* The panel-light pastels darken like their siblings — pale pink/peach on a
+     white card sat at 1.5–2.6:1, under WCAG's 3:1 for a UI mark. ≥4.4:1 here
+     keeps the lights visible without leaving the pastel family. */
+  --pastel-pink: #b04a80;
+  --pastel-peach: #9a6a15;
+  /* Co-op presence rings on the board: the dark palette's pale rings measured
+     1.2–1.5:1 on the light board — a teammate's ring was effectively
+     invisible. All four land ≥4.3:1 here, hue-distinct from each other and
+     from the darkened pastel-yellow. */
+  --presence-1: #2e7d5b;
+  --presence-2: #3a6ea8;
+  --presence-3: #6a4e9e;
+  --presence-4: #b04a80;
+  /* was #d97706 — 2.98:1, a hair under the 3:1 a UI mark needs. */
+  --podium-bronze: #b45309;
   /* Ink on a pastel fill inverts along with the pastels — white, ≥5.1:1 against
      every fill above and against both podium metals. Every call site pairs it
      with a solid --pastel or --color fill, never a color-mix tint, so the flip

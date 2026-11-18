@@ -1126,9 +1126,21 @@ pub fn GamePlay(id: String) -> Element {
     // the same thing (same casing, same advance) on either surface. Still a
     // local draft: Guess is the only thing that commits.
     let write_letter_for_editor = move |index: usize, raw: String| {
+        // The browser composes `raw` against whatever the box still holds: a
+        // keystroke with the caret before the prefilled char arrives as
+        // "qS", and taking the last char would keep the OLD letter and
+        // swallow the keystroke. Take the char the box did not already hold;
+        // a pure retype (every char matches) keeps the last one.
+        let prev = game_action_data
+            .peek()
+            .get(index)
+            .map(|s| s.state.clone())
+            .unwrap_or_default();
         let val = raw
             .chars()
-            .last()
+            .rev()
+            .find(|c| !prev.contains(*c))
+            .or_else(|| raw.chars().last())
             .map(|c| c.to_ascii_uppercase().to_string())
             .unwrap_or_default();
         {
@@ -1667,9 +1679,14 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     // A letter box taking focus hands the surface back to the editor, so the
-    // grid's focus driver stops pulling focus out from under the caret.
+    // grid's focus driver stops pulling focus out from under the caret — and
+    // selects the box's content, so a keystroke replaces the prefilled char
+    // instead of composing an insertion the handler would have to untangle.
     let editor_focus = move || {
         board_active.set(false);
+        dioxus::document::eval(
+            "document.activeElement instanceof HTMLInputElement && document.activeElement.select()",
+        );
     };
 
     // --- join / invite -------------------------------------------------------

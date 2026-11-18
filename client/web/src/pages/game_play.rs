@@ -123,6 +123,23 @@ const REMOTE_COLORS: [&str; 4] = [
     "var(--presence-4)",
 ];
 
+/// `focused_index.set`, without the abort. dioxus's `set` unwraps the write
+/// guard, so a board click landing while another cursor write is still held
+/// (the focus driver's task mid-flight inside event dispatch) aborts the page:
+/// `AlreadyBorrowed`, every time a shared cell is picked in that window.
+/// A contended write defers to the task queue instead — the holder always
+/// drops before the task polls, so the cursor update still lands.
+fn set_cursor(mut cursor: Signal<Option<usize>>, value: Option<usize>) {
+    // Decide first, then act: the failed borrow is dropped before the write,
+    // and on a single-threaded queue nothing can re-contend in between.
+    let contended = cursor.try_write().is_err();
+    if contended {
+        spawn_local(async move { cursor.set(value) });
+    } else {
+        cursor.set(value);
+    }
+}
+
 /// Deterministic per-player color: remote players hash into the palette.
 fn player_color(user_id: &str, my_id: Option<&str>) -> String {
     if Some(user_id) == my_id {
@@ -574,7 +591,7 @@ pub fn GamePlay(id: String) -> Element {
     let mut selected = use_signal(|| Option::<QKey>::None);
     let mut selected_direction = use_signal(|| Option::<Direction>::Some(Direction::Across));
     let mut game_action_data = use_signal(Vec::<ActionSlot>::new);
-    let mut focused_index = use_signal(|| Option::<usize>::None);
+    let focused_index = use_signal(|| Option::<usize>::None);
     // Which surface owns DOM focus: the grid or the inline clue editor. Both
     // focus drivers key off `focused_index`, and both move that cursor, so
     // without this split an arrow press on the grid would yank focus into the
@@ -1092,7 +1109,7 @@ pub fn GamePlay(id: String) -> Element {
             game_action_data.set(slots);
             input_refs.set(vec![None; n]);
             selected.set(Some(key));
-            focused_index.set(Some(0));
+            set_cursor(focused_index, Some(0));
             publish_for_select(Some(key));
         }
     };
@@ -1111,7 +1128,7 @@ pub fn GamePlay(id: String) -> Element {
         }
         selected.set(None);
         game_action_data.set(Vec::new());
-        focused_index.set(None);
+        set_cursor(focused_index, None);
         if was_selected {
             publish_for_clear(None);
         }
@@ -1151,7 +1168,7 @@ pub fn GamePlay(id: String) -> Element {
         }
         let len = game_action_data.peek().len();
         if !val.is_empty() && index + 1 < len {
-            focused_index.set(Some(index + 1));
+            set_cursor(focused_index, Some(index + 1));
         }
     };
     let handle_letter_input = write_letter_for_editor.clone();
@@ -1222,14 +1239,14 @@ pub fn GamePlay(id: String) -> Element {
             // Already on this word: just slide the cursor. Going through
             // `select_question` again would throw the in-progress draft away
             // for nothing.
-            focused_index.set(Some(idx));
+            set_cursor(focused_index, Some(idx));
             return;
         }
         drop(maps);
         select_question_for_at(key);
         // `select_question` parks the cursor at index 0; the arrow is asking
         // for THIS cell, so override it.
-        focused_index.set(Some(idx));
+        set_cursor(focused_index, Some(idx));
     };
 
     // Click a board cell: land the cursor on the clicked cell itself (the
@@ -1258,7 +1275,7 @@ pub fn GamePlay(id: String) -> Element {
                     .unwrap_or(0);
                 drop(maps);
                 select_question_for_toggle(key);
-                focused_index.set(Some(idx));
+                set_cursor(focused_index, Some(idx));
             }
             return;
         }
@@ -1379,11 +1396,11 @@ pub fn GamePlay(id: String) -> Element {
         };
         drop(maps);
         if *selected.peek() == Some(key) {
-            focused_index.set(Some(idx));
+            set_cursor(focused_index, Some(idx));
             return;
         }
         sa_switch(x, y);
-        focused_index.set(Some(idx));
+        set_cursor(focused_index, Some(idx));
     };
 
     // Consume a key the grid has handled. `prevent_default` stops the browser's
@@ -1436,7 +1453,7 @@ pub fn GamePlay(id: String) -> Element {
                     }
                     drop(g);
                     if target != i {
-                        focused_index.set(Some(target));
+                        set_cursor(focused_index, Some(target));
                     }
                 }
                 absorb(&e);
@@ -1607,7 +1624,7 @@ pub fn GamePlay(id: String) -> Element {
                             s.state = String::new();
                         }
                     }
-                    focused_index.set(Some(index - 1));
+                    set_cursor(focused_index, Some(index - 1));
                 } else {
                     let mut g = game_action_data.write();
                     if let Some(s) = g.get_mut(index) {
@@ -1622,11 +1639,11 @@ pub fn GamePlay(id: String) -> Element {
                 if *selected_direction.peek() == Some(Direction::Down) {
                     hk_switch(Direction::Across);
                 } else if key == Key::ArrowLeft && index > 0 {
-                    focused_index.set(Some(index - 1));
+                    set_cursor(focused_index, Some(index - 1));
                 } else {
                     let len = game_action_data.peek().len();
                     if index + 1 < len {
-                        focused_index.set(Some(index + 1));
+                        set_cursor(focused_index, Some(index + 1));
                     }
                 }
             }
@@ -1636,11 +1653,11 @@ pub fn GamePlay(id: String) -> Element {
                 if *selected_direction.peek() == Some(Direction::Across) {
                     hk_switch(Direction::Down);
                 } else if key == Key::ArrowUp && index > 0 {
-                    focused_index.set(Some(index - 1));
+                    set_cursor(focused_index, Some(index - 1));
                 } else {
                     let len = game_action_data.peek().len();
                     if index + 1 < len {
-                        focused_index.set(Some(index + 1));
+                        set_cursor(focused_index, Some(index + 1));
                     }
                 }
             }

@@ -123,6 +123,23 @@ const REMOTE_COLORS: [&str; 4] = [
     "var(--presence-4)",
 ];
 
+/// `focused_index.set`, without the abort. dioxus's `set` unwraps the write
+/// guard, so a board click landing while another cursor write is still held
+/// (the focus driver's task mid-flight inside event dispatch) aborts the page:
+/// `AlreadyBorrowed`, every time a shared cell is picked in that window.
+/// A contended write defers to the task queue instead — the holder always
+/// drops before the task polls, so the cursor update still lands.
+fn set_cursor(mut cursor: Signal<Option<usize>>, value: Option<usize>) {
+    // Decide first, then act: the failed borrow is dropped before the write,
+    // and on a single-threaded queue nothing can re-contend in between.
+    let contended = cursor.try_write().is_err();
+    if contended {
+        spawn_local(async move { cursor.set(value) });
+    } else {
+        cursor.set(value);
+    }
+}
+
 /// Deterministic per-player color: remote players hash into the palette.
 fn player_color(user_id: &str, my_id: Option<&str>) -> String {
     if Some(user_id) == my_id {
@@ -420,27 +437,6 @@ fn retains_presence(state: &net::ConnectionState) -> bool {
     )
 }
 
-/// Is every cell of `word` known to hold the right letter?
-///
-/// `verdicts` maps `cord -> is that cell right`, and a cell with no entry is
-/// *unknown*: an unknown cell makes the answer `false`, so a word is solved on
-/// positive evidence only. That is the whole point — the client cannot read the
-/// answer off its own letters, because DEF-243 moved the key to the server.
-///
-/// `word` is the snapshot of the open word taken when the guess was sent, not
-/// the live editor state: the player can select another clue mid-flight, and the
-/// reply belongs to the word it was asked about.
-///
-/// The reply covers `word` exactly. `build_action_batch` sends every slot of the
-/// open word and `addActions` returns one row per submitted action, so the
-/// verdicts for a guess are complete for that word and nothing else.
-fn word_solved(word: &[(i32, i32)], verdicts: &HashMap<(i32, i32), bool>) -> bool {
-    !word.is_empty()
-        && word
-            .iter()
-            .all(|c| verdicts.get(c).copied().unwrap_or(false))
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum PanelId {
     Board,
@@ -595,7 +591,7 @@ pub fn GamePlay(id: String) -> Element {
     let mut selected = use_signal(|| Option::<QKey>::None);
     let mut selected_direction = use_signal(|| Option::<Direction>::Some(Direction::Across));
     let mut game_action_data = use_signal(Vec::<ActionSlot>::new);
-    let mut focused_index = use_signal(|| Option::<usize>::None);
+    let focused_index = use_signal(|| Option::<usize>::None);
     // Which surface owns DOM focus: the grid or the inline clue editor. Both
     // focus drivers key off `focused_index`, and both move that cursor, so
     // without this split an arrow press on the grid would yank focus into the
@@ -1113,7 +1109,7 @@ pub fn GamePlay(id: String) -> Element {
             game_action_data.set(slots);
             input_refs.set(vec![None; n]);
             selected.set(Some(key));
-            focused_index.set(Some(0));
+            set_cursor(focused_index, Some(0));
             publish_for_select(Some(key));
         }
     };
@@ -1132,7 +1128,7 @@ pub fn GamePlay(id: String) -> Element {
         }
         selected.set(None);
         game_action_data.set(Vec::new());
-        focused_index.set(None);
+        set_cursor(focused_index, None);
         if was_selected {
             publish_for_clear(None);
         }
@@ -1147,9 +1143,21 @@ pub fn GamePlay(id: String) -> Element {
     // the same thing (same casing, same advance) on either surface. Still a
     // local draft: Guess is the only thing that commits.
     let write_letter_for_editor = move |index: usize, raw: String| {
+        // The browser composes `raw` against whatever the box still holds: a
+        // keystroke with the caret before the prefilled char arrives as
+        // "qS", and taking the last char would keep the OLD letter and
+        // swallow the keystroke. Take the char the box did not already hold;
+        // a pure retype (every char matches) keeps the last one.
+        let prev = game_action_data
+            .peek()
+            .get(index)
+            .map(|s| s.state.clone())
+            .unwrap_or_default();
         let val = raw
             .chars()
-            .last()
+            .rev()
+            .find(|c| !prev.contains(*c))
+            .or_else(|| raw.chars().last())
             .map(|c| c.to_ascii_uppercase().to_string())
             .unwrap_or_default();
         {
@@ -1160,7 +1168,7 @@ pub fn GamePlay(id: String) -> Element {
         }
         let len = game_action_data.peek().len();
         if !val.is_empty() && index + 1 < len {
-            focused_index.set(Some(index + 1));
+            set_cursor(focused_index, Some(index + 1));
         }
     };
     let handle_letter_input = write_letter_for_editor.clone();
@@ -1231,14 +1239,14 @@ pub fn GamePlay(id: String) -> Element {
             // Already on this word: just slide the cursor. Going through
             // `select_question` again would throw the in-progress draft away
             // for nothing.
-            focused_index.set(Some(idx));
+            set_cursor(focused_index, Some(idx));
             return;
         }
         drop(maps);
         select_question_for_at(key);
         // `select_question` parks the cursor at index 0; the arrow is asking
         // for THIS cell, so override it.
-        focused_index.set(Some(idx));
+        set_cursor(focused_index, Some(idx));
     };
 
     // Click a board cell: land the cursor on the clicked cell itself (the
@@ -1267,7 +1275,7 @@ pub fn GamePlay(id: String) -> Element {
                     .unwrap_or(0);
                 drop(maps);
                 select_question_for_toggle(key);
-                focused_index.set(Some(idx));
+                set_cursor(focused_index, Some(idx));
             }
             return;
         }
@@ -1388,11 +1396,11 @@ pub fn GamePlay(id: String) -> Element {
         };
         drop(maps);
         if *selected.peek() == Some(key) {
-            focused_index.set(Some(idx));
+            set_cursor(focused_index, Some(idx));
             return;
         }
         sa_switch(x, y);
-        focused_index.set(Some(idx));
+        set_cursor(focused_index, Some(idx));
     };
 
     // Consume a key the grid has handled. `prevent_default` stops the browser's
@@ -1445,7 +1453,7 @@ pub fn GamePlay(id: String) -> Element {
                     }
                     drop(g);
                     if target != i {
-                        focused_index.set(Some(target));
+                        set_cursor(focused_index, Some(target));
                     }
                 }
                 absorb(&e);
@@ -1536,35 +1544,26 @@ pub fn GamePlay(id: String) -> Element {
         // and hands back the reply plus this word's verdict map.
         let id_complete = id_for_guess.clone();
         let mut clear_for_guess = clear_selection.clone();
-        // The word this guess is about, snapshotted now. A `QKey` would be
-        // wrong: the player can select another clue while the request is in
-        // flight, and the reply belongs to the word it was asked about.
-        let word_for_reply: Vec<(i32, i32)> = game_action_data
-            .peek()
-            .iter()
-            .map(|s| (s.cord_x, s.cord_y))
-            .collect();
         let nav = navigator();
         let game_id = id_for_guess.clone();
         // Dioxus `spawn`: `nav.push` below needs the runtime scope (raw
         // spawn_local panics resolving the history context).
         spawn(async move {
-            let Some((res, from_reply)) =
+            let Some((res, _from_reply)) =
                 commit_actions(&game_id, &slots, true, actions, sync, failed_batch).await
             else {
                 return;
             };
-            // A right guess ends the word, so the editor closes. This is what
-            // `a46ff5c` (DEF-243) dropped: it computed `is_correct` against an
-            // answer the client was still being sent, and when the answer moved
-            // to the server the clear went with it and nothing replaced it. A
-            // correct word in a puzzle with others left therefore kept its
-            // entry row, and the letters the player had just submitted stayed
-            // editable over the now-green cells. Only the server's verdict can
-            // say this.
-            if word_solved(&word_for_reply, &from_reply) {
-                clear_for_guess(false);
-            }
+            // The verdict is in: right or wrong, the word leaves the editor.
+            // A right word closes because it is solved; a wrong one closes so
+            // someone else can try — the how-to-play promises exactly that,
+            // and DEF-243's refactor regressed it to clear only on correct
+            // (a46ff5c: the clear used to key off a client-side answer; when
+            // the answer moved to the server, only the correct half survived).
+            // Either way the board keeps the styling: correct cells read
+            // green from the verdict actions, wrong ones stay red, and the
+            // verdict line above the list says the score.
+            clear_for_guess(false);
             if !res.get("solved").and_then(|v| v.as_bool()).unwrap_or(false) {
                 return;
             }
@@ -1625,7 +1624,7 @@ pub fn GamePlay(id: String) -> Element {
                             s.state = String::new();
                         }
                     }
-                    focused_index.set(Some(index - 1));
+                    set_cursor(focused_index, Some(index - 1));
                 } else {
                     let mut g = game_action_data.write();
                     if let Some(s) = g.get_mut(index) {
@@ -1640,11 +1639,11 @@ pub fn GamePlay(id: String) -> Element {
                 if *selected_direction.peek() == Some(Direction::Down) {
                     hk_switch(Direction::Across);
                 } else if key == Key::ArrowLeft && index > 0 {
-                    focused_index.set(Some(index - 1));
+                    set_cursor(focused_index, Some(index - 1));
                 } else {
                     let len = game_action_data.peek().len();
                     if index + 1 < len {
-                        focused_index.set(Some(index + 1));
+                        set_cursor(focused_index, Some(index + 1));
                     }
                 }
             }
@@ -1654,11 +1653,11 @@ pub fn GamePlay(id: String) -> Element {
                 if *selected_direction.peek() == Some(Direction::Across) {
                     hk_switch(Direction::Down);
                 } else if key == Key::ArrowUp && index > 0 {
-                    focused_index.set(Some(index - 1));
+                    set_cursor(focused_index, Some(index - 1));
                 } else {
                     let len = game_action_data.peek().len();
                     if index + 1 < len {
-                        focused_index.set(Some(index + 1));
+                        set_cursor(focused_index, Some(index + 1));
                     }
                 }
             }
@@ -1697,9 +1696,14 @@ pub fn GamePlay(id: String) -> Element {
     };
 
     // A letter box taking focus hands the surface back to the editor, so the
-    // grid's focus driver stops pulling focus out from under the caret.
+    // grid's focus driver stops pulling focus out from under the caret — and
+    // selects the box's content, so a keystroke replaces the prefilled char
+    // instead of composing an insertion the handler would have to untangle.
     let editor_focus = move || {
         board_active.set(false);
+        dioxus::document::eval(
+            "document.activeElement instanceof HTMLInputElement && document.activeElement.select()",
+        );
     };
 
     // --- join / invite -------------------------------------------------------
@@ -3402,61 +3406,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    /// DEF-103: a correct guess used to end the word, and DEF-243 took the
-    /// decision with it. The client no longer holds the answer, so "is this word
-    /// right" can only be answered by the verdicts the server returns — and only
-    /// on positive evidence, never by the letters sitting in the editor.
-    #[test]
-    fn word_solved_needs_a_verdict_for_every_cell() {
-        let word = vec![(0, 0), (1, 0), (2, 0)];
-        let all_right = HashMap::from([((0, 0), true), ((1, 0), true), ((2, 0), true)]);
-        assert!(word_solved(&word, &all_right));
-
-        // One cell the server marked wrong: not solved.
-        let mut one_wrong = all_right.clone();
-        one_wrong.insert((1, 0), false);
-        assert!(!word_solved(&word, &one_wrong));
-
-        // One cell the server never spoke about: unknown, so not solved. This is
-        // the case a locally-computed answer gets wrong.
-        let mut partial = all_right.clone();
-        partial.remove(&(2, 0));
-        assert!(!word_solved(&word, &partial));
-
-        // Nothing at all — the shape an untouched editor compares equal to.
-        assert!(!word_solved(&word, &HashMap::new()));
-
-        // An empty word is not a solved word; otherwise the clear would fire on
-        // a submit that had no slots to begin with.
-        assert!(!word_solved(&[], &all_right));
-    }
-
-    /// Verdicts for cells outside the open word must not stand in for it. The
-    /// `addActions` reply covers the whole submitted batch, and a reconciled
-    /// board carries every letter ever played, so a `correct` somewhere else is
-    /// not evidence about this word.
-    #[test]
-    fn word_solved_ignores_verdicts_outside_the_word() {
-        let word = vec![(0, 0), (1, 0)];
-        let verdicts = HashMap::from([
-            ((0, 0), true),
-            ((1, 0), true),
-            ((7, 7), true),
-            ((8, 8), true),
-        ]);
-        assert!(word_solved(&word, &verdicts));
-
-        // The same letters, but one of the word's cells is wrong and the surplus
-        // cells are right: still not solved.
-        let mixed = HashMap::from([
-            ((0, 0), true),
-            ((1, 0), false),
-            ((7, 7), true),
-            ((8, 8), true),
-        ]);
-        assert!(!word_solved(&word, &mixed));
     }
 
     /// DEF-235: the presence ring never appeared for a live co-op player.

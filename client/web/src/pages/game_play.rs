@@ -158,6 +158,58 @@ fn direction_from_str(s: &str) -> Option<Direction> {
     }
 }
 
+/// The letter a keystroke MEANT, given what the box held and what the browser
+/// composed. The single decision both input surfaces (inline editor and board)
+/// share, so "type a letter" cannot drift between them.
+///
+/// The browser does not hand us a keystroke — it hands us the box's composed
+/// value. With the caret before a prefilled char (the box keeps its letter
+/// until focus selects it, and a click can park the caret anywhere), a
+/// keystroke arrives as an INSERTION: `qS` against `S` means the player typed
+/// Q. Taking the last char would keep the OLD letter and swallow the
+/// keystroke; taking the first would break rapid typing (`qs` on an empty box
+/// means S — the advance already moved on). So: the char the box did not
+/// already hold, falling back to the last char on a pure retype.
+fn typed_char(prev: &str, raw: &str) -> String {
+    raw.chars()
+        .rev()
+        .find(|c| !prev.contains(*c))
+        .or_else(|| raw.chars().last())
+        .map(|c| c.to_ascii_uppercase().to_string())
+        .unwrap_or_default()
+}
+
+/// The next cursor after a letter write: the following box when a letter
+/// landed, nothing when the write cleared the box or the word ended (the
+/// cursor stays where it is for the rewrite).
+fn advance_after(index: usize, wrote: &str, len: usize) -> Option<usize> {
+    if !wrote.is_empty() && index + 1 < len {
+        Some(index + 1)
+    } else {
+        None
+    }
+}
+
+/// The letter write + auto-advance over one slots slice, shared by the inline
+/// editor and the board keystroke layer.
+fn write_letter_into(
+    slots: &mut [ActionSlot],
+    focused_index: Signal<Option<usize>>,
+    index: usize,
+    raw: String,
+) {
+    let val = typed_char(
+        slots.get(index).map(|s| s.state.as_str()).unwrap_or(""),
+        &raw,
+    );
+    if let Some(slot) = slots.get_mut(index) {
+        slot.state = val.clone();
+    }
+    if let Some(next) = advance_after(index, &val, slots.len()) {
+        set_cursor(focused_index, Some(next));
+    }
+}
+
 fn placeholder_slots(slots: &[ActionSlot]) -> Vec<ActionSlot> {
     let first_changed = slots.iter().position(|s| s.state != s.previous_state);
     slots
@@ -1138,38 +1190,12 @@ pub fn GamePlay(id: String) -> Element {
     let unselect = move |_| clear_for_unselect(true);
 
     // --- draft letter write, shared by the inline editor and the board --------
-    // The single place a letter enters the local draft. Both the editor's
-    // `onchange` and a board keystroke go through it, so "type a letter" means
-    // the same thing (same casing, same advance) on either surface. Still a
-    // local draft: Guess is the only thing that commits.
+    // One host binding over the shared `write_letter_into` (same casing, same
+    // advance, same caret rule on either surface). Still a local draft: Guess
+    // is the only thing that commits.
     let write_letter_for_editor = move |index: usize, raw: String| {
-        // The browser composes `raw` against whatever the box still holds: a
-        // keystroke with the caret before the prefilled char arrives as
-        // "qS", and taking the last char would keep the OLD letter and
-        // swallow the keystroke. Take the char the box did not already hold;
-        // a pure retype (every char matches) keeps the last one.
-        let prev = game_action_data
-            .peek()
-            .get(index)
-            .map(|s| s.state.clone())
-            .unwrap_or_default();
-        let val = raw
-            .chars()
-            .rev()
-            .find(|c| !prev.contains(*c))
-            .or_else(|| raw.chars().last())
-            .map(|c| c.to_ascii_uppercase().to_string())
-            .unwrap_or_default();
-        {
-            let mut g = game_action_data.write();
-            if let Some(slot) = g.get_mut(index) {
-                slot.state = val.clone();
-            }
-        }
-        let len = game_action_data.peek().len();
-        if !val.is_empty() && index + 1 < len {
-            set_cursor(focused_index, Some(index + 1));
-        }
+        let mut g = game_action_data.write();
+        write_letter_into(&mut g, focused_index, index, raw);
     };
     let handle_letter_input = write_letter_for_editor.clone();
     let mut write_letter = write_letter_for_editor;
@@ -3473,5 +3499,107 @@ mod tests {
         assert!(!is_reconcile_trigger(&Live, &mut seen_live));
         // ...and every `Live` after it is a genuine reconnect.
         assert!(is_reconcile_trigger(&Live, &mut seen_live));
+    }
+
+    // --- typed_char: the caret rule both input surfaces share -----------------
+    // (AC: a keystroke into a box that still holds its prefilled char takes
+    // the NEW letter. The reported bug: "qS" against "S" kept the S.)
+
+    #[test]
+    fn typed_char_takes_the_new_char_on_an_insertion() {
+        // The reported bug: caret parked before the prefilled char.
+        assert_eq!(typed_char("S", "qS"), "Q");
+        assert_eq!(typed_char("O", "eO"), "E");
+        // Insertion is case-insensitive about the old char.
+        assert_eq!(typed_char("S", "sS"), "S");
+    }
+
+    #[test]
+    fn typed_char_replaces_on_a_plain_keystroke() {
+        assert_eq!(typed_char("S", "q"), "Q");
+        assert_eq!(typed_char("", "q"), "Q");
+        // Rapid double-tap in one composed value: the advance already moved
+        // the cursor, and the last char is the one that stands.
+        assert_eq!(typed_char("", "qs"), "S");
+    }
+
+    #[test]
+    fn typed_char_keeps_a_pure_retype() {
+        // Retyping the same letter (a player nudging a box they meant to
+        // keep) must not advance differently or blank the box.
+        assert_eq!(typed_char("S", "S"), "S");
+        assert_eq!(typed_char("S", "s"), "S");
+    }
+
+    #[test]
+    fn typed_char_clears_on_an_empty_composition() {
+        assert_eq!(typed_char("S", ""), "");
+        assert_eq!(typed_char("", ""), "");
+    }
+
+    // --- write_letter_into / advance_after: the cursor contract ---------------
+
+    fn slot(x: i32, y: i32, state: &str) -> ActionSlot {
+        ActionSlot {
+            cord_x: x,
+            cord_y: y,
+            previous_state: String::new(),
+            state: state.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_landed_letter_advances_the_cursor() {
+        assert_eq!(advance_after(0, "S", 4), Some(1));
+        assert_eq!(advance_after(2, "O", 4), Some(3));
+    }
+
+    #[test]
+    fn the_last_box_holds_the_cursor() {
+        assert_eq!(advance_after(3, "P", 4), None);
+    }
+
+    #[test]
+    fn a_clear_stays_put_for_the_rewrite() {
+        assert_eq!(advance_after(0, "", 4), None);
+    }
+
+    // --- set_cursor: the panic-proof cursor write -----------------------------
+    // (AC: a cursor write landing while another write guard is held must not
+    // abort the page — the user-reported AlreadyBorrowed abort.)
+    //
+    // What a native test CAN pin: the contention mechanism set_cursor defers
+    // on — a live write guard makes try_write fail, and it recovers the
+    // moment the guard drops. What it CANNOT: the deferred arm itself runs on
+    // dioxus's task pool, which does not exist under a bare native test —
+    // that half is what the browser canary covers (a panic on the play
+    // surface is the bug this exists for).
+
+    #[test]
+    fn cursor_write_contention_is_detectable_and_recoverable() {
+        // Signals need a virtual-dom owner, so the assertions run inside one
+        // component render.
+        fn app() -> Element {
+            let mut cursor = use_signal(|| None::<usize>);
+            // A second handle to the same cell: the contention set_cursor sees
+            // is a runtime RefCell state, so a copy of the handle constructs
+            // it; the borrow checker refuses two borrows of one binding.
+            let mut holder = cursor;
+            let guard = holder.write();
+            assert!(
+                cursor.try_write().is_err(),
+                "a live write guard must be visible to set_cursor's contention check"
+            );
+            drop(guard);
+            assert!(
+                cursor.try_write().is_ok(),
+                "after the guard drops the retry path must succeed"
+            );
+            set_cursor(cursor, Some(3));
+            assert_eq!(*cursor.peek(), Some(3), "the uncontended write applies");
+            rsx! {}
+        }
+        let mut vdom = VirtualDom::new(app);
+        vdom.rebuild_in_place();
     }
 }

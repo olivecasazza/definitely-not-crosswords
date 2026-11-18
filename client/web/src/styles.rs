@@ -146,10 +146,10 @@ pub const DESIGN: &str = r#"
   --pastel-green: #0d6a4e;
   --pastel-yellow: #775600;
   /* The panel-light pastels darken like their siblings — pale pink/peach on a
-     white card sat at 1.5–2.6:1, under WCAG's 3:1 for a UI mark. ≥4.4:1 here
+     white card sat at 1.5–2.6:1, under WCAG's 3:1 for a UI mark. ≥4.7:1 here
      keeps the lights visible without leaving the pastel family. */
   --pastel-pink: #b04a80;
-  --pastel-peach: #9a6a15;
+  --pastel-peach: #8f6114;
   /* Co-op presence rings on the board: the dark palette's pale rings measured
      1.2–1.5:1 on the light board — a teammate's ring was effectively
      invisible. All four land ≥4.3:1 here, hue-distinct from each other and
@@ -647,3 +647,201 @@ select.app-input.pk-select { padding-right: 1.75rem; }
 .error { color: var(--color-error); }
 .success { color: var(--color-success); }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // --- the contrast gate ----------------------------------------------------
+    //
+    // The palette's job is legibility, so the gate reads the shipped CSS and
+    // asserts WCAG ratios on the pairs each token actually lands on: pastels
+    // carry text (4.5:1), presence rings / podium metals / panel lights are UI
+    // marks (3:1). Section-aware: `.light-mode` re-declares the tokens it
+    // darkens, and the gate fails if a re-declaration is missing (the
+    // light-mode "invisible ring" bug was exactly a missing flip).
+
+    /// The `body` of one top-level CSS rule (`section` = its selector's head),
+    /// found by brace matching from the selector.
+    fn rule_block(css: &str, selector: &str) -> String {
+        let start = css
+            .find(selector)
+            .unwrap_or_else(|| panic!("{selector} block missing from DESIGN"));
+        let open = css[start..].find('{').expect("selector has no body") + start;
+        let mut depth = 0;
+        for (i, c) in css[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return css[open + 1..open + i].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("{selector} block never closes");
+    }
+
+    /// CSS with `/* ... */` comments removed (replaced by a space so
+    /// neighboring tokens stay separated).
+    fn strip_comments(css: &str) -> String {
+        let bytes = css.as_bytes();
+        let mut clean = String::with_capacity(css.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+                clean.push(' ');
+            } else {
+                let ch = css[i..].chars().next().expect("char boundary holds");
+                clean.push(ch);
+                i += ch.len_utf8();
+            }
+        }
+        clean
+    }
+
+    /// `--name: value` pairs declared directly in one rule body. Comments come
+    /// out first — they document every declaration here, and a declaration
+    /// preceded by a comment would otherwise parse its NAME as comment text.
+    fn vars(block: &str) -> HashMap<String, String> {
+        let clean = strip_comments(block);
+        let mut map = HashMap::new();
+        for line in clean.split(';') {
+            let line = line.trim();
+            if let Some((name, value)) = line.split_once(':') {
+                let name = name.trim();
+                if name.starts_with("--") {
+                    map.insert(name.to_string(), value.trim().to_string());
+                }
+            }
+        }
+        map
+    }
+
+    /// Follow `var(--x)` chains down to a literal.
+    fn resolve(map: &HashMap<String, String>, name: &str) -> String {
+        let mut value = map.get(name).cloned().unwrap_or_default();
+        for _ in 0..6 {
+            let inner = value.trim_start_matches("var(").trim_end_matches(')');
+            if inner == value || !value.starts_with("var(") {
+                break;
+            }
+            match map.get(inner.trim()) {
+                Some(v) => value = v.clone(),
+                None => panic!("{name} resolves to unknown var {inner}"),
+            }
+        }
+        assert!(
+            value.starts_with('#'),
+            "{name} is not a literal hex: {value}"
+        );
+        value.trim_start_matches('#').to_string()
+    }
+
+    fn luminance(hex: &str) -> f64 {
+        let (r, g, b) = (
+            u8::from_str_radix(&hex[0..2], 16).unwrap(),
+            u8::from_str_radix(&hex[2..4], 16).unwrap(),
+            u8::from_str_radix(&hex[4..6], 16).unwrap(),
+        );
+        let channel = |c: u8| {
+            let c = c as f64 / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    /// WCAG 2.x contrast ratio between two hex colors.
+    fn contrast(a: &str, b: &str) -> f64 {
+        let (la, lb) = (luminance(a), luminance(b));
+        let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    fn assert_ratio(section: &HashMap<String, String>, var: &str, against: &str, need: f64) {
+        let fg = resolve(section, var);
+        let bg = resolve(section, against);
+        let ratio = contrast(&fg, &bg);
+        assert!(
+            ratio >= need,
+            "{var} ({fg}) on {against} ({bg}) is {ratio:.2}:1, below {need}:1"
+        );
+    }
+
+    #[test]
+    fn dark_palette_meets_its_contrast_duties() {
+        let root = vars(&rule_block(DESIGN, ":root"));
+        for pastel in [
+            "--pastel-red",
+            "--pastel-green",
+            "--pastel-yellow",
+            "--pastel-pink",
+            "--pastel-peach",
+        ] {
+            assert_ratio(&root, pastel, "--bg-card", 4.5);
+        }
+        for ring in [
+            "--presence-1",
+            "--presence-2",
+            "--presence-3",
+            "--presence-4",
+        ] {
+            assert_ratio(&root, ring, "--bg-app", 3.0);
+        }
+        assert_ratio(&root, "--podium-bronze", "--bg-card", 3.0);
+    }
+
+    #[test]
+    fn light_palette_meets_its_contrast_duties() {
+        let light = vars(&rule_block(DESIGN, ".light-mode"));
+        for pastel in [
+            "--pastel-red",
+            "--pastel-green",
+            "--pastel-yellow",
+            "--pastel-pink",
+            "--pastel-peach",
+        ] {
+            assert_ratio(&light, pastel, "--bg-card", 4.5);
+        }
+        for ring in [
+            "--presence-1",
+            "--presence-2",
+            "--presence-3",
+            "--presence-4",
+        ] {
+            assert_ratio(&light, ring, "--bg-app", 3.0);
+        }
+        assert_ratio(&light, "--podium-bronze", "--bg-card", 3.0);
+        assert_ratio(&light, "--text-primary", "--bg-card", 4.5);
+        assert_ratio(&light, "--text-secondary", "--bg-card", 4.5);
+        assert_ratio(&light, "--border-app", "--bg-card", 3.0);
+    }
+
+    /// The panel lights must stay an app-owned pastel SET: if the remap of
+    /// `--color-secondary`/`--color-tertiary` disappears, panel-kit's
+    /// saturated `#ff5fc3`/`#ffbd2e` fallbacks return and the lights read as
+    /// pink + brown next to the yellow.
+    #[test]
+    fn panel_lights_stay_remapped_to_the_pastel_family() {
+        let root = rule_block(DESIGN, ":root");
+        assert!(root.contains("--color-secondary: var(--pastel-pink)"));
+        assert!(root.contains("--color-tertiary: var(--pastel-peach)"));
+        // And light mode darkens both (the fill tokens are literals on purpose;
+        // the lights are not — they must ride the pastel flip).
+        let light = rule_block(DESIGN, ".light-mode");
+        assert!(light.contains("--pastel-pink"));
+        assert!(light.contains("--pastel-peach"));
+    }
+}

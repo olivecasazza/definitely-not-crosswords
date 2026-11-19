@@ -310,20 +310,12 @@ jobs:
             PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
           fi
 
-          STATE=UNKNOWN
-          for _ in $(seq 1 30); do
-            STATE=$(gh pr view "$PR_NUMBER" -R ${{ github.repository }} --json state --jq .state)
-            if [ "$STATE" = "MERGED" ] || [ "$STATE" = "CLOSED" ]; then
-              break
-            fi
-            sleep 20
-          done
-
-          if [ "$STATE" != "MERGED" ]; then
-            echo "::notice::PR #$PR_NUMBER is $STATE, not merged — nothing to build."
-            exit 0
-          fi
-
+          # The merge lands asynchronously after auto-merge is enabled, and the
+          # previous 10-minute poll (30 x 20s) timed out one minute before the
+          # merge in #371, so the main build was never dispatched. Dispatch
+          # unconditionally: the dispatch is idempotent, and by the time the
+          # build's deploy-staging step runs the merge (and its commit on main)
+          # will have landed.
           gh workflow run ci.yaml -R ${{ github.repository }} --ref main
           echo "Dispatched a main build of $(gh api repos/${{ github.repository }}/commits/main --jq .sha)."
 

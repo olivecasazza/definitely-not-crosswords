@@ -29,15 +29,11 @@ pub const DESIGN: &str = r#"
   --pastel-red: #ff8c8c;
   --pastel-green: #a8e6cf;
   --pastel-yellow: #feea99;
-  /* The panel lights (tiling/minimize/maximize) read as one set: three
-     pastels of the same value family. Pink and peach previously fell back to
-     panel-kit's saturated #ff5fc3/#ffbd2e, which next to the pale yellow read
-     as pink + brown. */
-  --pastel-pink: #f6c9e4;
-  --pastel-peach: #ffd9a6;
+  /* Panel lights are status colors, not a separate accent set: secondary
+     (maximize) is red, tertiary (minimize) is green, primary stays yellow. */
   --color-primary: var(--pastel-yellow);
-  --color-secondary: var(--pastel-pink);
-  --color-tertiary: var(--pastel-peach);
+  --color-secondary: var(--pastel-red);
+  --color-tertiary: var(--pastel-green);
   --color-success: var(--pastel-green);
   --color-warning: var(--pastel-yellow);
   --color-error: var(--pastel-red);
@@ -145,11 +141,8 @@ pub const DESIGN: &str = r#"
   --pastel-red: #b02a20;
   --pastel-green: #0d6a4e;
   --pastel-yellow: #775600;
-  /* The panel-light pastels darken like their siblings — pale pink/peach on a
-     white card sat at 1.5–2.6:1, under WCAG's 3:1 for a UI mark. ≥4.7:1 here
-     keeps the lights visible without leaving the pastel family. */
-  --pastel-pink: #b04a80;
-  --pastel-peach: #8f6114;
+  /* Panel lights ride the status pastels (--color-secondary red,
+     --color-tertiary green), so they darken with them. */
   /* Co-op presence rings on the board: the dark palette's pale rings measured
      1.2–1.5:1 on the light board — a teammate's ring was effectively
      invisible. All four land ≥4.3:1 here, hue-distinct from each other and
@@ -787,8 +780,6 @@ mod tests {
             "--pastel-red",
             "--pastel-green",
             "--pastel-yellow",
-            "--pastel-pink",
-            "--pastel-peach",
         ] {
             assert_ratio(&root, pastel, "--bg-card", 4.5);
         }
@@ -810,8 +801,6 @@ mod tests {
             "--pastel-red",
             "--pastel-green",
             "--pastel-yellow",
-            "--pastel-pink",
-            "--pastel-peach",
         ] {
             assert_ratio(&light, pastel, "--bg-card", 4.5);
         }
@@ -829,19 +818,14 @@ mod tests {
         assert_ratio(&light, "--border-app", "--bg-card", 3.0);
     }
 
-    /// The panel lights must stay an app-owned pastel SET: if the remap of
-    /// `--color-secondary`/`--color-tertiary` disappears, panel-kit's
-    /// saturated `#ff5fc3`/`#ffbd2e` fallbacks return and the lights read as
-    /// pink + brown next to the yellow.
+    /// The panel lights are the red/green status pastels, not a separate
+    /// accent set: without the remap panel-kit's saturated `#ff5fc3`/`#ffbd2e`
+    /// fallbacks return. Pink/peach tokens must not exist.
     #[test]
-    fn panel_lights_stay_remapped_to_the_pastel_family() {
+    fn panel_lights_are_status_red_and_green() {
         let root = rule_block(DESIGN, ":root");
-        assert!(root.contains("--color-secondary: var(--pastel-pink)"));
-        assert!(root.contains("--color-tertiary: var(--pastel-peach)"));
-        // And light mode darkens both (the fill tokens are literals on purpose;
-        // the lights are not — they must ride the pastel flip).
-        let light = rule_block(DESIGN, ".light-mode");
-        assert!(light.contains("--pastel-pink"));
-        assert!(light.contains("--pastel-peach"));
+        assert!(root.contains("--color-secondary: var(--pastel-red)"));
+        assert!(root.contains("--color-tertiary: var(--pastel-green)"));
+        assert!(!DESIGN.contains("pastel-pink") && !DESIGN.contains("pastel-peach"));
     }
 }

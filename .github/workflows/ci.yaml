@@ -268,6 +268,9 @@ jobs:
     # Buildbot checks, not GitHub Actions jobs.
     needs: [ conventional-commits-check, approval-check, guards ]
     if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && needs.conventional-commits-check.outputs.is_major == 'false'
+    concurrency:
+      group: auto-merge-${{ github.event.pull_request.number || github.sha }}
+      cancel-in-progress: true
     steps:
       - name: Enable Auto-Merge
         env:
@@ -302,6 +305,7 @@ jobs:
       # `build-and-push` hands off to deploy-staging itself once the image is
       # pushed — see its "Deploy staging to the image just pushed" step.
       - name: Build main once the auto-merge lands
+        id: merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -310,12 +314,27 @@ jobs:
             PR_NUMBER=$(gh pr list -R ${{ github.repository }} --search "${{ github.sha }}" --json number --jq '.[0].number')
           fi
 
-          # The merge lands asynchronously after auto-merge is enabled, and the
-          # previous 10-minute poll (30 x 20s) timed out one minute before the
-          # merge in #371, so the main build was never dispatched. Dispatch
-          # unconditionally: the dispatch is idempotent, and by the time the
-          # build's deploy-staging step runs the merge (and its commit on main)
-          # will have landed.
+          # Dispatch only once the PR is MERGED. An unconditional dispatch loops:
+          # release-plz pushes to its own release PR, which re-runs this job,
+          # which dispatches CI and release-plz again. The wait outlasts the
+          # slowest Buildbot gate (about 20 min) by 2x; a superseded run is
+          # cancelled by this job's concurrency group.
+          STATE=UNKNOWN
+          for _ in $(seq 1 80); do
+            STATE=$(gh pr view "$PR_NUMBER" -R ${{ github.repository }} --json state --jq .state)
+            if [ "$STATE" = "MERGED" ] || [ "$STATE" = "CLOSED" ]; then
+              break
+            fi
+            sleep 30
+          done
+
+          if [ "$STATE" != "MERGED" ]; then
+            echo "::notice::PR #$PR_NUMBER is $STATE, not merged — nothing to build."
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "merged=true" >> "$GITHUB_OUTPUT"
           gh workflow run ci.yaml -R ${{ github.repository }} --ref main
           echo "Dispatched a main build of $(gh api repos/${{ github.repository }}/commits/main --jq .sha)."
 
@@ -354,6 +373,7 @@ jobs:
       #     -> that PR auto-merges -> release-plz cuts the tag + GitHub release
       #       -> the tag's PAT push builds the versioned image Flux promotes.
       - name: Keep the release pipeline running after the auto-merge
+        if: steps.merge.outputs.merged == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

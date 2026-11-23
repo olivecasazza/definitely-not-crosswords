@@ -776,11 +776,7 @@ mod tests {
     #[test]
     fn dark_palette_meets_its_contrast_duties() {
         let root = vars(&rule_block(DESIGN, ":root"));
-        for pastel in [
-            "--pastel-red",
-            "--pastel-green",
-            "--pastel-yellow",
-        ] {
+        for pastel in ["--pastel-red", "--pastel-green", "--pastel-yellow"] {
             assert_ratio(&root, pastel, "--bg-card", 4.5);
         }
         for ring in [
@@ -797,11 +793,7 @@ mod tests {
     #[test]
     fn light_palette_meets_its_contrast_duties() {
         let light = vars(&rule_block(DESIGN, ".light-mode"));
-        for pastel in [
-            "--pastel-red",
-            "--pastel-green",
-            "--pastel-yellow",
-        ] {
+        for pastel in ["--pastel-red", "--pastel-green", "--pastel-yellow"] {
             assert_ratio(&light, pastel, "--bg-card", 4.5);
         }
         for ring in [
